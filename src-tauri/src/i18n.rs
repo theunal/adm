@@ -21,8 +21,14 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use serde::{Deserialize, Serialize};
+
 /// Aktif dil. Varsayılan Türkçedir; mevcut testler bunu varsayar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `rename_all = "lowercase"` ile JSON'da `"tr"` / `"en"` olarak yazılır;
+/// ayarlar tablosu da aynı metni saklar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Lang {
     Tr,
     En,
@@ -35,6 +41,14 @@ impl Lang {
             Lang::En
         } else {
             Lang::Tr
+        }
+    }
+
+    /// Veritabanında saklanan kısa biçim (`"tr"` / `"en"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Lang::Tr => "tr",
+            Lang::En => "en",
         }
     }
 }
@@ -320,6 +334,21 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "err.db_clear_all",
         "İndirme geçmişi temizlenemedi",
         "Could not clear the download history",
+    ),
+    (
+        "err.db_settings_seed",
+        "Varsayılan ayarlar oluşturulamadı",
+        "Could not create the default settings",
+    ),
+    (
+        "err.db_settings_load",
+        "Ayarlar okunamadı",
+        "Could not read the settings",
+    ),
+    (
+        "err.db_settings_save",
+        "Ayarlar kaydedilemedi",
+        "Could not save the settings",
     ),
     // -----------------------------------------------------------------
     // Pencere komutları

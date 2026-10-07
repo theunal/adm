@@ -23,6 +23,7 @@ export const tr = {
   "app.stat.total_downloaded": "toplam indirildi",
   "app.tab.active": "Aktif İndirmeler",
   "app.tab.history": "Geçmiş",
+  "app.tab.settings": "Ayarlar",
   "app.log.hide": "Günlüğü gizle",
   "app.log.show": "Günlüğü göster",
 
@@ -46,13 +47,10 @@ export const tr = {
   // -----------------------------------------------------------------
   "form.browse": "Gözat",
   "form.channels_hint": "{count} kanal",
-  "form.channels_label": "Kanal sayısı",
   "form.db_hint": "SQLite kayıtları etkin",
   "form.db_title": "Veritabanı: {path}",
   "form.err.default_dir": "Varsayılan klasör okunamadı: {error}",
-  "form.err.pick": "Konum seçilemedi: {error}",
   "form.err.start": "İndirme başlatılamadı: {error}",
-  "form.path_label": "Kayıt konumu",
   "form.submit": "İndirmeyi Ekle",
   "form.submitting": "Ekleniyor…",
   "form.title": "Yeni İndirme",
@@ -140,6 +138,37 @@ export const tr = {
   "log.title": "Olay Günlüğü",
   "log.to_bottom": "En alta git",
   "spark.empty_title": "Hız geçmişi oluşuyor",
+
+  // -----------------------------------------------------------------
+  // Ayarlar (SettingsPanel.tsx)
+  // -----------------------------------------------------------------
+  "settings.channels_hint":
+    "Bu sayı yeni indirmelerde varsayılan olarak kullanılır. Çalışan bir indirmenin kanal sayısını kartındaki “Kanallar” düğmesinden değiştirebilirsin.",
+  "settings.channels_label": "Varsayılan kanal sayısı",
+  "settings.dir.audio": "Ses dosyaları",
+  "settings.dir.audio_hint": "mp3, flac, wav, aac, m4a ve diğer ses uzantıları",
+  "settings.dir.default": "Genel konum",
+  "settings.dir.default_hint":
+    "Eşleşmeyen dosyalar ve aşağıda boş bırakılan kategoriler buraya iner. Boşaltılamaz.",
+  "settings.dir.inherit": "Genel konuma düşsün",
+  "settings.dir.other": "Diğer dosyalar",
+  "settings.dir.other_hint":
+    "Arşivler, kurulum dosyaları, belgeler ve disk görüntüleri (zip, exe, iso, pdf…)",
+  "settings.dir.reset": "Bu kategoriyi sıfırla",
+  "settings.dir.video": "Video dosyaları",
+  "settings.dir.video_hint": "mp4, mkv, avi, mov, webm ve diğer video uzantıları",
+  "settings.err.channels": "Kanal sayısı kaydedilemedi: {error}",
+  "settings.err.lang": "Dil kaydedilemedi: {error}",
+  "settings.err.pick": "Klasör seçilemedi: {error}",
+  "settings.err.save": "Ayar kaydedilemedi: {error}",
+  "settings.folders_intro":
+    "Dosya uzantısına göre konum belirlenir. Boş bırakılan kategoriler genel konuma düşer.",
+  "settings.lang_hint":
+    "Dil kalıcı olarak kaydedilir ve Rust tarafındaki hata mesajlarına da uygulanır.",
+  "settings.pick_folder": "{target} için klasör seç",
+  "settings.section.channels": "Kanallar",
+  "settings.section.folders": "İndirme konumları",
+  "settings.section.language": "Dil",
 
   // -----------------------------------------------------------------
   // Depo (store.ts)

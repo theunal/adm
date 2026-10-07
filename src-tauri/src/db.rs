@@ -22,6 +22,7 @@ use std::path::PathBuf;
 
 use crate::i18n;
 use crate::models::{ChannelState, DownloadItem, DownloadStatus};
+use crate::settings::Settings;
 
 /// Veritabanı dosyasının bulunduğu dizin: `%LocalAppData%\ADM`
 fn db_dir() -> PathBuf {
@@ -81,6 +82,17 @@ const SCHEMA: &[&str] = &[
     "#,
     "CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads (status)",
     "CREATE INDEX IF NOT EXISTS idx_downloads_created_at ON downloads (created_at)",
+    r#"
+    CREATE TABLE IF NOT EXISTS settings (
+        id                    INTEGER PRIMARY KEY CHECK (id = 1),
+        lang                  TEXT    NOT NULL DEFAULT 'tr',
+        default_channel_count INTEGER NOT NULL DEFAULT 8,
+        video_dir             TEXT,
+        audio_dir             TEXT,
+        other_dir             TEXT,
+        default_dir           TEXT    NOT NULL
+    )
+    "#,
 ];
 
 /// Uygulamanın veritabanı erişimi.
@@ -296,6 +308,84 @@ impl Database {
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
+
+    /// Uygulama ayarlarını okur.
+    ///
+    /// Satır yoksa (yedek veritabanı, silinmiş kayıt) varsayılanlar döner;
+    /// `migrate` satırı zaten oluşturduğu için bu bir hata değil.
+    pub async fn load_settings(&self) -> Result<Settings> {
+        let row = sqlx::query("SELECT * FROM settings WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await
+            .context(err("err.db_settings_load"))?;
+
+        let Some(r) = row else {
+            return Ok(Settings::default());
+        };
+
+        let mut settings = Settings {
+            lang: i18n::Lang::parse(&r.try_get::<String, _>("lang").unwrap_or_default()),
+            default_channel_count: r
+                .try_get::<i64, _>("default_channel_count")
+                .unwrap_or(8)
+                .clamp(1, i64::from(crate::settings::MAX_CHANNELS))
+                as u32,
+            video_dir: opt_dir_of(&r, "video_dir"),
+            audio_dir: opt_dir_of(&r, "audio_dir"),
+            other_dir: opt_dir_of(&r, "other_dir"),
+            default_dir: opt_dir_of(&r, "default_dir")
+                .unwrap_or_else(crate::manager::default_download_dir),
+        };
+        settings.normalize();
+
+        Ok(settings)
+    }
+
+    /// Uygulama ayarlarını yazar (tek satır).
+    pub async fn save_settings(&self, settings: &Settings) -> Result<()> {
+        let mut normalized = settings.clone();
+        normalized.normalize();
+
+        sqlx::query(
+            "INSERT INTO settings \
+                 (id, lang, default_channel_count, video_dir, audio_dir, other_dir, default_dir) \
+             VALUES (1, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT (id) DO UPDATE SET \
+                 lang                  = excluded.lang, \
+                 default_channel_count = excluded.default_channel_count, \
+                 video_dir             = excluded.video_dir, \
+                 audio_dir             = excluded.audio_dir, \
+                 other_dir             = excluded.other_dir, \
+                 default_dir           = excluded.default_dir",
+        )
+        .bind(normalized.lang.as_str())
+        .bind(normalized.default_channel_count as i64)
+        .bind(bind_dir(&normalized.video_dir))
+        .bind(bind_dir(&normalized.audio_dir))
+        .bind(bind_dir(&normalized.other_dir))
+        .bind(normalized.default_dir.to_string_lossy().to_string())
+        .execute(&self.pool)
+        .await
+        .context(err("err.db_settings_save"))?;
+
+        Ok(())
+    }
+}
+
+/// SQL satırındaki klasör sütununu okur; boş hücre `None` olur.
+fn opt_dir_of(row: &SqliteRow, column: &str) -> Option<PathBuf> {
+    row.try_get::<Option<String>, _>(column)
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// `Option<PathBuf>` -> bağlanabilir metin (`None` ise SQL NULL).
+fn bind_dir(dir: &Option<PathBuf>) -> Option<String> {
+    dir.as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|s| !s.trim().is_empty())
 }
 
 /// Tablo oluşturma / şema migrasyonu.
@@ -311,6 +401,26 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
             .await
             .with_context(|| err1("err.db_schema", first_line(sql)))?;
     }
+    seed_settings(pool).await
+}
+
+/// Ayar satırını ilk kez oluşturur (idempotent).
+///
+/// `INSERT OR IGNORE` sayesinde var olan satıra dokunmaz; kullanıcının
+/// kaydettiği ayarlar korunur.
+async fn seed_settings(pool: &SqlitePool) -> Result<()> {
+    let defaults = Settings::default();
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings \
+         (id, lang, default_channel_count, default_dir) \
+         VALUES (1, ?, ?, ?)",
+    )
+    .bind(defaults.lang.as_str())
+    .bind(defaults.default_channel_count as i64)
+    .bind(defaults.default_dir.to_string_lossy().to_string())
+    .execute(pool)
+    .await
+    .context(err("err.db_settings_seed"))?;
     Ok(())
 }
 
@@ -641,5 +751,102 @@ mod tests {
             db.get(id).await.unwrap().unwrap().error_message.as_deref(),
             Some("Eski biçimli hata")
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Ayarlar
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn ayarlar_migrasyonla_seed_edilir() {
+        let db = test_db("ayar_seed").await;
+
+        let s = db.load_settings().await.unwrap();
+        assert_eq!(s.default_dir, crate::manager::default_download_dir());
+        assert_eq!(s.default_channel_count, 8);
+        assert_eq!(s.lang, i18n::Lang::Tr);
+        assert!(s.video_dir.is_none());
+        assert!(s.audio_dir.is_none());
+        assert!(s.other_dir.is_none());
+    }
+
+    #[tokio::test]
+    async fn ayarlar_kaydedilip_okunur() {
+        let db = test_db("ayar_rt").await;
+
+        let saved = Settings {
+            lang: i18n::Lang::En,
+            default_channel_count: 16,
+            video_dir: Some(PathBuf::from("C:/Video")),
+            audio_dir: Some(PathBuf::from("C:/Muzik")),
+            other_dir: None,
+            default_dir: PathBuf::from("C:/Genel"),
+        };
+        db.save_settings(&saved).await.unwrap();
+
+        let got = db.load_settings().await.unwrap();
+        assert_eq!(got.lang, i18n::Lang::En);
+        assert_eq!(got.default_channel_count, 16);
+        assert_eq!(got.video_dir, Some(PathBuf::from("C:/Video")));
+        assert_eq!(got.audio_dir, Some(PathBuf::from("C:/Muzik")));
+        assert_eq!(got.other_dir, None);
+        assert_eq!(got.default_dir, PathBuf::from("C:/Genel"));
+    }
+
+    #[tokio::test]
+    async fn ayar_kaydinda_sifirlanan_klasor_none_olur() {
+        let db = test_db("ayar_sifir").await;
+
+        let s = Settings {
+            video_dir: Some(PathBuf::from("C:/Video")),
+            default_channel_count: 4,
+            ..Settings::default()
+        };
+        db.save_settings(&s).await.unwrap();
+
+        // Kullanıcı videoyu sıfırladı: boş metin NULL olarak yazılır.
+        let cleared = Settings {
+            video_dir: Some(PathBuf::from("  ")),
+            ..s
+        };
+        db.save_settings(&cleared).await.unwrap();
+
+        assert_eq!(db.load_settings().await.unwrap().video_dir, None);
+    }
+
+    #[tokio::test]
+    async fn ayar_kaydinda_kanal_sayisi_sikistirilir() {
+        let db = test_db("ayar_kanal").await;
+
+        let s = Settings {
+            default_channel_count: 9999,
+            ..Settings::default()
+        };
+        db.save_settings(&s).await.unwrap();
+
+        assert_eq!(
+            db.load_settings().await.unwrap().default_channel_count,
+            crate::settings::MAX_CHANNELS
+        );
+    }
+
+    #[tokio::test]
+    async fn yeniden_migrate_kullanici_ayarlarini_silmez() {
+        let db = test_db("ayar_seed2").await;
+
+        let saved = Settings {
+            lang: i18n::Lang::En,
+            video_dir: Some(PathBuf::from("C:/Video")),
+            ..Settings::default()
+        };
+        db.save_settings(&saved).await.unwrap();
+
+        // Uygulama her açılışta migrate çalıştırır; seed `INSERT OR IGNORE`
+        // olduğu için kayıtlı ayarlar korunmalıdır.
+        migrate(db.pool()).await.unwrap();
+
+        let got = db.load_settings().await.unwrap();
+        assert_eq!(got.lang, i18n::Lang::En);
+        assert_eq!(got.video_dir, Some(PathBuf::from("C:/Video")));
     }
 }

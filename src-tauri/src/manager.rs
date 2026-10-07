@@ -160,6 +160,22 @@ impl DownloadManager {
         &self.db
     }
 
+    /// Ayarları okur (commands katmanı için).
+    pub async fn settings(&self) -> Result<crate::settings::Settings> {
+        self.db.load_settings().await
+    }
+
+    /// Ayarları yazar ve dil değişikliğini hemen uygular (commands katmanı).
+    pub async fn save_settings(&self, settings: &crate::settings::Settings) -> Result<()> {
+        let mut normalized = settings.clone();
+        normalized.normalize();
+
+        self.db.save_settings(&normalized).await?;
+        // Kaydedilen dil hemen etkinleşir; ayrı `set_language` çağrısı gerekmez.
+        crate::i18n::set_lang(normalized.lang);
+        Ok(())
+    }
+
     fn emit(&self, ev: DownloadEvent) {
         // Alıcı yoksa hata verir; bu normaldir, yoksay.
         let _ = self.events.send(ev);
@@ -198,8 +214,8 @@ impl DownloadManager {
         let suggested = file_name_from_url(&req.url);
         let file_path: PathBuf = match req.file_path.as_deref().map(str::trim) {
             Some(p) if !p.is_empty() => PathBuf::from(p),
-            // Yol verilmediyse kullanıcının İndirilenler klasörüne koy.
-            _ => default_download_dir().join(&suggested),
+            // Yol verilmediyse uzantıya göre ayarlardaki hedef klasöre yaz.
+            _ => self.db.load_settings().await?.resolve_target(&suggested),
         };
 
         let file_name = file_path

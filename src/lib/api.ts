@@ -8,7 +8,24 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DownloadEvent, DownloadItem } from "./format";
+import type { Locale } from "./i18n";
 import { t } from "./i18n";
+
+/** Rust `settings` tablosunun arayüz karşılığı. */
+export interface Settings {
+  /** Arayüz dili. */
+  lang: Locale;
+  /** Yeni indirmelerde varsayılan kanal sayısı (1..=32). */
+  defaultChannelCount: number;
+  /** Video hedef klasörü; boşsa genel hedefe düşer. */
+  videoDir: string | null;
+  /** Ses hedef klasörü. */
+  audioDir: string | null;
+  /** Diğer dosyaların hedef klasörü. */
+  otherDir: string | null;
+  /** Eşleşmeyen dosyaların (ve boş kategorilerin) hedefi. */
+  defaultDir: string;
+}
 
 /** Tauri olayının adı. */
 export const DOWNLOAD_EVENT = "download://event";
@@ -83,6 +100,26 @@ export function defaultDownloadDir(): Promise<string> {
   return invoke<string>("default_download_dir");
 }
 
+/** Uygulama ayarlarını okur. */
+export function getSettings(): Promise<Settings> {
+  return invoke<Settings>("get_settings");
+}
+
+/** Uygulama ayarlarını kaydeder; kaydedilen dil hemen etkinleşir. */
+export function saveSettings(settings: Settings): Promise<void> {
+  return invoke<void>("save_settings", { settings });
+}
+
+/**
+ * Bir URL için ayarlara göre çözümlenen tam hedef yol.
+ *
+ * Yeni indirme formu bu değeri önizleme olarak gösterir; kullanıcı
+ * "Gözat" ile değiştirebilir.
+ */
+export function resolveTargetPath(url: string): Promise<string> {
+  return invoke<string>("resolve_target_path", { url });
+}
+
 /** Veritabanı dosyasının yolu. */
 export function databasePath(): Promise<string> {
   return invoke<string>("database_path");
@@ -133,6 +170,25 @@ export async function pickSavePath(
   const picked = await save({
     defaultPath: `${defaultDir}\\${suggestedName}`,
     title: t("dialog.save_title"),
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+/**
+ * Klasör seçme diyaloğunu açar.
+ *
+ * Rust tarafındaki `dialog:allow-open` yetkisi sayesinde çalışır.
+ */
+export async function pickFolder(
+  title: string,
+  defaultDir?: string,
+): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    directory: true,
+    multiple: false,
+    title,
+    ...(defaultDir ? { defaultPath: defaultDir } : {}),
   });
   return typeof picked === "string" ? picked : null;
 }

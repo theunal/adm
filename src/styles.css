@@ -27,22 +27,22 @@
   --text-inverse: #04121a;
 
   /* Aksan */
-  --accent: #2dd4bf;
-  --accent-strong: #14b8a6;
-  --accent-soft: rgba(45, 212, 191, 0.14);
-  --accent-glow: rgba(45, 212, 191, 0.35);
+  --accent: #2e73ce;
+  --accent-strong: #1356ad;
+  --accent-soft: rgba(45, 123, 212, 0.14);
+  --accent-glow: rgba(45, 134, 212, 0.35);
 
   /* Durum renkleri */
   --status-queued: #94a3b8;
-  --status-downloading: #2dd4bf;
+  --status-downloading: #2d75d4;
   --status-paused: #fbbf24;
-  --status-completed: #34d399;
+  --status-completed: #34d379;
   --status-failed: #f87171;
   --status-cancelled: #94a3b8;
 
   /* Log seviyeleri */
   --log-info: #93c5fd;
-  --log-success: #6ee7b7;
+  --log-success: #6ee7b9;
   --log-warn: #fcd34d;
   --log-error: #fca5a5;
 
@@ -243,6 +243,19 @@ body {
   background: rgba(148, 163, 184, 0.06);
 }
 
+/* Ayarlar ekranındaki sürüm: başlık çubuğu kenar boşluğu almaz. */
+.lang-switch-lg {
+  margin-right: 0;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+.lang-switch-lg .lang-opt {
+  min-width: 42px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
 .lang-opt {
   min-width: 26px;
   padding: 3px 5px;
@@ -293,6 +306,81 @@ body {
 .win-btn-close:hover {
   background: #dc2626;
   color: #fff;
+}
+
+/* ==========================================================================
+/* ==========================================================================
+   Ayarlar paneli
+   ========================================================================== */
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 18px 20px 28px;
+  overflow-y: auto;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section > .section-title {
+  margin: 0;
+}
+
+.settings-row,
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-row {
+  gap: 8px;
+}
+
+.settings-field > label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.settings-field .path-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+}
+
+.settings-field .input-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.btn-icon {
+  min-width: 34px;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.lang-opt:disabled,
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ==========================================================================
@@ -770,6 +858,11 @@ body {
   flex: 1;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* Açılış: ayarlar okunana kadar tüm kabuk yerine tam ekran yükleme. */
+.loading-state-boot {
+  min-height: 100vh;
 }
 
 .spinner {

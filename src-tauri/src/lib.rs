@@ -21,6 +21,7 @@ pub mod engine;
 pub mod i18n;
 pub mod manager;
 pub mod models;
+pub mod settings;
 
 use tauri::Manager;
 
@@ -36,10 +37,18 @@ pub fn run() {
                 .map_err(|e| i18n::t("err.db_open", &[&format!("{e:#}")]))?;
             let manager = manager::DownloadManager::new(database);
 
-            // 2) Olay yayıncısı: manager olaylarını arayüze aktar.
+            // 2) Kayıtlı dili uygula: ayarlar tek kaynaktan okunur, webview
+            //    ilk boyamadan önce Rust tarafında hazır olsun.
+            match tauri::async_runtime::block_on(manager.settings()) {
+                Ok(settings) => i18n::set_lang(settings.lang),
+                // Ayar okunamazsa varsayılan (TR) kalır; uygulama açılır.
+                Err(_) => i18n::set_lang(i18n::Lang::Tr),
+            }
+
+            // 3) Olay yayıncısı: manager olaylarını arayüze aktar.
             commands::forward_events(app.handle().clone(), manager.subscribe());
 
-            // 3) Manager'ı Tauri durumuna ekle (komutlar buradan erişir).
+            // 4) Manager'ı Tauri durumuna ekle (komutlar buradan erişir).
             app.manage(manager);
 
             Ok(())
@@ -76,6 +85,9 @@ pub fn run() {
             commands::toggle_maximize_window,
             commands::close_window,
             commands::set_language,
+            commands::get_settings,
+            commands::save_settings,
+            commands::resolve_target_path,
         ])
         .run(tauri::generate_context!())
         .expect("ADM başlatılırken hata oluştu");

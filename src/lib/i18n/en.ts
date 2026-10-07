@@ -18,6 +18,7 @@ export const en: Dict = {
   "app.stat.total_downloaded": "total downloaded",
   "app.tab.active": "Active Downloads",
   "app.tab.history": "History",
+  "app.tab.settings": "Settings",
   "app.log.hide": "Hide log",
   "app.log.show": "Show log",
 
@@ -41,13 +42,10 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   "form.browse": "Browse",
   "form.channels_hint": "{count} channels",
-  "form.channels_label": "Channel count",
   "form.db_hint": "SQLite records enabled",
   "form.db_title": "Database: {path}",
   "form.err.default_dir": "Could not read the default folder: {error}",
-  "form.err.pick": "Could not choose a location: {error}",
   "form.err.start": "Could not start the download: {error}",
-  "form.path_label": "Save location",
   "form.submit": "Add Download",
   "form.submitting": "Adding…",
   "form.title": "New Download",
@@ -135,6 +133,37 @@ export const en: Dict = {
   "log.title": "Event Log",
   "log.to_bottom": "Scroll to bottom",
   "spark.empty_title": "Speed history is building up",
+
+  // -----------------------------------------------------------------
+  // Ayarlar (SettingsPanel.tsx)
+  // -----------------------------------------------------------------
+  "settings.channels_hint":
+    "This count is used by default for new downloads. You can change the channel count of a running download with its “Channels” button.",
+  "settings.channels_label": "Default channel count",
+  "settings.dir.audio": "Audio files",
+  "settings.dir.audio_hint": "mp3, flac, wav, aac, m4a and other audio extensions",
+  "settings.dir.default": "General location",
+  "settings.dir.default_hint":
+    "Files that match no category — and any category left blank below — go here. Cannot be blank.",
+  "settings.dir.inherit": "Fall back to the general location",
+  "settings.dir.other": "Other files",
+  "settings.dir.other_hint":
+    "Archives, installers, documents and disk images (zip, exe, iso, pdf…)",
+  "settings.dir.reset": "Reset this category",
+  "settings.dir.video": "Video files",
+  "settings.dir.video_hint": "mp4, mkv, avi, mov, webm and other video extensions",
+  "settings.err.channels": "Could not save the channel count: {error}",
+  "settings.err.lang": "Could not save the language: {error}",
+  "settings.err.pick": "Could not choose a folder: {error}",
+  "settings.err.save": "Could not save the setting: {error}",
+  "settings.folders_intro":
+    "The location is chosen by file extension. Categories left blank fall back to the general location.",
+  "settings.lang_hint":
+    "The language is saved permanently and also applies to error messages produced by Rust.",
+  "settings.pick_folder": "Choose a folder for {target}",
+  "settings.section.channels": "Channels",
+  "settings.section.folders": "Download locations",
+  "settings.section.language": "Language",
 
   // -----------------------------------------------------------------
   // Depo (store.ts)

@@ -17,7 +17,8 @@ import {
 } from "../lib/api";
 import { activeCount, summary } from "../lib/store";
 import { formatBytes, formatSpeed } from "../lib/format";
-import { locale, setLocale, t, type Locale } from "../lib/i18n";
+import { changeLang, settings } from "../lib/settings";
+import { t, type Locale } from "../lib/i18n";
 
 /** Dil anahtarındaki seçenekler. */
 const LANGS: Locale[] = ["tr", "en"];
@@ -70,9 +71,9 @@ export default function TitleBar() {
             {(code) => (
               <button
                 type="button"
-                class={`lang-opt ${locale() === code ? "lang-opt-active" : ""}`}
-                aria-pressed={locale() === code}
-                onClick={() => void setLocale(code)}
+                class={`lang-opt ${settings.lang === code ? "lang-opt-active" : ""}`}
+                aria-pressed={settings.lang === code}
+                onClick={() => void changeLang(code)}
               >
                 {code.toUpperCase()}
               </button>

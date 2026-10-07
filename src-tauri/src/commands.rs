@@ -12,6 +12,7 @@ use crate::db::db_path;
 use crate::i18n;
 use crate::manager::{DownloadManager, StartRequest};
 use crate::models::{DownloadItem, file_name_from_url};
+use crate::settings::Settings;
 
 type Res<T> = Result<T, String>;
 
@@ -207,11 +208,40 @@ pub fn close_window(app: AppHandle) -> Res<()> {
 
 /// Arayüzün seçtiği dili uygular.
 ///
-/// `lang` "tr" veya "en" olur; diğer her değer Türkçeye düşer. Ayar kalıcı
-/// değildir: arayüz `localStorage`'da saklar ve her açılışta yeniden gönderir.
+/// Dil artık `settings` tablosunda saklanır; bu komut yalnızca bellekteki
+/// dili günceller (kaydetme `save_settings` içinde yapılır).
 #[tauri::command]
 pub fn set_language(lang: String) {
     i18n::set_lang(i18n::Lang::parse(&lang));
+}
+
+/// Uygulama ayarlarını döner.
+#[tauri::command]
+pub async fn get_settings(manager: State<'_, DownloadManager>) -> Res<Settings> {
+    manager.settings().await.map_err(tr)
+}
+
+/// Uygulama ayarlarını kaydeder.
+///
+/// Kaydedilen dil hemen etkinleşir; arayüzün ayrıca `set_language`
+/// çağırmasına gerek yoktur.
+#[tauri::command]
+pub async fn save_settings(manager: State<'_, DownloadManager>, settings: Settings) -> Res<()> {
+    manager.save_settings(&settings).await.map_err(tr)
+}
+
+/// Bir URL için ayarlara göre çözümlenen tam hedef yol.
+///
+/// Yeni indirme formu bu değeri önizleme olarak gösterir; kullanıcı
+/// "Gözat" ile değiştirebilir.
+#[tauri::command]
+pub async fn resolve_target_path(manager: State<'_, DownloadManager>, url: String) -> Res<String> {
+    let settings = manager.settings().await.map_err(tr)?;
+    let file_name = file_name_from_url(&url);
+    Ok(settings
+        .resolve_target(&file_name)
+        .to_string_lossy()
+        .to_string())
 }
 
 /// Manager olaylarını Tauri olay kanalına aktarır.

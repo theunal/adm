@@ -23,8 +23,8 @@ import {
   type SpeedSample,
 } from "./format";
 
-/** Sekmeler. */
-export type Tab = "active" | "history";
+/** Sekmeler. `settings` liste yerine ayar panelini gösterir. */
+export type Tab = "active" | "history" | "settings";
 
 /** Maksimum log satırı (bellek sınırlı kalsın). */
 const MAX_LOGS = 300;

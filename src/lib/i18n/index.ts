@@ -1,27 +1,27 @@
 /**
- * Arayüz i18n altyapısı — locale sinyali, çeviri ve dil değiştirme.
+ * Arayüz i18n altyapısı — locale sinyali ve çeviri.
  *
  * Akış:
- * 1. `detectLocale()` — `localStorage` → `navigator.language` → TR varsayılan.
+ * 1. `detectLocale()` — sistem dili (`tr*`/`en*`), TR varsayılan.
  * 2. `locale()`      — anlık dil (`"tr" | "en"`); şablonlar bunu okur.
  * 3. `t(key, params)` — sözlükten metin + `{ad}` yer tutucuları + çoğul.
- * 4. `setLocale(next)` — sinyal + kalıcılık + belge/pencere başlığı + Rust.
+ * 4. `applyLocale()` — belge/pencere başlığını senkronlar.
+ *
+ * Dil **kalıcı** olarak `settings` tablosunda saklanır (`src-tauri/src/db.rs`),
+ * bu yüzden bu modül yalnızca arayüz tarafını yönetir; kaydetme ve yükleme
+ * `src/lib/settings.ts` üzerinden yapılır.
  *
  * Rust tarafındaki karşılık `src-tauri/src/i18n.rs`'dir; ikisi aynı anahtar
  * uzayını paylaşmaz (Rust mesajları kendi sözlüğünde yaşar), ancak ikisi de
- * aynı `set_language` komutuyla senkronlanır.
+ * `save_settings` komutuyla senkronlanır.
  */
 import { createSignal } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { en } from "./en";
 import { tr, type Dict, type Template } from "./tr";
 
 export type { Dict, Template };
 export type Locale = "tr" | "en";
-
-/** `localStorage` anahtarı. */
-const STORAGE_KEY = "adm.lang";
 
 /** Tanınmayan bir dil için varsayılan. */
 const DEFAULT_LOCALE: Locale = "tr";
@@ -39,18 +39,13 @@ export type PluralParams = Params & { count: number };
 // -----------------------------------------------------------------
 
 /**
- * Başlangıç dilini belirler.
+ * Sistem diline göre başlangıç dili.
  *
- * Sıra: kayıtlı tercih → tarayıcı dili (`tr*`/`en*`) → Türkçe.
+ * Yalnızca **geçici** bir değerdir: ayarlar yüklenince `settings.ts`
+ * kayıtlı dille değiştirir. Böylece ayar okunamazsa bile ilk boyamada
+ * Türkçe/İngilizce arasında makul bir dil görünür.
  */
 export function detectLocale(): Locale {
-  try {
-    const saved = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (saved === "tr" || saved === "en") return saved;
-  } catch {
-    // localStorage erişilemez (gizli sekme / kısıtlı bağlam) — sessiz geç.
-  }
-
   const nav =
     typeof navigator !== "undefined" ? (navigator.language ?? "") : "";
   const tag = nav.toLowerCase();
@@ -123,26 +118,17 @@ export function t(key: string, params?: Params | PluralParams): string {
 // Dil değiştirme
 // -----------------------------------------------------------------
 
-/** Dil değiştikten sonra çalışacak geri çağrılar (listeyi yenilemek için). */
+/** Dil uygulandıktan sonra çalışacak geri çağrılar. */
 const afterLocaleChange = new Set<() => void>();
 
 /**
  * Dil uygulandıktan **sonra** çağrılacak bir geri çağrı kaydeder.
  *
- * Rust'a `set_language` gönderildikten sonra tetiklenir; böylece kalıcı
+ * Rust'a ayarlar kaydedildikten sonra tetiklenir; böylece kalıcı
  * `error_message` kayıtları yeniden okunurken **yeni** dilde çevrilir.
  */
 export function onLocaleChange(fn: () => void): void {
   afterLocaleChange.add(fn);
-}
-
-/** Tercihi kalıcılaştırır (localStorage erişilemezse sessiz geçer). */
-function persist(lang: Locale): void {
-  try {
-    globalThis.localStorage?.setItem(STORAGE_KEY, lang);
-  } catch {
-    // Yazma engelliyse dil yalnızca bu oturumda geçerli olur.
-  }
 }
 
 /** `<html lang>`, `<title>` ve sekme etiketlerini günceller. */
@@ -161,33 +147,24 @@ async function applyWindowTitle(): Promise<void> {
   }
 }
 
-/** Rust tarafındaki dile bildirir (Tauri dışında sessizce atlanır). */
-async function notifyRust(lang: Locale): Promise<void> {
-  try {
-    await invoke("set_language", { lang });
-  } catch {
-    // Tarayıcı modunda Rust yok; arayüz yine de çalışır.
-  }
+/**
+ * Dili yalnızca **arayüzde** uygular (sinyal + belge + pencere başlığı).
+ *
+ * Kalıcılık burada yapılmaz: dil `settings` tablosunda saklanır ve
+ * `settings.ts` üzerinden yazılır; böylece tek kaynak kalır.
+ */
+export async function applyLocale(lang: Locale): Promise<void> {
+  setLocaleSignal(lang);
+  applyDocument(lang);
+  await applyWindowTitle();
 }
 
 /**
- * Dili değiştirir.
+ * Dil değişikliğinin tamamlandığını bildirir: kayıtlı geri çağrıları tetikler.
  *
- * Sinyal **eşzamanlı** güncellenir (arayüz anında yeniden çizilir), ardından
- * Rust'a bildirilir ve `onLocaleChange` geri çağrıları tetiklenir.
+ * Bu noktada Rust tarafındaki dil **güncel** olmalıdır; aksi halde liste
+ * yeniden yüklenirken kalıcı hata mesajları eski dilde çevrilir.
  */
-export async function setLocale(lang: Locale): Promise<void> {
-  setLocaleSignal(lang);
-  persist(lang);
-  applyDocument(lang);
-
-  await notifyRust(lang);
-  await applyWindowTitle();
-
+export function notifyLocaleChanged(): void {
   for (const fn of afterLocaleChange) fn();
-}
-
-/** Başka bir dile geçer (dil anahtarı düğmesi için). */
-export function toggleLocale(): void {
-  void setLocale(locale() === "tr" ? "en" : "tr");
 }
