@@ -1,0 +1,555 @@
+//! SQLite veri katmanı.
+//!
+//! WPF sürümündeki `DbContext` paylaşımlı bir EF context'iydi ve çok
+//! parçacıklı (thread) kullanımda thread-safety sorunları çıkarıyordu.
+//! Burada `SqlitePool` kullanılır; `Pool` zaten `Send + Sync`'tir ve
+//! eşzamanlı bağlantıları güvenle yönetir.
+//!
+//! Durum sütunu **İngilizce** metin olarak saklanır (`Queued`, `Downloading`,
+//! ...); arayüzde Türkçe karşılıklarına çevrilir.
+
+use anyhow::{Context, Result};
+use chrono::{DateTime, Local};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous,
+};
+use sqlx::{Row, SqlitePool};
+use std::path::PathBuf;
+
+use crate::models::{ChannelState, DownloadItem, DownloadStatus};
+
+/// Veritabanı dosyasının bulunduğu dizin: `%LocalAppData%\ADM`
+fn db_dir() -> PathBuf {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join("AppData").join("Local"));
+    local_app_data.join("ADM")
+}
+
+/// Kullanıcı ana dizini (yedek çözüm).
+fn home_dir() -> PathBuf {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// `downloads.db` dosyasının tam yolu.
+pub fn db_path() -> PathBuf {
+    db_dir().join("downloads.db")
+}
+
+/// Tablo oluşturma / şema migrasyonu.
+///
+/// `DESC` indekste kullanılmaz: SQLite dizin sırasını desteklemez ve
+/// `ORDER BY created_at DESC` sorgularında zaten azalan tarama yapar.
+/// Her ifade ayrı çalıştırılır (çoklu ifade toplu gönderimi bazı
+/// sürücülerde yalnızca ilk ifadeyi uygular).
+const SCHEMA: &[&str] = &[
+    r#"
+    CREATE TABLE IF NOT EXISTS downloads (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        url              TEXT    NOT NULL,
+        file_path        TEXT    NOT NULL,
+        file_name        TEXT    NOT NULL,
+        total_bytes      INTEGER NOT NULL DEFAULT 0,
+        downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+        channel_count    INTEGER NOT NULL DEFAULT 4,
+        status           TEXT    NOT NULL,
+        created_at       TEXT    NOT NULL,
+        completed_at     TEXT,
+        last_updated     TEXT    NOT NULL,
+        speed_mbps       REAL    NOT NULL DEFAULT 0,
+        error_message    TEXT,
+        channel_states   TEXT
+    )
+    "#,
+    "CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads (status)",
+    "CREATE INDEX IF NOT EXISTS idx_downloads_created_at ON downloads (created_at)",
+];
+
+/// Uygulamanın veritabanı erişimi.
+#[derive(Clone)]
+pub struct Database {
+    pool: SqlitePool,
+}
+
+impl Database {
+    /// Havuzu açar ve şemayı hazırlar (varsayılan konum).
+    pub async fn connect() -> Result<Self> {
+        let dir = db_dir();
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("Veritabanı dizini oluşturulamadı: {}", dir.display()))?;
+
+        Self::connect_at(db_path()).await
+    }
+
+    /// Verilen dosya yolunda havuz açar ve şemayı hazırlar.
+    ///
+    /// Üretimde `connect()` kullanılır; testler her test için ayrı dosya
+    /// açarak birbirlerinin verisini göremez.
+    pub async fn connect_at(path: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Veritabanı dizini oluşturulamadı: {}", parent.display())
+            })?;
+        }
+
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            // WAL: okuma ve yazma eşzamanlı, kilit çekişmesi yok.
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .foreign_keys(true)
+            .busy_timeout(std::time::Duration::from_secs(10));
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect_with(options)
+            .await
+            .context("SQLite bağlantı havuzu açılamadı")?;
+
+        let db = Database { pool };
+        db.migrate().await?;
+        Ok(db)
+    }
+
+    /// Şemayı hazırlar (idempotent).
+    async fn migrate(&self) -> Result<()> {
+        migrate(&self.pool).await
+    }
+
+    /// Yeni bir indirme kaydı oluşturur ve `id`'yi döner.
+    pub async fn insert(&self, item: &DownloadItem) -> Result<i64> {
+        let res = sqlx::query(
+            r#"
+            INSERT INTO downloads
+                (url, file_path, file_name, total_bytes, downloaded_bytes,
+                 channel_count, status, created_at, completed_at, last_updated,
+                 speed_mbps, error_message, channel_states)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&item.url)
+        .bind(&item.file_path)
+        .bind(&item.file_name)
+        .bind(item.total_bytes as i64)
+        .bind(item.downloaded_bytes as i64)
+        .bind(item.channel_count as i64)
+        .bind(item.status.as_str())
+        .bind(item.created_at.to_rfc3339())
+        .bind(item.completed_at.map(|d| d.to_rfc3339()))
+        .bind(item.last_updated.to_rfc3339())
+        .bind(item.speed_mbps)
+        .bind(item.error_message.as_deref())
+        .bind(crate::models::channel_states_to_json(&item.channels))
+        .execute(&self.pool)
+        .await
+        .context("İndirme kaydı eklenemedi")?;
+
+        Ok(res.last_insert_rowid())
+    }
+
+    /// İlerleme alanlarını günceller (durum ve kanal durumları dahil).
+    pub async fn update_progress(&self, item: &DownloadItem) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE downloads SET
+                total_bytes      = ?,
+                downloaded_bytes = ?,
+                channel_count    = ?,
+                status           = ?,
+                last_updated     = ?,
+                speed_mbps       = ?,
+                error_message    = ?,
+                channel_states   = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(item.total_bytes as i64)
+        .bind(item.downloaded_bytes as i64)
+        .bind(item.channel_count as i64)
+        .bind(item.status.as_str())
+        .bind(item.last_updated.to_rfc3339())
+        .bind(item.speed_mbps)
+        .bind(item.error_message.as_deref())
+        .bind(crate::models::channel_states_to_json(&item.channels))
+        .bind(item.id)
+        .execute(&self.pool)
+        .await
+        .context("İndirme ilerlemesi kaydedilemedi")?;
+        Ok(())
+    }
+
+    /// Durum ve zaman damgalarını günceller.
+    pub async fn update_status(
+        &self,
+        id: i64,
+        status: DownloadStatus,
+        completed_at: Option<DateTime<Local>>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE downloads SET
+                status         = ?,
+                completed_at   = COALESCE(?, completed_at),
+                last_updated   = ?,
+                speed_mbps     = 0,
+                error_message  = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(status.as_str())
+        .bind(completed_at.map(|d| d.to_rfc3339()))
+        .bind(Local::now().to_rfc3339())
+        .bind(error_message)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("İndirme durumu güncellenemedi")?;
+        Ok(())
+    }
+
+    /// Kanal sayısını değiştirir.
+    pub async fn update_channel_count(&self, id: i64, channel_count: u32) -> Result<()> {
+        sqlx::query("UPDATE downloads SET channel_count = ?, last_updated = ? WHERE id = ?")
+            .bind(channel_count as i64)
+            .bind(Local::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Kanal sayısı güncellenemedi")?;
+        Ok(())
+    }
+
+    /// Tek bir kaydı okur.
+    pub async fn get(&self, id: i64) -> Result<Option<DownloadItem>> {
+        let row = sqlx::query("SELECT * FROM downloads WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("İndirme kaydı okunamadı")?;
+
+        Ok(row.as_ref().map(row_to_item))
+    }
+
+    /// Tüm kayıtlar, en yeni önce.
+    pub async fn list_all(&self) -> Result<Vec<DownloadItem>> {
+        let rows = sqlx::query("SELECT * FROM downloads ORDER BY created_at DESC, id DESC")
+            .fetch_all(&self.pool)
+            .await
+            .context("İndirme listesi okunamadı")?;
+        Ok(rows.iter().map(row_to_item).collect())
+    }
+
+    /// Yalnızca aktif / duraklatılmış kayıtlar.
+    pub async fn list_active(&self) -> Result<Vec<DownloadItem>> {
+        let rows = sqlx::query(
+            "SELECT * FROM downloads WHERE status IN ('Queued','Downloading','Paused') \
+             ORDER BY created_at DESC, id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Aktif indirme listesi okunamadı")?;
+        Ok(rows.iter().map(row_to_item).collect())
+    }
+
+    /// Tek bir kaydı siler.
+    pub async fn delete(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM downloads WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("İndirme kaydı silinemedi")?;
+        Ok(())
+    }
+
+    /// Tüm kayıtları siler (testler ve toplu temizlik).
+    #[cfg(test)]
+    pub async fn delete_all(&self) -> Result<()> {
+        sqlx::query("DELETE FROM downloads")
+            .execute(&self.pool)
+            .await
+            .context("İndirme geçmişi temizlenemedi")?;
+        Ok(())
+    }
+
+    /// Ham bağlantı havuzu (yalnızca testler).
+    #[cfg(test)]
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+}
+
+/// Tablo oluşturma / şema migrasyonu.
+///
+/// `SCHEMA` bir sabit `&[&str]` olduğu için SQL enjeksiyonu riski yoktur;
+/// clippy'in dinamik SQL uyarısı bunun için bastırılır.
+async fn migrate(pool: &SqlitePool) -> Result<()> {
+    for stmt in SCHEMA {
+        #[allow(clippy::unnecessary_literal_unwrap)]
+        let sql = *stmt;
+        sqlx::query(sql)
+            .execute(pool)
+            .await
+            .with_context(|| format!("Şema hazırlanamadı: {}", first_line(sql)))?;
+    }
+    Ok(())
+}
+
+/// SQL metninin ilk satırı (hata mesajları için).
+fn first_line(sql: &str) -> &str {
+    sql.lines().next().unwrap_or(sql).trim()
+}
+
+/// RFC 3339 metninden yerel zaman damgasına çevirir.
+fn parse_dt(raw: &str) -> DateTime<Local> {
+    DateTime::parse_from_rfc3339(raw)
+        .map(|d| d.with_timezone(&Local))
+        .unwrap_or_else(|_| Local::now())
+}
+
+/// İsteğe bağlı zaman damgası.
+fn parse_dt_opt(raw: Option<String>) -> Option<DateTime<Local>> {
+    raw.as_deref().and_then(|s| {
+        DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|d| d.with_timezone(&Local))
+    })
+}
+
+/// SQL satırını uygulama modeline çevirir.
+fn row_to_item(r: &SqliteRow) -> DownloadItem {
+    let channels_json: Option<String> = r.try_get("channel_states").unwrap_or(None);
+    let channels: Vec<ChannelState> = channels_json
+        .as_deref()
+        .map(crate::models::channel_states_from_json)
+        .unwrap_or_default();
+
+    let status_str: String = r
+        .try_get::<String, _>("status")
+        .unwrap_or_else(|_| DownloadStatus::Failed.as_str().to_string());
+
+    DownloadItem {
+        id: r.try_get::<i64, _>("id").unwrap_or(0),
+        url: r.try_get("url").unwrap_or_default(),
+        file_path: r.try_get("file_path").unwrap_or_default(),
+        file_name: r.try_get("file_name").unwrap_or_default(),
+        total_bytes: r.try_get::<i64, _>("total_bytes").unwrap_or(0).max(0) as u64,
+        downloaded_bytes: r.try_get::<i64, _>("downloaded_bytes").unwrap_or(0).max(0) as u64,
+        channel_count: r.try_get::<i64, _>("channel_count").unwrap_or(1).max(1) as u32,
+        status: DownloadStatus::from_db(&status_str),
+        created_at: parse_dt(&r.try_get::<String, _>("created_at").unwrap_or_default()),
+        completed_at: parse_dt_opt(r.try_get("completed_at").unwrap_or(None)),
+        last_updated: parse_dt(&r.try_get::<String, _>("last_updated").unwrap_or_default()),
+        speed_mbps: r.try_get::<f64, _>("speed_mbps").unwrap_or(0.0),
+        error_message: r.try_get("error_message").unwrap_or(None),
+        channels,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Testler için bellek içi geçici veritabanı açar.
+    async fn test_db(name: &str) -> Database {
+        let opts = SqliteConnectOptions::new()
+            .filename(std::env::temp_dir().join(format!("adm_test_{name}.db")))
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Delete);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .expect("test veritabanı açılamadı");
+        let db = Database { pool };
+        db.migrate().await.expect("şema hazırlanamadı");
+        db.delete_all().await.expect("temizlenemedi");
+        db
+    }
+
+    /// Test verisi üretir.
+    fn sample(name: &str) -> DownloadItem {
+        let now = Local::now();
+        DownloadItem {
+            id: 0,
+            url: format!("https://ornek.tld/{name}"),
+            file_path: format!("C:/tmp/{name}.bin"),
+            file_name: format!("{name}.bin"),
+            total_bytes: 0,
+            downloaded_bytes: 0,
+            channel_count: 4,
+            status: DownloadStatus::Queued,
+            created_at: now,
+            completed_at: None,
+            last_updated: now,
+            speed_mbps: 0.0,
+            error_message: None,
+            channels: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_and_get_roundtrips_all_fields() {
+        let db = test_db("roundtrip").await;
+
+        let mut item = sample("giris");
+        item.total_bytes = 1000;
+        item.downloaded_bytes = 400;
+        item.channels = vec![ChannelState {
+            id: 0,
+            start_byte: 0,
+            end_byte: 999,
+            current_byte: 400,
+            finished: false,
+        }];
+
+        let id = db.insert(&item).await.unwrap();
+        assert!(id > 0);
+
+        let got = db.get(id).await.unwrap().expect("kayıt bulunamadı");
+        assert_eq!(got.id, id);
+        assert_eq!(got.url, item.url);
+        assert_eq!(got.file_name, "giris.bin");
+        assert_eq!(got.total_bytes, 1000);
+        assert_eq!(got.downloaded_bytes, 400);
+        assert_eq!(got.channel_count, 4);
+        assert_eq!(got.status, DownloadStatus::Queued);
+        assert_eq!(got.channels.len(), 1);
+        assert_eq!(got.channels[0].current_byte, 400);
+    }
+
+    #[tokio::test]
+    async fn status_is_stored_in_english() {
+        let db = test_db("status").await;
+        let mut item = sample("durum");
+        item.status = DownloadStatus::Paused;
+
+        let id = db.insert(&item).await.unwrap();
+
+        // Ham sütun İngilizce olmalı.
+        let raw: String = sqlx::query("SELECT status FROM downloads WHERE id = ?")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get("status")
+            .unwrap();
+        assert_eq!(raw, "Paused");
+        assert_eq!(
+            db.get(id).await.unwrap().unwrap().status,
+            DownloadStatus::Paused
+        );
+    }
+
+    #[tokio::test]
+    async fn update_progress_persists_channels_for_resume() {
+        let db = test_db("resume").await;
+        let item = sample("devam");
+        let id = db.insert(&item).await.unwrap();
+
+        // Duraklatma anında kanal durumları yazılır.
+        let paused = DownloadItem {
+            id,
+            total_bytes: 2048,
+            downloaded_bytes: 1024,
+            status: DownloadStatus::Paused,
+            channels: vec![
+                ChannelState {
+                    id: 0,
+                    start_byte: 0,
+                    end_byte: 1023,
+                    current_byte: 1024,
+                    finished: true,
+                },
+                ChannelState {
+                    id: 1,
+                    start_byte: 1024,
+                    end_byte: 2047,
+                    current_byte: 1500,
+                    finished: false,
+                },
+            ],
+            ..item.clone()
+        };
+        db.update_progress(&paused).await.unwrap();
+
+        let got = db.get(id).await.unwrap().unwrap();
+        assert_eq!(got.status, DownloadStatus::Paused);
+        assert_eq!(got.total_bytes, 2048);
+        assert_eq!(got.downloaded_bytes, 1024);
+        assert_eq!(got.channels.len(), 2);
+        assert!(got.channels[0].finished);
+        assert_eq!(got.channels[1].current_byte, 1500);
+        assert_eq!(got.channels[1].remaining(), 548);
+    }
+
+    #[tokio::test]
+    async fn list_active_filters_by_status() {
+        let db = test_db("liste").await;
+
+        for (name, status) in [
+            ("a", DownloadStatus::Completed),
+            ("b", DownloadStatus::Downloading),
+            ("c", DownloadStatus::Paused),
+            ("d", DownloadStatus::Failed),
+            ("e", DownloadStatus::Cancelled),
+        ] {
+            let mut item = sample(name);
+            item.status = status;
+            db.insert(&item).await.unwrap();
+        }
+
+        let active = db.list_active().await.unwrap();
+        assert_eq!(
+            active.len(),
+            2,
+            "yalnızca Downloading ve Paused aktif sayılır"
+        );
+        assert_eq!(db.list_all().await.unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_record() {
+        let db = test_db("sil").await;
+        let id = db.insert(&sample("silinecek")).await.unwrap();
+
+        db.delete(id).await.unwrap();
+        assert!(db.get(id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn completed_at_is_set_only_when_provided() {
+        let db = test_db("zaman").await;
+        let id = db.insert(&sample("zamanli")).await.unwrap();
+
+        db.update_status(id, DownloadStatus::Completed, Some(Local::now()), None)
+            .await
+            .unwrap();
+
+        let got = db.get(id).await.unwrap().unwrap();
+        assert_eq!(got.status, DownloadStatus::Completed);
+        assert!(got.completed_at.is_some());
+
+        // Hata durumunda `completed_at` boş kalmalı.
+        db.update_status(id, DownloadStatus::Failed, None, Some("hata"))
+            .await
+            .unwrap();
+        let got = db.get(id).await.unwrap().unwrap();
+        assert_eq!(got.status, DownloadStatus::Failed);
+        assert_eq!(got.error_message.as_deref(), Some("hata"));
+    }
+
+    #[tokio::test]
+    async fn change_channel_count_persists() {
+        let db = test_db("kanal").await;
+        let id = db.insert(&sample("kanalli")).await.unwrap();
+
+        db.update_channel_count(id, 16).await.unwrap();
+        assert_eq!(db.get(id).await.unwrap().unwrap().channel_count, 16);
+    }
+}

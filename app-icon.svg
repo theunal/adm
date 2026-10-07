@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    ADM uygulama ikonu — kaynak dosya.
+
+    Üretim: `npm run tauri icon app-icon.svg`
+    (tüm Windows / macOS / Linux / Android / iOS boyutları buradan türetilir)
+
+    Tasarım notları:
+    * Yuvarlatılmış koyu kutu + teal/emerald degrade — uygulamadaki paletle aynı.
+    * Ortada aşağı ok (indirme), altında tamamlanma çubuğu.
+    * Sol kenarda hız çizgileri.
+    * Degrade `gradientUnits="userSpaceOnUse"` kullanır: `objectBoundingBox`
+      bir `line` öğesinde sıfır yükseklik verir ve degrade görünmez olur.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16202e"/>
+      <stop offset="1" stop-color="#070b12"/>
+    </linearGradient>
+
+    <linearGradient id="accent" x1="300" y1="220" x2="760" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="0.55" stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+
+    <linearGradient id="sheen" x1="0" y1="64" x2="0" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Arka plan -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#sheen)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200"
+        fill="none" stroke="#2dd4bf" stroke-opacity="0.40" stroke-width="8"/>
+
+  <!-- Hız çizgileri (sol) -->
+  <g stroke="url(#accent)" stroke-width="30" stroke-linecap="round" opacity="0.62">
+    <line x1="176" y1="400" x2="336" y2="400"/>
+    <line x1="176" y1="500" x2="288" y2="500"/>
+    <line x1="176" y1="600" x2="336" y2="600"/>
+  </g>
+
+  <!-- İndirme oku (sağ-orta) -->
+  <g fill="url(#accent)">
+    <rect x="600" y="248" width="104" height="270" rx="26"/>
+    <path d="M536 486 h232 l116 152 a34 34 0 0 1 -26 56 H446 a34 34 0 0 1 -26 -56 Z"/>
+  </g>
+
+  <!-- Tamamlanma çubuğu -->
+  <rect x="536" y="742" width="344" height="56" rx="28" fill="url(#accent)" opacity="0.95"/>
+</svg>

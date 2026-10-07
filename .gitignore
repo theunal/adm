@@ -1,0 +1,15 @@
+# Bağımlılıklar
+node_modules/
+
+# Derleme çıktıları
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Yerel dosyalar
+*.log
+.DS_Store
+Thumbs.db
+
+# Not: package-lock.json bilerek yok sayılmıyor — kurulumun tekrarlanabilir
+# olması için kilit dosyası sürüm kontrolünde tutulur.

@@ -1,0 +1,291 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+            build_args: ""
+            artifact: windows-installer
+          - os: ubuntu-latest
+            bundles: deb,appimage
+            build_args: ""
+            artifact: linux-installer
+          - os: macos-latest
+            bundles: dmg
+            build_args: --target universal-apple-darwin
+            artifact: macos-installer
+
+    env:
+      # .NET SDK is required to build the MSI bundle (WiX Toolset)
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup .NET
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # universal-apple-darwin = Intel (x86_64) + Apple Silicon (arm64) in one binary
+      - name: Add Rust targets for macOS universal build
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      # One-time setup: create a GPG key and store it in the repo secrets
+      #   GPG_PRIVATE_KEY  -> armored private key (gpg --armor --export-secret-keys <id>)
+      #   GPG_PASSPHRASE   -> passphrase of that key
+      - name: Import GPG signing key (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY}" ]; then
+            echo "::warning::GPG_PRIVATE_KEY secret is not set - the AppImage will be published UNSIGNED."
+            exit 0
+          fi
+          if [ -z "${GPG_PASSPHRASE}" ]; then
+            echo "::warning::GPG_PASSPHRASE secret is not set - the AppImage will be published UNSIGNED."
+            exit 0
+          fi
+
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          KEY_ID="$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')"
+          if [ -z "$KEY_ID" ]; then
+            echo "::error::No secret key could be imported from GPG_PRIVATE_KEY."
+            exit 1
+          fi
+
+          mkdir -p signing
+          gpg --armor --export "$KEY_ID" > signing/gpg-public.asc
+          echo "Imported signing key: $KEY_ID"
+
+          # consumed by the Tauri/appimagetool bundling step
+          {
+            echo "SIGN=1"
+            echo "SIGN_KEY=$KEY_ID"
+            echo "APPIMAGETOOL_SIGN_PASSPHRASE=$GPG_PASSPHRASE"
+            echo "APPIMAGETOOL_FORCE_SIGN=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' must look like v1.2.3 (SemVer)."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          export VERSION
+          echo "Releasing version $VERSION"
+
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+
+            const confPath = "src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
+            conf.version = v;
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + "\n");
+
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+            const cargoPath = "src-tauri/Cargo.toml";
+            const cargo = fs.readFileSync(cargoPath, "utf8");
+            fs.writeFileSync(cargoPath, cargo.replace(/^version\s*=\s*"[^"]*"/m, `version = "${v}"`));
+          '
+
+          echo "tauri.conf.json -> $(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "package.json    -> $(node -p "require('./package.json').version")"
+          echo "Cargo.toml      -> $(grep -m1 '^version' src-tauri/Cargo.toml)"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Self-signed code signing certificate.
+      # If WINDOWS_CERTIFICATE (+ _PASSWORD) secrets are provided (a real CA-issued
+      # .pfx later on, base64 encoded via `certutil -encode`) that certificate is
+      # imported; otherwise an ephemeral self-signed certificate is created so the
+      # installers are always signed. Self-signed keeps the "unknown publisher"
+      # warning - it does NOT replace a CA certificate.
+      - name: Prepare Windows code-signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path signing | Out-Null
+
+          if ($env:WINDOWS_CERTIFICATE -and $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Host "Importing certificate from WINDOWS_CERTIFICATE secret..."
+            $pfx = Join-Path (Get-Location) 'signing\certificate.pfx'
+
+            # the secret holds the .pfx as base64
+            $b64 = $env:WINDOWS_CERTIFICATE -replace '\s', ''
+            try {
+              [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($b64))
+            }
+            catch {
+              # fall back to certutil, which also accepts -----BEGIN----- style output
+              $tmp = Join-Path (Get-Location) 'signing\certificate.b64'
+              Set-Content -Path $tmp -Value $env:WINDOWS_CERTIFICATE -Encoding ascii
+              & certutil -decode $tmp $pfx | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_CERTIFICATE could not be decoded as base64.' }
+              Remove-Item $tmp -Force
+            }
+
+            $secure = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+            Remove-Item $pfx -Force
+          }
+          else {
+            Write-Host "No WINDOWS_CERTIFICATE secret found - generating an ephemeral self-signed certificate."
+            $cert = New-SelfSignedCertificate `
+              -Type CodeSigningCert `
+              -Subject 'CN=ADM' `
+              -CertStoreLocation Cert:\CurrentUser\My `
+              -KeyExportPolicy Exportable `
+              -KeyLength 2048 `
+              -KeyAlgorithm RSA `
+              -HashAlgorithm SHA256 `
+              -NotAfter (Get-Date).AddYears(3)
+          }
+
+          $thumb = $cert.Thumbprint
+          Write-Host "Certificate: $($cert.Subject) ($thumb)"
+
+          # public part -> published as a release asset so users can install it
+          Export-Certificate -Cert $cert -FilePath signing\adm-code-signing.cer | Out-Null
+
+          # platform specific config, merged automatically by the Tauri CLI
+          $windowsConfig = @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $thumb
+                digestAlgorithm       = 'sha256'
+                timestampUrl          = 'http://timestamp.digicert.com'
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          Set-Content -Path src-tauri\tauri.windows.conf.json -Value $windowsConfig -Encoding utf8
+          Get-Content src-tauri\tauri.windows.conf.json
+
+      - name: Build installers
+        run: npm run tauri -- build --bundles ${{ matrix.bundles }} ${{ matrix.build_args }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          # --target universal-apple-darwin writes to target/<triple>/release/bundle
+          path: |
+            src-tauri/target/release/bundle/**/*
+            src-tauri/target/*/release/bundle/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+      # public part of the signing certificate - users can install it into
+      # "Trusted Root" to remove the publisher warning on their own machines
+      - name: Upload code-signing certificate
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-code-signing-cert
+          path: signing/adm-code-signing.cer
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload public signing key
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpg-public-key
+          path: signing/gpg-public.asc
+          if-no-files-found: warn
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List assets
+        run: find release-assets -type f -printf '%f (%s bytes)\n' | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ADM ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/**/*
