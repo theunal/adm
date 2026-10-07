@@ -4,8 +4,12 @@
  * Pencere dekorasyonları kapatıldığı için küçültme / büyütme / kapatma
  * düğmeleri Tauri pencer API'si üzerinden burada sunulur. Çubuğun kendisi
  * sürüklenebilir alandır (`data-tauri-drag-region`).
+ *
+ * Sağdaki `TR | EN` dil anahtarı, `lib/i18n`'deki `setLocale()` çağrısını
+ * tetikler: arayüz metinleri, belge/pencere başlığı ve Rust tarafındaki mesaj
+ * dili birlikte değişir.
  */
-import { Show } from "solid-js";
+import { For, Show } from "solid-js";
 import {
   closeWindow,
   minimizeWindow,
@@ -13,6 +17,10 @@ import {
 } from "../lib/api";
 import { activeCount, summary } from "../lib/store";
 import { formatBytes, formatSpeed } from "../lib/format";
+import { locale, setLocale, t, type Locale } from "../lib/i18n";
+
+/** Dil anahtarındaki seçenekler. */
+const LANGS: Locale[] = ["tr", "en"];
 
 export default function TitleBar() {
   const totals = () => summary();
@@ -26,37 +34,57 @@ export default function TitleBar() {
         </span>
         <div class="brand-text">
           <span class="brand-title">ADM</span>
-          <span class="brand-sub">Gelişmiş İndirme Yöneticisi</span>
+          <span class="brand-sub">{t("title.brand_sub")}</span>
         </div>
       </div>
 
       {/* Orta: canlı özet (yalnızca sürüklenebilir alan) */}
       <div class="titlebar-summary" data-tauri-drag-region>
-        <Show when={activeCount() > 0} fallback={<span class="summary-idle">Boşta</span>}>
+        <Show when={activeCount() > 0} fallback={<span class="summary-idle">{t("title.idle")}</span>}>
           <span class="summary-item">
             <span class="summary-value">{activeCount()}</span>
-            <span class="summary-label">aktif</span>
+            <span class="summary-label">{t("title.summary.active")}</span>
           </span>
           <span class="summary-sep" aria-hidden="true">•</span>
           <span class="summary-item">
             <span class="summary-value">{formatSpeed(totals().totalSpeed)}</span>
-            <span class="summary-label">hız</span>
+            <span class="summary-label">{t("title.summary.speed")}</span>
           </span>
           <span class="summary-sep" aria-hidden="true">•</span>
           <span class="summary-item">
             <span class="summary-value">{formatBytes(totals().totalDownloaded)}</span>
-            <span class="summary-label">indirildi</span>
+            <span class="summary-label">{t("title.summary.downloaded")}</span>
           </span>
         </Show>
       </div>
 
-      {/* Sağ: pencere düğmeleri */}
+      {/* Sağ: dil anahtarı + pencere düğmeleri */}
       <div class="titlebar-actions">
+        <div
+          class="lang-switch"
+          role="group"
+          aria-label={t("title.lang.label")}
+          data-tauri-drag-region={false}
+        >
+          <For each={LANGS}>
+            {(code) => (
+              <button
+                type="button"
+                class={`lang-opt ${locale() === code ? "lang-opt-active" : ""}`}
+                aria-pressed={locale() === code}
+                onClick={() => void setLocale(code)}
+              >
+                {code.toUpperCase()}
+              </button>
+            )}
+          </For>
+        </div>
+
         <button
           type="button"
           class="win-btn"
-          title="Küçült"
-          aria-label="Küçült"
+          title={t("title.win.minimize")}
+          aria-label={t("title.win.minimize")}
           onClick={() => void minimizeWindow()}
         >
           <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
@@ -67,8 +95,8 @@ export default function TitleBar() {
         <button
           type="button"
           class="win-btn"
-          title="Büyüt / Küçült"
-          aria-label="Büyüt veya küçült"
+          title={t("title.win.maximize")}
+          aria-label={t("title.win.maximize_aria")}
           onClick={() => void toggleMaximizeWindow()}
         >
           <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
@@ -87,8 +115,8 @@ export default function TitleBar() {
         <button
           type="button"
           class="win-btn win-btn-close"
-          title="Kapat"
-          aria-label="Kapat"
+          title={t("title.win.close")}
+          aria-label={t("title.win.close")}
           onClick={() => void closeWindow()}
         >
           <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">

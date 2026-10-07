@@ -19,8 +19,11 @@ hatalar düzeltilmiş, arayüz yeniden tasarlanmıştır.
 - **Kalıcı geçmiş** — SQLite (`%LocalAppData%\ADM\downloads.db`)
 - **Graceful shutdown** — uygulama kapanırken aktif indirmeler iptal edilir,
   kanal durumları kaydedilir
-- **Tamamen Türkçe** — arayüz, loglar ve hata mesajları; durum enum'ları
-  veritabanında İngilizce kalır, arayüzde çeviri katmanından geçer
+- **Türkçe / İngilizce** — arayüz, loglar ve hata mesajları başlık çubuğundaki
+  `TR | EN` anahtarından değiştirilir (`src/lib/i18n/`, `src-tauri/src/i18n.rs`);
+  durum enum'ları veritabanında İngilizce kalır, arayüzde çeviri katmanından
+  geçer. Kalıcı hata mesajları kanonik biçimde saklanır, okunurken seçili
+  dile çevrilir.
 
 ## Düzeltilen hatalar (WPF sürümünden taşınırken)
 

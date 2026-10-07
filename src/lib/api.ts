@@ -1,12 +1,14 @@
 /**
  * Tauri köprüsü — komut çağrıları ve olay aboneliği.
  *
- * Tüm hata mesajları Rust tarafında Türkçe üretilir; burada yalnızca
- * taşınır.
+ * Hata mesajları Rust tarafında `i18n.rs` sözlüğünden seçili dilde üretilir;
+ * burada yalnızca taşınır. Diyalog başlıkları arayüzde üretildiği için
+ * `lib/i18n` sözlüğünden gelir.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DownloadEvent, DownloadItem } from "./format";
+import { t } from "./i18n";
 
 /** Tauri olayının adı. */
 export const DOWNLOAD_EVENT = "download://event";
@@ -130,7 +132,7 @@ export async function pickSavePath(
   const { save } = await import("@tauri-apps/plugin-dialog");
   const picked = await save({
     defaultPath: `${defaultDir}\\${suggestedName}`,
-    title: "İndirilecek dosyayı seç",
+    title: t("dialog.save_title"),
   });
   return typeof picked === "string" ? picked : null;
 }
@@ -138,7 +140,7 @@ export async function pickSavePath(
 /** Kullanıcıya onay diyaloğu gösterir. */
 export async function confirm(
   message: string,
-  title = "Onay",
+  title = t("dialog.confirm_title"),
 ): Promise<boolean> {
   const { ask } = await import("@tauri-apps/plugin-dialog");
   return ask(message, { title, kind: "warning" });

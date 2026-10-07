@@ -23,7 +23,32 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use tokio::sync::{Notify, Semaphore};
 
+use crate::i18n::{self, canon, t};
 use crate::models::{ChannelState, SharedChannel};
+
+/// Kanonik biçimde hata üretir: veritabanına öyle yazılır, ekranda
+/// `render()` ile seçili dilde görünür.
+fn cerr(key: &str) -> EngineError {
+    EngineError::Failed(canon(key, &[]))
+}
+
+/// Kanonik biçimde, tek argümanlı hata üretir.
+fn cerr1(key: &str, arg: &str) -> EngineError {
+    EngineError::Failed(canon(key, &[arg]))
+}
+
+/// Kanonik biçimde, iki argümanlı hata üretir.
+fn cerr2(key: &str, a: &str, b: &str) -> EngineError {
+    EngineError::Failed(canon(key, &[a, b]))
+}
+
+/// Hata mesajını seçili dilde gösterilebilir metne çevirir.
+fn emsg(e: &EngineError) -> String {
+    match e {
+        EngineError::Aborted => t("status.aborted", &[]),
+        EngineError::Failed(msg) => i18n::render(msg),
+    }
+}
 
 /// Yazma tamponu (256 KB). Akış parçaları bu boyutta biriktirilip tek
 /// sistem çağrısıyla diske yazılır.
@@ -57,20 +82,20 @@ const STEAL_THRESHOLD_BYTES: u64 = 20 * 1024 * 1024;
 const SPEED_HISTORY_LEN: usize = 60;
 
 /// Motor tarafından üretilen hata.
+///
+/// `Failed` **kanonik** bir metin taşır (bkz. `i18n::canon`): veritabanına
+/// bu biçimde yazılır, kullanıcıya `i18n::render` ile gösterilir.
 #[derive(Debug, Clone)]
 pub enum EngineError {
     /// Kullanıcı duraklattı veya iptal etti.
     Aborted,
-    /// Gerçek bir hata (Türkçe mesaj taşır).
+    /// Gerçek bir hata (kanonik mesaj taşır).
     Failed(String),
 }
 
 impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Aborted => write!(f, "Duraklatıldı"),
-            Self::Failed(m) => write!(f, "{m}"),
-        }
+        write!(f, "{}", emsg(self))
     }
 }
 
@@ -78,7 +103,7 @@ impl std::error::Error for EngineError {}
 
 impl From<std::io::Error> for EngineError {
     fn from(e: std::io::Error) -> Self {
-        Self::Failed(format!("Dosya işlemi hatası: {e}"))
+        cerr1("err.io", &e.to_string())
     }
 }
 
@@ -138,8 +163,8 @@ pub struct EngineSnapshot {
     pub speed_mbps: f64,
     pub channels: Vec<ChannelState>,
     pub speed_history: Vec<SpeedSample>,
-    /// Kısa Türkçe durum metni (log panelinde gösterilir).
-    pub phase: &'static str,
+    /// Kısa durum metni (seçili dilde, log panelinde gösterilir).
+    pub phase: String,
     /// Tüm kanallar bitti mi?
     pub done: bool,
 }
@@ -216,17 +241,20 @@ struct ProbeInfo {
 }
 
 fn net_error_message(e: &reqwest::Error) -> String {
-    if e.is_timeout() {
-        "Bağlantı zaman aşımına uğradı".to_string()
+    let key = if e.is_timeout() {
+        "err.timeout"
     } else if e.is_connect() {
-        "Sunucuya bağlanılamadı (ağ ya da adres hatası)".to_string()
+        "err.connect"
     } else if e.is_redirect() {
-        "Yönlendirme hatası".to_string()
-    } else if let Some(src) = std::error::Error::source(e) {
-        format!("Ağ hatası: {src}")
+        "err.redirect"
     } else {
-        format!("Ağ hatası: {e}")
-    }
+        // Kaynak hata varsa onu, yoksa hatanın kendisini göster.
+        let detail = std::error::Error::source(e)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| e.to_string());
+        return canon("err.net", &[&detail]);
+    };
+    canon(key, &[])
 }
 
 /// İstek gönderir; iptal sinyali gelirse `Aborted` döner.
@@ -266,14 +294,10 @@ async fn resolve_url(
 
         if status.is_redirection() {
             let Some(loc) = resp.headers().get(reqwest::header::LOCATION) else {
-                return Err(EngineError::Failed(
-                    "Sunucu yönlendirme yaptı ancak hedef adresi yok".into(),
-                ));
+                return Err(cerr("err.redirect_no_target"));
             };
             let Ok(loc_str) = loc.to_str() else {
-                return Err(EngineError::Failed(
-                    "Sunucu geçersiz yönlendirme adresi gönderdi".into(),
-                ));
+                return Err(cerr("err.redirect_invalid"));
             };
             let loc_str = loc_str.to_string();
             current = reqwest::Url::parse(&current)
@@ -318,16 +342,14 @@ async fn resolve_url(
             ));
         }
 
-        return Err(EngineError::Failed(format!(
-            "Sunucu isteği reddetti: {} {}",
-            status.as_u16(),
-            status.canonical_reason().unwrap_or("")
-        )));
+        return Err(cerr2(
+            "err.server_rejected",
+            &status.as_u16().to_string(),
+            status.canonical_reason().unwrap_or(""),
+        ));
     }
 
-    Err(EngineError::Failed(format!(
-        "Çok fazla yönlendirme ({MAX_REDIRECTS} sınırı aşıldı)"
-    )))
+    Err(cerr1("err.too_many_redirects", &MAX_REDIRECTS.to_string()))
 }
 
 /// `total_bytes` değerini kanal aralıklarına böler.
@@ -388,9 +410,9 @@ fn preallocate(dest: &Path, size: u64) -> Result<(), EngineError> {
         .create(true)
         .truncate(true)
         .open(dest)
-        .map_err(|e| EngineError::Failed(format!("Hedef dosya oluşturulamadı: {e}")))?;
+        .map_err(|e| cerr1("err.dest_create_failed", &e.to_string()))?;
     f.set_len(size)
-        .map_err(|e| EngineError::Failed(format!("Dosya boyutu ayrılamadı: {e}")))?;
+        .map_err(|e| cerr1("err.size_reserve_failed", &e.to_string()))?;
     Ok(())
 }
 
@@ -452,7 +474,7 @@ impl DownloadEngine {
                 speed_mbps: 0.0,
                 channels: snapshot_all(&channels),
                 speed_history: Vec::new(),
-                phase: "Tamamlandı",
+                phase: t("phase.completed", &[]),
                 done: true,
             });
             return Ok(snapshot_all(&channels));
@@ -499,16 +521,18 @@ impl DownloadEngine {
                 speed_mbps: 0.0,
                 channels: states.clone(),
                 speed_history: Vec::new(),
-                phase: "Tamamlandı",
+                phase: t("phase.completed", &[]),
                 done: true,
             });
             Ok(states)
         } else if signal.is_aborted() {
             Err(EngineError::Aborted)
         } else {
-            Err(EngineError::Failed(format!(
-                "İndirme eksik kaldı: {done} / {total_bytes} bayt alındı"
-            )))
+            Err(cerr2(
+                "err.incomplete",
+                &done.to_string(),
+                &total_bytes.to_string(),
+            ))
         }
     }
 
@@ -611,9 +635,7 @@ impl DownloadEngine {
                 }
                 Err(join_err) => {
                     if first_error.is_none() {
-                        first_error = Some(EngineError::Failed(format!(
-                            "Kanal görevi beklenmedik şekilde sonlandı: {join_err}"
-                        )));
+                        first_error = Some(cerr1("err.channel_task_ended", &join_err.to_string()));
                     }
                 }
             }
@@ -637,10 +659,11 @@ fn ensure_parent_dir(path: &Path) -> Result<(), EngineError> {
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent).map_err(|e| {
-            EngineError::Failed(format!(
-                "Kayıt dizini oluşturulamadı ({}): {e}",
-                parent.display()
-            ))
+            cerr2(
+                "err.parent_dir_failed",
+                &parent.display().to_string(),
+                &e.to_string(),
+            )
         })?;
     }
     Ok(())
@@ -720,9 +743,9 @@ async fn progress_publisher(
             channels: snapshot_all(&channels),
             speed_history: history.iter().cloned().collect(),
             phase: if total_bytes == 0 {
-                "Boyut bilinmiyor"
+                t("phase.size_unknown", &[])
             } else {
-                "İndiriliyor"
+                t("phase.downloading", &[])
             },
             done: all_finished(&channels),
         });
@@ -744,7 +767,7 @@ async fn run_channel(
     let _permit = handles
         .acquire()
         .await
-        .map_err(|_| EngineError::Failed("Dosya kaynağı kapatıldı".into()))?;
+        .map_err(|_| cerr("err.source_closed"))?;
 
     // Dosya tutamağını bir kez aç ve tüm denemelerde yeniden kullan.
     let ranged = supports_ranges && total_bytes > 0;
@@ -783,10 +806,10 @@ async fn run_channel(
                 // Sunucu akışı beklenenden erken kapattı.
                 attempts += 1;
                 if attempts > MAX_RETRIES_PER_CHANNEL {
-                    return Err(EngineError::Failed(format!(
-                        "Sunucu akışı {} denemeden sonra kesildi",
-                        MAX_RETRIES_PER_CHANNEL
-                    )));
+                    return Err(cerr1(
+                        "err.stream_cut",
+                        &MAX_RETRIES_PER_CHANNEL.to_string(),
+                    ));
                 }
                 sleep_backoff(&signal, attempts).await;
             }
@@ -823,7 +846,7 @@ fn open_target(dest: &Path, ranged: bool) -> Result<std::fs::File, EngineError> 
     }
 
     opts.open(dest)
-        .map_err(|e| EngineError::Failed(format!("Hedef dosya açılamadı: {e}")))
+        .map_err(|e| cerr1("err.dest_open_failed", &e.to_string()))
 }
 
 /// Bir kanalın `[start, end]` aralığını indirir ve diske yazar.
@@ -854,20 +877,17 @@ async fn fetch_range(
         // DÜZELTME (eski bug): Range istendi ama 206 gelmediyse hata ver.
         if status != reqwest::StatusCode::PARTIAL_CONTENT {
             return Err(match status {
-                s if s == reqwest::StatusCode::RANGE_NOT_SATISFIABLE => {
-                    EngineError::Failed(format!(
-                        "Sunucu istenen {start_byte}-{end_byte} bayt aralığını sağlamıyor (416)"
-                    ))
-                }
-                s if s.is_success() => EngineError::Failed(
-                    "Sunucu bölümlü indirmeyi desteklemiyor (200 OK döndü, 206 bekleniyordu)"
-                        .to_string(),
+                s if s == reqwest::StatusCode::RANGE_NOT_SATISFIABLE => cerr2(
+                    "err.range_not_satisfiable",
+                    &start_byte.to_string(),
+                    &end_byte.to_string(),
                 ),
-                s => EngineError::Failed(format!(
-                    "Sunucu hatası: {} {}",
-                    s.as_u16(),
-                    s.canonical_reason().unwrap_or("")
-                )),
+                s if s.is_success() => cerr("err.no_partial_support"),
+                s => cerr2(
+                    "err.server_error",
+                    &s.as_u16().to_string(),
+                    s.canonical_reason().unwrap_or(""),
+                ),
             });
         }
 
@@ -878,16 +898,14 @@ async fn fetch_range(
             .and_then(|v| v.to_str().ok())
             && !cr.starts_with(&format!("bytes {start_byte}-"))
         {
-            return Err(EngineError::Failed(format!(
-                "Sunucu beklenmeyen aralık döndürdü: {cr}"
-            )));
+            return Err(cerr1("err.unexpected_range", cr));
         }
     } else if !status.is_success() {
-        return Err(EngineError::Failed(format!(
-            "Sunucu hatası: {} {}",
-            status.as_u16(),
-            status.canonical_reason().unwrap_or("")
-        )));
+        return Err(cerr2(
+            "err.server_error",
+            &status.as_u16().to_string(),
+            status.canonical_reason().unwrap_or(""),
+        ));
     }
 
     // Akış parçalarını 256 KB'lık bloklarda biriktirip diske yazarız.
@@ -913,8 +931,7 @@ async fn fetch_range(
         };
 
         let Some(chunk) = next else { break };
-        let chunk: Bytes =
-            chunk.map_err(|e| EngineError::Failed(format!("Veri akışı kesildi: {e}")))?;
+        let chunk: Bytes = chunk.map_err(|e| cerr1("err.stream_broken", &e.to_string()))?;
         if chunk.is_empty() {
             continue;
         }
@@ -965,7 +982,7 @@ async fn fetch_range(
         } else if got_any {
             Ok(ChannelOutcome::Interrupted)
         } else {
-            Err(EngineError::Failed("Sunucu boş gövde döndürdü".into()))
+            Err(cerr("err.empty_body"))
         }
     } else {
         // `downloaded` sayaç zaten yazma sırasında artırıldı.
@@ -998,9 +1015,9 @@ fn flush(
 /// için sistem çağrısı beklenir), böylece `AsyncWriteExt`'e gerek kalmaz.
 fn write_chunk(file: &mut std::fs::File, pos: u64, data: &[u8]) -> Result<(), EngineError> {
     file.seek(SeekFrom::Start(pos))
-        .map_err(|e| EngineError::Failed(format!("Dosyada konumlanılamadı: {e}")))?;
+        .map_err(|e| cerr1("err.seek_failed", &e.to_string()))?;
     file.write_all(data)
-        .map_err(|e| EngineError::Failed(format!("Dosyaya yazılamadı: {e}")))?;
+        .map_err(|e| cerr1("err.write_failed", &e.to_string()))?;
     Ok(())
 }
 

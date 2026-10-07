@@ -11,6 +11,7 @@ import {
   listDownloads,
   onDownloadEvent,
 } from "./api";
+import { onLocaleChange, t } from "./i18n";
 import {
   nowStamp,
   percentOf,
@@ -259,7 +260,10 @@ function applyCompleted(ev: Extract<DownloadEvent, { kind: "completed" }>) {
 
   pushLog(
     ev.status === "Completed" ? "success" : "info",
-    `${itemName(ev.id)}: ${statusLabel(ev.status)}`,
+    t("log.status_line", {
+      name: itemName(ev.id),
+      status: statusLabel(ev.status),
+    }),
     ev.id,
   );
 }
@@ -298,9 +302,13 @@ export async function initStore(): Promise<void> {
     for (const item of items) {
       upsert(item);
     }
-    pushLog("info", `${items.length} kayıt yüklendi`, null);
+    pushLog("info", t("log.records_loaded", { count: items.length }), null);
   } catch (e) {
-    pushLog("error", `Kayıtlar yüklenemedi: ${errorText(e)}`, null);
+    pushLog(
+      "error",
+      t("log.records_load_failed", { error: errorText(e) }),
+      null,
+    );
   }
 
   await onDownloadEvent((ev) => {
@@ -348,17 +356,25 @@ async function reloadList(): Promise<void> {
       }
     }
   } catch (e) {
-    pushLog("error", `Liste yenilenemedi: ${errorText(e)}`, null);
+    pushLog("error", t("log.list_refresh_failed", { error: errorText(e) }), null);
   }
 }
 
-/** Hata nesnesini Türkçe metne çevirir. */
+// Dil değiştikten sonra Rust'a bildirilmiş oluruz; kalıcı `error_message`
+// kayıtları kanonik biçimde saklandığı için listeyi yeniden okumak onları
+// yeni dilde çevirir. Bu, bellek içi log satırları için geçerli değildir:
+// onlar yazıldıkları dilde kalır.
+onLocaleChange(() => {
+  void reloadList();
+});
+
+/** Hata nesnesini okunabilir metne çevirir. */
 export function errorText(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;
-  return "Bilinmeyen hata";
+  return t("error.unknown");
 }
 
-/** Durumun Türkçe etiketi (şablonlarda kullanılır). */
+/** Durumun etkin dildeki etiketi (şablonlarda kullanılır). */
 export { statusLabel };
 export type { DownloadItem, DownloadStatus, LogEntry };

@@ -26,6 +26,7 @@ use crate::db::Database;
 use crate::engine::{
     AbortSignal, DownloadEngine, EngineError, EngineSnapshot, ProgressHook, SpeedSample,
 };
+use crate::i18n::{self, t};
 use crate::models::{ChannelState, DownloadItem, DownloadStatus, file_name_from_url};
 
 /// Sınırlandırılmış yayın kanalı — yavaş alıcılar gecikmeyi engellemez.
@@ -60,8 +61,8 @@ pub enum DownloadEvent {
         channels: Vec<ChannelState>,
         speed_history: Vec<SpeedSample>,
         error_message: Option<String>,
-        /// Motorun bildirdiği kısa Türkçe durum metni.
-        phase: &'static str,
+        /// Motorun bildirdiği kısa durum metni (seçili dilde).
+        phase: String,
     },
     /// Bir indirme bitti (tamamlandı / başarısız / duraklatıldı / iptal).
     #[serde(rename_all = "camelCase")]
@@ -69,7 +70,7 @@ pub enum DownloadEvent {
     /// Kayıt listesi değişti (ekleme / silme gibi).
     #[serde(rename_all = "camelCase")]
     ListChanged,
-    /// Log satırı (Türkçe mesaj).
+    /// Log satırı (seçili dilde üretilmiş mesaj).
     #[serde(rename_all = "camelCase")]
     Log {
         level: String,
@@ -191,7 +192,7 @@ impl DownloadManager {
     /// Yeni indirme başlatır; oluşturulan kayıt kimliğini döner.
     pub async fn start(&self, req: StartRequest) -> Result<i64> {
         if req.url.trim().is_empty() {
-            anyhow::bail!("URL boş olamaz");
+            anyhow::bail!(i18n::t("err.url_empty", &[]));
         }
 
         let suggested = file_name_from_url(&req.url);
@@ -228,9 +229,9 @@ impl DownloadManager {
 
         self.log(
             "info",
-            format!(
-                "Yeni indirme eklendi: {} ({} kanal)",
-                item.file_name, item.channel_count
+            t(
+                "log.new_added",
+                &[&item.file_name, &item.channel_count.to_string()],
             ),
             Some(id),
         );
@@ -247,25 +248,22 @@ impl DownloadManager {
     /// Duraklatılmış / başarısız indirmeyi kanal durumlarıyla devam ettirir.
     pub async fn resume(&self, id: i64) -> Result<()> {
         let Some(item) = self.db.get(id).await? else {
-            anyhow::bail!("İndirme bulunamadı (#{id})");
+            anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
         };
 
         if !item.status.is_resumable() {
-            anyhow::bail!("Bu indirme yeniden başlatılamaz");
+            anyhow::bail!(t("err.not_restartable", &[]));
         }
 
         if self.active.contains_key(&id) {
-            anyhow::bail!("İndirme zaten çalışıyor");
+            anyhow::bail!(t("err.already_running", &[]));
         }
 
         // Dosya silinmişse resume anlamsız: sıfırdan başlat.
         if !Path::new(&item.file_path).exists() {
             self.log(
                 "warn",
-                format!(
-                    "Hedef dosya bulunamadı, sıfırdan başlatılıyor: {}",
-                    item.file_name
-                ),
+                t("log.file_missing_restart", &[&item.file_name]),
                 Some(id),
             );
             self.spawn(id).await?;
@@ -277,9 +275,9 @@ impl DownloadManager {
         self.log(
             "info",
             if pct > 0.0 {
-                format!("İndirme sürdürülüyor: {} (%{:.1})", item.file_name, pct)
+                t("log.resuming_pct", &[&item.file_name, &format!("{pct:.1}")])
             } else {
-                format!("İndirme sürdürülüyor: {}", item.file_name)
+                t("log.resuming", &[&item.file_name])
             },
             Some(id),
         );
@@ -300,7 +298,7 @@ impl DownloadManager {
         // dilime yazma (`active.remove`) isteyince kilitlenir ve
         // tek iş parçacıklı çalışma zamanında tüm çalışma zamanı donar.
         let Some(ad) = self.active.get(&id).map(|a| a.clone()) else {
-            anyhow::bail!("Çalışan indirme bulunamadı (#{id})");
+            anyhow::bail!(t("err.running_not_found", &[&id.to_string()]));
         };
 
         ad.paused.store(true, Ordering::SeqCst);
@@ -309,7 +307,7 @@ impl DownloadManager {
         // Görevin gerçekten durmasını bekle (kanal durumları kaydedilsin).
         self.wait_idle(id).await;
 
-        self.log("info", "İndirme duraklatıldı".to_string(), Some(id));
+        self.log("info", t("log.paused", &[]), Some(id));
         self.emit(DownloadEvent::ListChanged);
         Ok(())
     }
@@ -317,7 +315,7 @@ impl DownloadManager {
     pub async fn cancel(&self, id: i64) -> Result<()> {
         // Kilit `pause` ile aynı gerekçeyle ifade bitinde bırakılır.
         let Some(ad) = self.active.get(&id).map(|a| a.clone()) else {
-            anyhow::bail!("Çalışan indirme bulunamadı (#{id})");
+            anyhow::bail!(t("err.running_not_found", &[&id.to_string()]));
         };
 
         ad.paused.store(false, Ordering::SeqCst);
@@ -325,7 +323,7 @@ impl DownloadManager {
 
         self.wait_idle(id).await;
 
-        self.log("warn", "İndirme iptal edildi".to_string(), Some(id));
+        self.log("warn", t("log.cancelled", &[]), Some(id));
         self.emit(DownloadEvent::ListChanged);
         Ok(())
     }
@@ -365,21 +363,17 @@ impl DownloadManager {
         }
 
         let Some(item) = self.db.get(id).await? else {
-            anyhow::bail!("İndirme bulunamadı (#{id})");
+            anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
         };
 
         if delete_file {
             let path = PathBuf::from(&item.file_path);
             match tokio::fs::remove_file(&path).await {
-                Ok(()) => self.log(
-                    "info",
-                    format!("Dosya silindi: {}", item.file_name),
-                    Some(id),
-                ),
+                Ok(()) => self.log("info", t("log.file_deleted", &[&item.file_name]), Some(id)),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => self.log(
                     "warn",
-                    format!("Dosya silinemedi ({}): {}", item.file_name, e),
+                    t("log.file_delete_failed", &[&item.file_name, &e.to_string()]),
                     Some(id),
                 ),
             }
@@ -388,7 +382,7 @@ impl DownloadManager {
         self.db.delete(id).await?;
         self.log(
             "info",
-            format!("Kayıt silindi: {}", item.file_name),
+            t("log.record_deleted", &[&item.file_name]),
             Some(id),
         );
         self.emit(DownloadEvent::ListChanged);
@@ -407,7 +401,11 @@ impl DownloadManager {
             removed += 1;
         }
         if removed > 0 {
-            self.log("info", format!("{removed} kayıt temizlendi"), None);
+            self.log(
+                "info",
+                t("log.records_cleared", &[&removed.to_string()]),
+                None,
+            );
         }
         self.emit(DownloadEvent::ListChanged);
         Ok(())
@@ -433,7 +431,7 @@ impl DownloadManager {
 
             self.log(
                 "info",
-                format!("Kanal sayısı {count} olarak güncellendi"),
+                t("log.channels_updated", &[&count.to_string()]),
                 Some(id),
             );
             self.spawn(id).await?;
@@ -441,7 +439,7 @@ impl DownloadManager {
             self.db.update_channel_count(id, count).await?;
             self.log(
                 "info",
-                format!("Kanal sayısı {count} olarak güncellendi"),
+                t("log.channels_updated", &[&count.to_string()]),
                 Some(id),
             );
             self.emit(DownloadEvent::ListChanged);
@@ -464,11 +462,7 @@ impl DownloadManager {
             return;
         }
 
-        self.log(
-            "warn",
-            format!("Uygulama kapatılıyor, {} indirme iptal ediliyor", ids.len()),
-            None,
-        );
+        self.log("warn", t("log.shutdown", &[&ids.len().to_string()]), None);
 
         for id in &ids {
             if let Some(ad) = self.active.get(id) {
@@ -495,7 +489,7 @@ impl DownloadManager {
     /// yol açar. Bu yüzden ağır iş ayrı bir görevde çalışır.
     async fn spawn(&self, id: i64) -> Result<()> {
         let Some(item) = self.db.get(id).await? else {
-            anyhow::bail!("İndirme bulunamadı (#{id})");
+            anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
         };
 
         // Kanal bazlı devam: yalnızca gerçekten bir şey indirilmişse.
@@ -536,7 +530,7 @@ impl DownloadManager {
                 .run_download(id, item, ad, signal, engine, resume_states)
                 .await
             {
-                me.log("error", format!("İndirme görevi hata verdi: {e}"), Some(id));
+                me.log("error", t("log.task_failed", &[&e.to_string()]), Some(id));
             }
         });
 
@@ -589,9 +583,10 @@ impl DownloadManager {
         let progress = self.spawn_progress_writer(id, item.clone(), channel_count, rx);
 
         // Motor sonucunu bekle.
-        let result = driver.await.unwrap_or(Err(EngineError::Failed(
-            "İndirme görevi beklenmedik şekilde sonlandı".to_string(),
-        )));
+        let result = driver.await.unwrap_or(Err(EngineError::Failed(i18n::canon(
+            "err.task_ended_unexpectedly",
+            &[],
+        ))));
 
         let last_snapshot = progress.await.unwrap_or(None);
 
@@ -662,7 +657,7 @@ impl DownloadManager {
                     channels: snap.channels.clone(),
                     speed_history: snap.speed_history.clone(),
                     error_message: None,
-                    phase: snap.phase,
+                    phase: snap.phase.clone(),
                 });
 
                 // Tüm kanallar bittiyse motor zaten bitmek üzere; erken
@@ -693,7 +688,7 @@ impl DownloadManager {
                     if let Err(e) = db.update_progress(&progress_item).await {
                         let _ = events.send(DownloadEvent::log(
                             "warn",
-                            format!("İlerleme kaydedilemedi: {e}"),
+                            t("log.progress_save_failed", &[&e.to_string()]),
                             Some(id),
                         ));
                     }
@@ -722,29 +717,33 @@ impl DownloadManager {
                 DownloadStatus::Completed,
                 None,
                 "success",
-                format!("İndirme tamamlandı: {}", item.file_name),
+                t("log.completed", &[&item.file_name]),
             ),
             Err(EngineError::Aborted) if paused => (
                 DownloadStatus::Paused,
                 None,
                 "info",
-                format!(
-                    "İndirme duraklatıldı: {} (%{:.1})",
-                    item.file_name,
-                    percent_of(downloaded, total)
+                t(
+                    "log.paused_pct",
+                    &[
+                        &item.file_name,
+                        &format!("{:.1}", percent_of(downloaded, total)),
+                    ],
                 ),
             ),
             Err(EngineError::Aborted) => (
                 DownloadStatus::Cancelled,
                 None,
                 "warn",
-                format!("İndirme iptal edildi: {}", item.file_name),
+                t("log.cancelled_name", &[&item.file_name]),
             ),
             Err(EngineError::Failed(msg)) => (
                 DownloadStatus::Failed,
+                // Kanonik biçimde saklanır; `db::row_to_item` okurken
+                // seçili dile çevirir.
                 Some(msg.clone()),
                 "error",
-                format!("İndirme başarısız: {} — {msg}", item.file_name),
+                t("log.failed", &[&item.file_name, &i18n::render(msg)]),
             ),
         };
 
@@ -785,7 +784,11 @@ impl DownloadManager {
         };
 
         if let Err(e) = self.db.update_progress(&final_item).await {
-            self.log("error", format!("Son durum kaydedilemedi: {e}"), Some(id));
+            self.log(
+                "error",
+                t("log.final_state_failed", &[&e.to_string()]),
+                Some(id),
+            );
         }
         self.db
             .update_status(id, status, completed_at, error_message.as_deref())
@@ -837,9 +840,12 @@ pub async fn ensure_parent_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("Klasör oluşturulamadı: {}", parent.display()))?;
+        tokio::fs::create_dir_all(parent).await.with_context(|| {
+            anyhow::anyhow!(i18n::canon(
+                "err.dir_create_failed",
+                &[&parent.display().to_string()]
+            ))
+        })?;
     }
     Ok(())
 }

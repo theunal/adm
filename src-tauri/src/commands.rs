@@ -1,32 +1,35 @@
 //! Tauri komutları — SolidJS arayüzünün çağırdığı tüm API.
 //!
-//! Tüm mesajlar Türkçedir; durum enum'ları veritabanında İngilizce kalır
-//! ve arayüzde `src/lib/format.ts` içindeki çeviri katmanıyla gösterilir.
+//! Mesajlar `i18n` sözlüğünden seçili dilde üretilir; durum enum'ları
+//! veritabanında İngilizce kalır ve arayüzde `src/lib/format.ts` içindeki
+//! çeviri katmanıyla gösterilir.
 
 use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::db_path;
+use crate::i18n;
 use crate::manager::{DownloadManager, StartRequest};
 use crate::models::{DownloadItem, file_name_from_url};
 
 type Res<T> = Result<T, String>;
 
-/// `anyhow` hatasını Türkçe, kullanıcıya gösterilebilir mesaja çevirir.
+/// `anyhow` hatasını, kullanıcıya gösterilebilir dile çevirir.
 ///
 /// `anyhow::Error` `std::error::Error` implementasyonu taşımadığı için
-/// bağlam zinciri elle gezilir.
+/// bağlam zinciri elle gezilir. Zincirin her halkası kanonik olabilir
+/// (`i18n::canon`), bu yüzden önce seçili dile çevrilir.
 fn tr(e: anyhow::Error) -> String {
     let mut parts: Vec<String> = Vec::new();
     for cause in e.chain() {
-        let text = cause.to_string();
+        let text = i18n::render(&cause.to_string());
         if !text.is_empty() {
             parts.push(text);
         }
     }
     if parts.is_empty() {
-        "Bilinmeyen bir hata oluştu".to_string()
+        i18n::t("err.unknown", &[])
     } else {
         parts.join(" — ")
     }
@@ -141,7 +144,7 @@ pub fn database_path() -> Res<String> {
 /// Pencere referansını alır.
 fn main_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
     app.get_webview_window("main")
-        .ok_or_else(|| "Ana pencere bulunamadı".to_string())
+        .ok_or_else(|| i18n::t("err.main_window", &[]))
 }
 
 /// Dosyayı sistemde açar (varsayılan uygulamayla).
@@ -150,7 +153,7 @@ pub fn open_path(app: AppHandle, path: String) -> Res<()> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(|e| format!("Dosya açılamadı: {e}"))
+        .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))
 }
 
 /// Dosyanın bulunduğu klasörü açar (dosya adı verilmeden de çalışır).
@@ -164,7 +167,7 @@ pub fn open_folder(app: AppHandle, path: String) -> Res<()> {
 
     app.opener()
         .open_path(folder.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|e| format!("Klasör açılamadı: {e}"))
+        .map_err(|e| i18n::t("err.open_folder", &[&e.to_string()]))
 }
 
 /// Uygulama penceresini simge durumuna küçültür.
@@ -172,7 +175,7 @@ pub fn open_folder(app: AppHandle, path: String) -> Res<()> {
 pub fn minimize_window(app: AppHandle) -> Res<()> {
     main_window(&app)?
         .minimize()
-        .map_err(|e| format!("Pencere küçültülemedi: {e}"))
+        .map_err(|e| i18n::t("err.win_minimize", &[&e.to_string()]))
 }
 
 /// Pencereyi büyütür / küçültür.
@@ -181,16 +184,16 @@ pub fn toggle_maximize_window(app: AppHandle) -> Res<()> {
     let window = main_window(&app)?;
     let is_max = window
         .is_maximized()
-        .map_err(|e| format!("Pencere durumu okunamadı: {e}"))?;
+        .map_err(|e| i18n::t("err.win_state", &[&e.to_string()]))?;
 
     if is_max {
         window
             .unmaximize()
-            .map_err(|e| format!("Pencere küçültülemedi: {e}"))
+            .map_err(|e| i18n::t("err.win_minimize", &[&e.to_string()]))
     } else {
         window
             .maximize()
-            .map_err(|e| format!("Pencere büyütülemedi: {e}"))
+            .map_err(|e| i18n::t("err.win_maximize", &[&e.to_string()]))
     }
 }
 
@@ -199,7 +202,16 @@ pub fn toggle_maximize_window(app: AppHandle) -> Res<()> {
 pub fn close_window(app: AppHandle) -> Res<()> {
     main_window(&app)?
         .close()
-        .map_err(|e| format!("Pencere kapatılamadı: {e}"))
+        .map_err(|e| i18n::t("err.win_close", &[&e.to_string()]))
+}
+
+/// Arayüzün seçtiği dili uygular.
+///
+/// `lang` "tr" veya "en" olur; diğer her değer Türkçeye düşer. Ayar kalıcı
+/// değildir: arayüz `localStorage`'da saklar ve her açılışta yeniden gönderir.
+#[tauri::command]
+pub fn set_language(lang: String) {
+    i18n::set_lang(i18n::Lang::parse(&lang));
 }
 
 /// Manager olaylarını Tauri olay kanalına aktarır.
@@ -224,7 +236,7 @@ pub fn forward_events(
                         "download://event",
                         &crate::manager::DownloadEvent::Log {
                             level: "warn".to_string(),
-                            message: format!("{n} olay kaçırıldı, arayüz yeniden senkronlanıyor"),
+                            message: i18n::t("log.events_dropped", &[&n.to_string()]),
                             download_id: None,
                         },
                     );

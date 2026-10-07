@@ -11,6 +11,7 @@ import {
 } from "../lib/store";
 import { errorText, pushLogSafe } from "../lib/useFeedback";
 import { formatBytes, formatNumber } from "../lib/format";
+import { t } from "../lib/i18n";
 import DownloadCard from "./DownloadCard";
 
 export default function DownloadList() {
@@ -30,7 +31,7 @@ export default function DownloadList() {
     try {
       await clearFinished();
     } catch (e) {
-      pushLogSafe("error", `Kayıtlar temizlenemedi: ${errorText(e)}`);
+      pushLogSafe("error", t("list.err.clear", { error: errorText(e) }));
     }
   }
 
@@ -38,14 +39,16 @@ export default function DownloadList() {
     <div class="download-list">
       <div class="list-head">
         <h2 class="section-title">
-          {isActiveTab() ? "Aktif İndirmeler" : "Geçmiş"}
+          {isActiveTab() ? t("list.title.active") : t("list.title.history")}
           <span class="count-pill">{items().length}</span>
         </h2>
 
         <Show when={failedBytes() > 0}>
-          <span class="failed-hint" title="Başarısız kayıtların indirdiği miktar">
-            {formatNumber(failedItems().length)} başarısız •{" "}
-            {formatBytes(failedBytes())} yarım
+          <span class="failed-hint" title={t("list.failed_hint_title")}>
+            {t("list.failed_hint", {
+              count: formatNumber(failedItems().length),
+              bytes: formatBytes(failedBytes()),
+            })}
           </span>
         </Show>
 
@@ -54,9 +57,9 @@ export default function DownloadList() {
             type="button"
             class="btn btn-xs btn-ghost"
             onClick={() => void onClear()}
-            title="Tamamlanmış, başarısız ve iptal edilmiş kayıtları sil"
+            title={t("list.clear_title")}
           >
-            Geçmişi temizle
+            {t("list.clear")}
           </button>
         </Show>
       </div>
@@ -70,12 +73,14 @@ export default function DownloadList() {
                 ↓
               </span>
               <p class="empty-title">
-                {isActiveTab() ? "Aktif indirme yok" : "Geçmiş boş"}
+                {isActiveTab()
+                  ? t("list.empty.active_title")
+                  : t("list.empty.history_title")}
               </p>
               <p class="empty-hint">
                 {isActiveTab()
-                  ? "Soldaki formu doldurup yeni bir indirme başlatın."
-                  : "Tamamlanan indirmeler burada listelenir."}
+                  ? t("list.empty.active_hint")
+                  : t("list.empty.history_hint")}
               </p>
             </div>
           }

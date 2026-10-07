@@ -7,6 +7,7 @@
  */
 import { For, Show, createEffect, createSignal } from "solid-js";
 import { clearLogs, logs } from "../lib/store";
+import { t } from "../lib/i18n";
 
 export default function LogPanel() {
   const [autoScroll, setAutoScroll] = createSignal(true);
@@ -32,9 +33,9 @@ export default function LogPanel() {
   const empty = () => logs.entries.length === 0;
 
   return (
-    <section class="log-panel" aria-label="Olay günlüğü">
+    <section class="log-panel" aria-label={t("log.aria")}>
       <header class="log-head">
-        <h2 class="section-title">Olay Günlüğü</h2>
+        <h2 class="section-title">{t("log.title")}</h2>
         <div class="log-head-right">
           <Show when={!autoScroll()}>
             <button
@@ -45,7 +46,7 @@ export default function LogPanel() {
                 bottom?.scrollIntoView({ block: "end" });
               }}
             >
-              En alta git
+              {t("log.to_bottom")}
             </button>
           </Show>
           <span class="log-count">{logs.entries.length}</span>
@@ -55,7 +56,7 @@ export default function LogPanel() {
             onClick={() => clearLogs()}
             disabled={empty()}
           >
-            Temizle
+            {t("log.clear")}
           </button>
         </div>
       </header>
@@ -63,7 +64,7 @@ export default function LogPanel() {
       <div class="log-list" ref={scroller} onScroll={onScroll}>
         <Show
           when={!empty()}
-          fallback={<p class="log-empty">Henüz olay yok.</p>}
+          fallback={<p class="log-empty">{t("log.empty")}</p>}
         >
           <For each={logs.entries}>
             {(entry) => (

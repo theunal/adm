@@ -1,9 +1,13 @@
 /**
- * Biçimlendirme yardımcıları — tüm metinler Türkçe.
+ * Biçimlendirme yardımcıları.
  *
  * Durum enum'ları Rust tarafında **İngilizce** saklanır (`Queued`,
- * `Downloading`, ...); bu dosya arayüzde bunları Türkçeye çevirir.
+ * `Downloading`, ...); bu dosya arayüzde bunları etkin dile çevirir.
+ *
+ * Etiketler `lib/i18n` sözlüğünde, sayı/zaman biçimleri `localeTag()` ile
+ * `Intl` üzerinden üretilir.
  */
+import { localeTag, t } from "./i18n";
 
 /** Rust tarafındaki durum değerleri (birebir eşleşme). */
 export type DownloadStatus =
@@ -79,19 +83,14 @@ export interface LogEntry {
   time: string;
 }
 
-/** Durum -> Türkçe etiket. */
-const STATUS_LABELS: Record<DownloadStatus, string> = {
-  Queued: "Sırada",
-  Downloading: "İndiriliyor",
-  Paused: "Duraklatıldı",
-  Completed: "Tamamlandı",
-  Failed: "Başarısız",
-  Cancelled: "İptal Edildi",
-};
-
-/** Durumun Türkçe etiketini döner. */
+/**
+ * Durumun etkin dildeki etiketini döner.
+ *
+ * Sözlük anahtarları `status.<Rust değeri>` biçimindedir; tanımsız bir durum
+ * için `t()` anahtarı kendini döner, böylece sessizce boş metne düşülmez.
+ */
 export function statusLabel(status: DownloadStatus): string {
-  return STATUS_LABELS[status] ?? status;
+  return t(`status.${status}`);
 }
 
 /** Durumun CSS sınıfı (renk paleti için). */
@@ -109,7 +108,7 @@ const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
 /**
  * Bayt değerini okunabilir biçime çevirir.
- * `formatBytes(1536)` -> `"1,5 KB"`
+ * `formatBytes(1536)` -> TR `"1,5 KB"` / EN `"1.5 KB"`
  */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -128,7 +127,7 @@ export function formatBytes(bytes: number): string {
 
 /**
  * Hız değerini okunabilir biçime çevirir.
- * `formatSpeed(2.5)` -> `"2,5 MB/s"`
+ * `formatSpeed(2.5)` -> TR `"2,5 MB/s"` / EN `"2.5 MB/s"`
  */
 export function formatSpeed(mbps: number): string {
   if (!Number.isFinite(mbps) || mbps <= 0) return "—";
@@ -147,10 +146,15 @@ export function formatEta(
   return formatDuration(remaining);
 }
 
-/** Saniye değerini `1s 25dk` gibi okunabilir biçime çevirir. */
+/**
+ * Saniye değerini okunabilir biçime çevirir.
+ *
+ * TR: `1sn`, `25dk 05sn`, `3s 12dk`, `2g 4s`
+ * EN: `1s`, `25m 05s`, `3h 12m`, `2d 4h`
+ */
 export function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "—";
-  if (seconds < 1) return "1sn";
+  if (seconds < 1) return t("dur.one_second");
 
   const total = Math.floor(seconds);
   const days = Math.floor(total / 86400);
@@ -158,10 +162,10 @@ export function formatDuration(seconds: number): string {
   const minutes = Math.floor((total % 3600) / 60);
   const secs = total % 60;
 
-  if (days > 0) return `${days}g ${hours}s`;
-  if (hours > 0) return `${hours}s ${minutes}dk`;
-  if (minutes > 0) return `${minutes}dk ${secs}sn`;
-  return `${secs}sn`;
+  if (days > 0) return t("dur.days_hours", { days, hours });
+  if (hours > 0) return t("dur.hours_minutes", { hours, minutes });
+  if (minutes > 0) return t("dur.minutes_seconds", { minutes, seconds: secs });
+  return t("dur.seconds_only", { seconds: secs });
 }
 
 /** ISO zaman damgasını `14:32:05` biçimine çevirir. */
@@ -169,7 +173,7 @@ export function formatTime(iso: string | null): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString("tr-TR", { hour12: false });
+  return date.toLocaleTimeString(localeTag(), { hour12: false });
 }
 
 /** ISO zaman damgasını `07.10.2026 14:32` biçimine çevirir. */
@@ -177,7 +181,7 @@ export function formatDateTime(iso: string | null): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString("tr-TR", {
+  return date.toLocaleString(localeTag(), {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -187,9 +191,9 @@ export function formatDateTime(iso: string | null): string {
   });
 }
 
-/** Sayıyı Türkçe biçimde yazar (ondalık ayırıcı virgül). */
+/** Sayıyı etkin dilin biçiminde yazar (TR'de ondalık ayırıcı virgül). */
 export function formatNumber(value: number, decimals = 0): string {
-  return value.toLocaleString("tr-TR", {
+  return value.toLocaleString(localeTag(), {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
@@ -210,5 +214,5 @@ export function urlLabel(url: string): string {
 
 /** Log zaman damgası (saniye çözünürlüğü). */
 export function nowStamp(): string {
-  return new Date().toLocaleTimeString("tr-TR", { hour12: false });
+  return new Date().toLocaleTimeString(localeTag(), { hour12: false });
 }

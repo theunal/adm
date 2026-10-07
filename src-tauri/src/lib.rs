@@ -18,6 +18,7 @@
 pub mod commands;
 pub mod db;
 pub mod engine;
+pub mod i18n;
 pub mod manager;
 pub mod models;
 
@@ -32,7 +33,7 @@ pub fn run() {
         .setup(|app| {
             // 1) Veritabanı: `%LocalAppData%\ADM\downloads.db`
             let database = tauri::async_runtime::block_on(db::Database::connect())
-                .map_err(|e| format!("Veritabanı açılamadı: {e:#}"))?;
+                .map_err(|e| i18n::t("err.db_open", &[&format!("{e:#}")]))?;
             let manager = manager::DownloadManager::new(database);
 
             // 2) Olay yayıncısı: manager olaylarını arayüze aktar.
@@ -74,6 +75,7 @@ pub fn run() {
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,
+            commands::set_language,
         ])
         .run(tauri::generate_context!())
         .expect("ADM başlatılırken hata oluştu");

@@ -477,7 +477,10 @@ async fn yoklamada_206_veri_isteginde_200_gelen_sunucu_hata_verir() {
         .await;
 
     match result {
-        Err(EngineError::Failed(msg)) => {
+        // `Failed` kanonik metin taşır; kullanıcının gördüğü hali `Display`
+        // üretir. Doğrulama da gösterilen metin üzerinden yapılır.
+        Err(e @ EngineError::Failed(_)) => {
+            let msg = e.to_string();
             assert!(
                 msg.contains("206"),
                 "hata mesajı 206 beklentisini belirtmeli, alınan: {msg}"
@@ -717,12 +720,15 @@ async fn bulunamayan_dosya_turkce_hata_verir() {
         .await;
 
     match result {
-        Err(EngineError::Failed(msg)) => {
+        // Kanonik hata metni, kullanıcıya seçili dilde gösterilir.
+        Err(e @ EngineError::Failed(_)) => {
+            let msg = e.to_string();
             assert!(
                 msg.contains("404"),
                 "hata 404 durumunu belirtmeli, alınan: {msg}"
             );
-            // Türkçe mesaj kullanıcıya gösterilir.
+            // Varsayılan dil Türkçe olduğu için gösterilen metin Türkçe
+            // karakter içermelidir (kanonik biçim ASCII'dir).
             assert!(
                 msg.chars().any(|c| c as u32 > 0x7F),
                 "mesaj Türkçe karakter içermeli: {msg}"

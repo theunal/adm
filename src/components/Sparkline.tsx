@@ -7,6 +7,7 @@
  */
 import { createMemo, Show } from "solid-js";
 import type { SpeedSample } from "../lib/format";
+import { t } from "../lib/i18n";
 
 interface Props {
   /** Hız geçmişi örnekleri. */
@@ -62,7 +63,7 @@ export default function Sparkline(props: Props) {
   return (
     <Show
       when={hasData()}
-      fallback={<div class="sparkline-empty" title="Hız geçmişi oluşuyor" />}
+      fallback={<div class="sparkline-empty" title={t("spark.empty_title")} />}
     >
       <svg
         class="sparkline"

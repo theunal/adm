@@ -17,6 +17,7 @@ import {
 } from "./lib/store";
 import { errorText, pushLogSafe } from "./lib/useFeedback";
 import { formatBytes, formatSpeed } from "./lib/format";
+import { t } from "./lib/i18n";
 import TitleBar from "./components/TitleBar";
 import NewDownloadForm from "./components/NewDownloadForm";
 import DownloadList from "./components/DownloadList";
@@ -28,7 +29,7 @@ const [logOpen, setLogOpen] = createSignal(true);
 export default function App() {
   onMount(() => {
     initStore().catch((e: unknown) => {
-      pushLogSafe("error", `Uygulama başlatılamadı: ${errorText(e)}`);
+      pushLogSafe("error", t("app.init_failed", { error: errorText(e) }));
     });
   });
 
@@ -46,11 +47,11 @@ export default function App() {
           <div class="stat-block">
             <div class="stat">
               <span class="stat-value">{formatBytes(totals().totalDownloaded)}</span>
-              <span class="stat-label">toplam indirildi</span>
+              <span class="stat-label">{t("app.stat.total_downloaded")}</span>
             </div>
             <div class="stat">
               <span class="stat-value">{formatSpeed(totals().totalSpeed)}</span>
-              <span class="stat-label">anlık hız</span>
+              <span class="stat-label">{t("app.stat.speed")}</span>
             </div>
           </div>
         </aside>
@@ -65,7 +66,7 @@ export default function App() {
               aria-selected={activeTab() === "active"}
               onClick={() => selectTab("active")}
             >
-              Aktif İndirmeler
+              {t("app.tab.active")}
               <Show when={activeCount() > 0}>
                 <span class="tab-badge tab-badge-live">{activeCount()}</span>
               </Show>
@@ -78,7 +79,7 @@ export default function App() {
               aria-selected={activeTab() === "history"}
               onClick={() => selectTab("history")}
             >
-              Geçmiş
+              {t("app.tab.history")}
               <Show when={historyCount() > 0}>
                 <span class="tab-badge">{historyCount()}</span>
               </Show>
@@ -90,9 +91,9 @@ export default function App() {
               type="button"
               class="btn btn-xs btn-ghost"
               onClick={() => setLogOpen((v) => !v)}
-              title={logOpen() ? "Günlüğü gizle" : "Günlüğü göster"}
+              title={logOpen() ? t("app.log.hide") : t("app.log.show")}
             >
-              {logOpen() ? "Günlüğü gizle" : "Günlüğü göster"}
+              {logOpen() ? t("app.log.hide") : t("app.log.show")}
             </button>
           </nav>
 
@@ -101,7 +102,7 @@ export default function App() {
             fallback={
               <div class="loading-state">
                 <span class="spinner" aria-hidden="true" />
-                <p>Kayıtlar yükleniyor…</p>
+                <p>{t("app.loading")}</p>
               </div>
             }
           >

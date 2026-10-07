@@ -13,6 +13,7 @@ import {
   suggestFileName,
 } from "../lib/api";
 import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { t } from "../lib/i18n";
 
 /** Kanal sayısı aralığı (Rust tarafında da sınırlanır). */
 const MIN_CHANNELS = 1;
@@ -32,7 +33,10 @@ export default function NewDownloadForm() {
       setDefaultDir(dir);
       setFilePath(dir);
     } catch (e) {
-      pushLogSafe("warn", `Varsayılan klasör okunamadı: ${errorText(e)}`);
+      pushLogSafe(
+        "warn",
+        t("form.err.default_dir", { error: errorText(e) }),
+      );
     }
     try {
       setDbPath(await databasePath());
@@ -67,7 +71,7 @@ export default function NewDownloadForm() {
       const picked = await pickSavePath(name, defaultDir());
       if (picked) setFilePath(picked);
     } catch (e) {
-      pushLogSafe("error", `Konum seçilemedi: ${errorText(e)}`);
+      pushLogSafe("error", t("form.err.pick", { error: errorText(e) }));
     }
   }
 
@@ -77,11 +81,11 @@ export default function NewDownloadForm() {
 
     const value = url().trim();
     if (!value) {
-      pushLogSafe("warn", "Önce bir URL girin");
+      pushLogSafe("warn", t("form.warn.no_url"));
       return;
     }
     if (!/^https?:\/\//i.test(value)) {
-      pushLogSafe("warn", "URL http:// veya https:// ile başlamalı");
+      pushLogSafe("warn", t("form.warn.bad_scheme"));
       return;
     }
 
@@ -101,7 +105,7 @@ export default function NewDownloadForm() {
         setFilePath(dir);
       }
     } catch (e) {
-      pushLogSafe("error", `İndirme başlatılamadı: ${errorText(e)}`);
+      pushLogSafe("error", t("form.err.start", { error: errorText(e) }));
     } finally {
       setSubmitting(false);
     }
@@ -110,22 +114,22 @@ export default function NewDownloadForm() {
   return (
     <form class="new-download" onSubmit={submit}>
       <div class="new-download-head">
-        <h2 class="section-title">Yeni İndirme</h2>
+        <h2 class="section-title">{t("form.title")}</h2>
         <Show when={dbPath()}>
-          <span class="db-hint" title={`Veritabanı: ${dbPath()}`}>
-            SQLite kayıtları etkin
+          <span class="db-hint" title={t("form.db_title", { path: dbPath() })}>
+            {t("form.db_hint")}
           </span>
         </Show>
       </div>
 
       {/* URL */}
       <div class="field">
-        <label for="dl-url">Bağlantı adresi</label>
+        <label for="dl-url">{t("form.url_label")}</label>
         <input
           id="dl-url"
           type="text"
           class="input"
-          placeholder="https://sunucu/dosya.bin"
+          placeholder={t("form.url_placeholder")}
           autocomplete="off"
           spellcheck={false}
           value={url()}
@@ -138,7 +142,7 @@ export default function NewDownloadForm() {
 
       {/* Konum */}
       <div class="field">
-        <label for="dl-path">Kayıt konumu</label>
+        <label for="dl-path">{t("form.path_label")}</label>
         <div class="path-row">
           <input
             id="dl-path"
@@ -149,7 +153,7 @@ export default function NewDownloadForm() {
             onInput={(e) => setFilePath(e.currentTarget.value)}
           />
           <button type="button" class="btn btn-ghost" onClick={() => void browse()}>
-            Gözat
+            {t("form.browse")}
           </button>
         </div>
       </div>
@@ -157,8 +161,10 @@ export default function NewDownloadForm() {
       {/* Kanal sayısı */}
       <div class="field field-channels">
         <label for="dl-channels">
-          Kanal sayısı
-          <span class="field-hint">{channels()} kanal</span>
+          {t("form.channels_label")}
+          <span class="field-hint">
+            {t("form.channels_hint", { count: channels() })}
+          </span>
         </label>
         <div class="slider-row">
           <input
@@ -190,7 +196,7 @@ export default function NewDownloadForm() {
         class="btn btn-primary btn-block"
         disabled={submitting() || !url().trim()}
       >
-        {submitting() ? "Ekleniyor…" : "İndirmeyi Ekle"}
+        {submitting() ? t("form.submitting") : t("form.submit")}
       </button>
     </form>
   );

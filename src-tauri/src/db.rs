@@ -6,7 +6,11 @@
 //! eşzamanlı bağlantıları güvenle yönetir.
 //!
 //! Durum sütunu **İngilizce** metin olarak saklanır (`Queued`, `Downloading`,
-//! ...); arayüzde Türkçe karşılıklarına çevrilir.
+//! ...); arayüzde `src/lib/format.ts` içindeki çeviri katmanıyla gösterilir.
+//!
+//! `error_message` ise **kanonik** biçimde saklanır (`i18n::canon`); okuma
+//! sırasında `i18n::render` ile seçili dile çevrilir. Böylece dil değiştiğinde
+//! liste yeniden yüklendiğinde eski hata kayıtları da yeni dilde görünür.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
@@ -16,6 +20,7 @@ use sqlx::sqlite::{
 use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
 
+use crate::i18n;
 use crate::models::{ChannelState, DownloadItem, DownloadStatus};
 
 /// Veritabanı dosyasının bulunduğu dizin: `%LocalAppData%\ADM`
@@ -37,6 +42,16 @@ fn home_dir() -> PathBuf {
 /// `downloads.db` dosyasının tam yolu.
 pub fn db_path() -> PathBuf {
     db_dir().join("downloads.db")
+}
+
+/// Kanonik biçimde hata metni üreten kısa yol (`i18n::canon`).
+fn err(key: &str) -> anyhow::Error {
+    anyhow::anyhow!(i18n::canon(key, &[]))
+}
+
+/// Kanonik biçimde, tek argümanlı hata metni üreten kısa yol.
+fn err1(key: &str, arg: &str) -> anyhow::Error {
+    anyhow::anyhow!(i18n::canon(key, &[arg]))
 }
 
 /// Tablo oluşturma / şema migrasyonu.
@@ -79,7 +94,7 @@ impl Database {
     pub async fn connect() -> Result<Self> {
         let dir = db_dir();
         std::fs::create_dir_all(&dir)
-            .with_context(|| format!("Veritabanı dizini oluşturulamadı: {}", dir.display()))?;
+            .with_context(|| err1("err.db_dir_failed", &dir.display().to_string()))?;
 
         Self::connect_at(db_path()).await
     }
@@ -90,9 +105,8 @@ impl Database {
     /// açarak birbirlerinin verisini göremez.
     pub async fn connect_at(path: PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("Veritabanı dizini oluşturulamadı: {}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| err1("err.db_dir_failed", &parent.display().to_string()))?;
         }
 
         let options = SqliteConnectOptions::new()
@@ -109,7 +123,7 @@ impl Database {
             .acquire_timeout(std::time::Duration::from_secs(30))
             .connect_with(options)
             .await
-            .context("SQLite bağlantı havuzu açılamadı")?;
+            .context(err("err.db_pool_failed"))?;
 
         let db = Database { pool };
         db.migrate().await?;
@@ -147,7 +161,7 @@ impl Database {
         .bind(crate::models::channel_states_to_json(&item.channels))
         .execute(&self.pool)
         .await
-        .context("İndirme kaydı eklenemedi")?;
+        .context(err("err.db_insert"))?;
 
         Ok(res.last_insert_rowid())
     }
@@ -179,7 +193,7 @@ impl Database {
         .bind(item.id)
         .execute(&self.pool)
         .await
-        .context("İndirme ilerlemesi kaydedilemedi")?;
+        .context(err("err.db_update_progress"))?;
         Ok(())
     }
 
@@ -209,7 +223,7 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await
-        .context("İndirme durumu güncellenemedi")?;
+        .context(err("err.db_update_status"))?;
         Ok(())
     }
 
@@ -221,7 +235,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .context("Kanal sayısı güncellenemedi")?;
+            .context(err("err.db_update_channels"))?;
         Ok(())
     }
 
@@ -231,7 +245,7 @@ impl Database {
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .context("İndirme kaydı okunamadı")?;
+            .context(err("err.db_read"))?;
 
         Ok(row.as_ref().map(row_to_item))
     }
@@ -241,7 +255,7 @@ impl Database {
         let rows = sqlx::query("SELECT * FROM downloads ORDER BY created_at DESC, id DESC")
             .fetch_all(&self.pool)
             .await
-            .context("İndirme listesi okunamadı")?;
+            .context(err("err.db_list"))?;
         Ok(rows.iter().map(row_to_item).collect())
     }
 
@@ -253,7 +267,7 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await
-        .context("Aktif indirme listesi okunamadı")?;
+        .context(err("err.db_list_active"))?;
         Ok(rows.iter().map(row_to_item).collect())
     }
 
@@ -263,7 +277,7 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await
-            .context("İndirme kaydı silinemedi")?;
+            .context(err("err.db_delete"))?;
         Ok(())
     }
 
@@ -273,7 +287,7 @@ impl Database {
         sqlx::query("DELETE FROM downloads")
             .execute(&self.pool)
             .await
-            .context("İndirme geçmişi temizlenemedi")?;
+            .context(err("err.db_clear_all"))?;
         Ok(())
     }
 
@@ -295,7 +309,7 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
         sqlx::query(sql)
             .execute(pool)
             .await
-            .with_context(|| format!("Şema hazırlanamadı: {}", first_line(sql)))?;
+            .with_context(|| err1("err.db_schema", first_line(sql)))?;
     }
     Ok(())
 }
@@ -346,7 +360,13 @@ fn row_to_item(r: &SqliteRow) -> DownloadItem {
         completed_at: parse_dt_opt(r.try_get("completed_at").unwrap_or(None)),
         last_updated: parse_dt(&r.try_get::<String, _>("last_updated").unwrap_or_default()),
         speed_mbps: r.try_get::<f64, _>("speed_mbps").unwrap_or(0.0),
-        error_message: r.try_get("error_message").unwrap_or(None),
+        // Kanonik kayıtlar seçili dile çevrilir; eski düz satırlar aynen
+        // kalır. Böylece dil değişimi sonrası `reloadList()` eski hataları da
+        // yeniden çevirir.
+        error_message: r
+            .try_get::<Option<String>, _>("error_message")
+            .unwrap_or(None)
+            .map(|raw| i18n::render(&raw)),
         channels,
     }
 }
@@ -354,6 +374,15 @@ fn row_to_item(r: &SqliteRow) -> DownloadItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test sonunda dili test öncesi değerine döndürür.
+    struct LangRestore(i18n::Lang);
+
+    impl Drop for LangRestore {
+        fn drop(&mut self) {
+            i18n::set_lang(self.0);
+        }
+    }
 
     /// Testler için bellek içi geçici veritabanı açar.
     async fn test_db(name: &str) -> Database {
@@ -551,5 +580,66 @@ mod tests {
 
         db.update_channel_count(id, 16).await.unwrap();
         assert_eq!(db.get(id).await.unwrap().unwrap().channel_count, 16);
+    }
+
+    /// Kanonik hata mesajı sütunda kanonik kalır, okunurken seçili dile
+    /// çevrilir. Dil değiştiğinde liste yeniden yüklendiğinde eski hata
+    /// kayıtları da yeni dilde görünür.
+    #[tokio::test]
+    // Kilit `await` boyunca bilinçli olarak tutulur: `Lang` globaldir ve
+    // okumanın bu dilde yapılması gerekir. Kilit yalnızca test içinde
+    // paylaşılan bir izolasyon kilididir; hiçbir şeyi bloklamaz.
+    #[allow(clippy::await_holding_lock)]
+    async fn kanonik_hata_mesaji_okunurken_cevrilir() {
+        let _lock = crate::i18n::lang_test_guard();
+        let _lang = LangRestore(i18n::lang());
+
+        let db = test_db("hata").await;
+
+        let stored = i18n::canon("err.no_partial_support", &[]);
+        let mut item = sample("hatali");
+        item.status = DownloadStatus::Failed;
+        item.error_message = Some(stored.clone());
+
+        let id = db.insert(&item).await.unwrap();
+
+        // Ham sütun kanonik biçimde saklanır.
+        let raw: String = sqlx::query("SELECT error_message FROM downloads WHERE id = ?")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get("error_message")
+            .unwrap();
+        assert_eq!(raw, stored, "ham sütun kanonik biçimde kalmalı");
+
+        // Okuma seçili dile çevirir: dil değişince aynı kayıt yeniden yüklenir.
+        i18n::set_lang(i18n::Lang::Tr);
+        assert_eq!(
+            db.get(id).await.unwrap().unwrap().error_message.as_deref(),
+            Some("Sunucu bölümlü indirmeyi desteklemiyor (200 OK döndü, 206 bekleniyordu)")
+        );
+
+        i18n::set_lang(i18n::Lang::En);
+        assert_eq!(
+            db.get(id).await.unwrap().unwrap().error_message.as_deref(),
+            Some("The server does not support partial downloads (returned 200 OK, expected 206)")
+        );
+    }
+
+    /// Düz (kanonik olmayan) eski hata satırları bozulmadan aynen kalır.
+    #[tokio::test]
+    async fn plain_error_message_is_kept() {
+        let db = test_db("duzhata").await;
+
+        let mut item = sample("duz");
+        item.status = DownloadStatus::Failed;
+        item.error_message = Some("Eski biçimli hata".to_string());
+
+        let id = db.insert(&item).await.unwrap();
+        assert_eq!(
+            db.get(id).await.unwrap().unwrap().error_message.as_deref(),
+            Some("Eski biçimli hata")
+        );
     }
 }

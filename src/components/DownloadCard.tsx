@@ -28,6 +28,7 @@ import {
 } from "../lib/format";
 import { itemHistory, itemSpeed, isBusy, markBusy } from "../lib/store";
 import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { t } from "../lib/i18n";
 import Sparkline from "./Sparkline";
 import StatusBadge from "./StatusBadge";
 
@@ -106,34 +107,38 @@ export default function DownloadCard(props: Props) {
     try {
       await action();
     } catch (e) {
-      pushLogSafe("error", `${label} başarısız: ${errorText(e)}`, id);
+      pushLogSafe(
+        "error",
+        t("card.action.failed", { action: label, error: errorText(e) }),
+        id,
+      );
     } finally {
       markBusy(id, false);
     }
   }
 
-  const onPause = () => run("Duraklatma", () => pauseDownload(props.item.id));
-  const onResume = () => run("Sürdürme", () => resumeDownload(props.item.id));
-  const onCancel = () => run("İptal", () => cancelDownload(props.item.id));
+  const onPause = () => run(t("card.action.pause"), () => pauseDownload(props.item.id));
+  const onResume = () => run(t("card.action.resume"), () => resumeDownload(props.item.id));
+  const onCancel = () => run(t("card.action.cancel"), () => cancelDownload(props.item.id));
 
   /** Silme onayı ister; dosya da silinir. */
   async function onDelete() {
     const ok = await confirm(
-      `"${props.item.fileName}" kaydı ve indirilen dosya silinsin mi?`,
-      "İndirmeyi sil",
+      t("dialog.delete_file.body", { name: props.item.fileName }),
+      t("dialog.delete_file.title"),
     );
     if (!ok) return;
-    await run("Silme", () => deleteDownload(props.item.id, true));
+    await run(t("card.action.delete"), () => deleteDownload(props.item.id, true));
   }
 
   /** Yalnızca kaydı siler, dosya kalır. */
   async function onDeleteRecord() {
     const ok = await confirm(
-      `"${props.item.fileName}" kaydı silinsin mi? Dosya korunur.`,
-      "Kaydı sil",
+      t("dialog.delete_record.body", { name: props.item.fileName }),
+      t("dialog.delete_record.title"),
     );
     if (!ok) return;
-    await run("Kayıt silme", () => deleteDownload(props.item.id, false));
+    await run(t("card.action.delete_record"), () => deleteDownload(props.item.id, false));
   }
 
   /** Kanal sayısını değiştirir. */
@@ -141,18 +146,18 @@ export default function DownloadCard(props: Props) {
     setChannelMode(false);
     const count = pendingChannels();
     if (count === props.item.channelCount) return;
-    await run("Kanal sayısı değişikliği", () =>
+    await run(t("card.action.channel_change"), () =>
       changeChannelCount(props.item.id, count),
     );
   }
 
   /** Dosyayı / klasörü açar. */
   async function onOpenFile() {
-    await run("Dosya açma", () => openPath(props.item.filePath));
+    await run(t("card.action.open_file"), () => openPath(props.item.filePath));
   }
 
   async function onOpenFolder() {
-    await run("Klasör açma", () => openFolder(props.item.filePath));
+    await run(t("card.action.open_folder"), () => openFolder(props.item.filePath));
   }
 
   return (
@@ -171,7 +176,7 @@ export default function DownloadCard(props: Props) {
         <div class="card-head-right">
           <StatusBadge status={props.item.status} />
           <Show when={isBusy(props.item.id)}>
-            <span class="busy-dot" title="İşlem sürüyor" />
+            <span class="busy-dot" title={t("card.busy_title")} />
           </Show>
         </div>
       </header>
@@ -184,7 +189,7 @@ export default function DownloadCard(props: Props) {
           aria-valuenow={Math.round(percent())}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-label="İndirme ilerlemesi"
+          aria-label={t("card.progress_aria")}
         >
           <div
             class={`progress-fill ${running() ? "progress-animated" : ""}`}
@@ -194,7 +199,7 @@ export default function DownloadCard(props: Props) {
         <div class="progress-meta">
           <span class="progress-percent">
             {sizeUnknown() && running()
-              ? "Boyut bilinmiyor"
+              ? t("card.size_unknown")
               : `${formatNumber(percent(), 1)}%`}
           </span>
           <span class="progress-bytes">
@@ -209,7 +214,7 @@ export default function DownloadCard(props: Props) {
 
       {/* Kanal dağılımı (yalnızca çok kanallı) */}
       <Show when={channelBars().length > 1}>
-        <div class="channels" title="Kanal bazlı ilerleme">
+        <div class="channels" title={t("card.channels_title")}>
           <For each={channelBars()}>
             {(c) => (
               <div class="channel">
@@ -230,17 +235,17 @@ export default function DownloadCard(props: Props) {
         <Show when={running()}>
           <div class="metric">
             <span class="metric-value speed">{formatSpeed(speed())}</span>
-            <span class="metric-label">hız</span>
+            <span class="metric-label">{t("card.metric.speed")}</span>
           </div>
           <Show when={eta()}>
             <div class="metric">
               <span class="metric-value">{eta()}</span>
-              <span class="metric-label">kalan</span>
+              <span class="metric-label">{t("card.metric.eta")}</span>
             </div>
           </Show>
           <div class="metric">
             <span class="metric-value">{props.item.channelCount}</span>
-            <span class="metric-label">kanal</span>
+            <span class="metric-label">{t("card.metric.channels")}</span>
           </div>
           <Show when={history().length > 1}>
             <div class="metric metric-spark">
@@ -255,7 +260,9 @@ export default function DownloadCard(props: Props) {
               {formatBytes(props.item.downloadedBytes)}
             </span>
             <span class="metric-label">
-              {done() ? "indirildi" : "durumda"}
+              {done()
+                ? t("card.metric.downloaded")
+                : t("card.metric.in_status")}
             </span>
           </div>
           <Show when={done() && props.item.completedAt}>
@@ -263,14 +270,14 @@ export default function DownloadCard(props: Props) {
               <span class="metric-value">
                 {formatTime(props.item.completedAt)}
               </span>
-              <span class="metric-label">bitti</span>
+              <span class="metric-label">{t("card.metric.finished_at")}</span>
             </div>
           </Show>
           <div class="metric">
             <span class="metric-value">
               {formatDateTime(props.item.createdAt)}
             </span>
-            <span class="metric-label">eklendi</span>
+            <span class="metric-label">{t("card.metric.added_at")}</span>
           </div>
         </Show>
       </div>
@@ -290,9 +297,9 @@ export default function DownloadCard(props: Props) {
             class="btn btn-sm"
             onClick={() => void onPause()}
             disabled={isBusy(props.item.id)}
-            title="İndirmeyi duraklat"
+            title={t("card.btn.pause_title")}
           >
-            Duraklat
+            {t("card.btn.pause")}
           </button>
         </Show>
 
@@ -302,9 +309,9 @@ export default function DownloadCard(props: Props) {
             class="btn btn-sm btn-primary"
             onClick={() => void onResume()}
             disabled={isBusy(props.item.id)}
-            title="Kaldığı yerden sürdür"
+            title={t("card.btn.resume_title")}
           >
-            Sürdür
+            {t("card.btn.resume")}
           </button>
         </Show>
 
@@ -314,9 +321,9 @@ export default function DownloadCard(props: Props) {
             class="btn btn-sm btn-danger"
             onClick={() => void onCancel()}
             disabled={isBusy(props.item.id)}
-            title="İndirmeyi iptal et"
+            title={t("card.btn.cancel_title")}
           >
-            İptal
+            {t("card.btn.cancel")}
           </button>
         </Show>
 
@@ -327,9 +334,9 @@ export default function DownloadCard(props: Props) {
             setPendingChannels(props.item.channelCount);
             setChannelMode((v) => !v);
           }}
-          title="Kanal sayısını değiştir"
+          title={t("card.btn.channels_title")}
         >
-          Kanallar
+          {t("card.btn.channels")}
         </button>
 
         <Show when={done()}>
@@ -338,9 +345,9 @@ export default function DownloadCard(props: Props) {
             class="btn btn-sm btn-ghost"
             onClick={() => void onOpenFile()}
             disabled={isBusy(props.item.id)}
-            title="Dosyayı aç"
+            title={t("card.btn.open_title")}
           >
-            Aç
+            {t("card.btn.open")}
           </button>
         </Show>
 
@@ -349,9 +356,9 @@ export default function DownloadCard(props: Props) {
           class="btn btn-sm btn-ghost"
           onClick={() => void onOpenFolder()}
           disabled={isBusy(props.item.id)}
-          title="Klasörü aç"
+          title={t("card.btn.folder_title")}
         >
-          Konum
+          {t("card.btn.folder")}
         </button>
 
         <button
@@ -359,9 +366,9 @@ export default function DownloadCard(props: Props) {
           class="btn btn-sm btn-ghost"
           onClick={() => void onDeleteRecord()}
           disabled={isBusy(props.item.id)}
-          title="Kaydı sil, dosyayı koru"
+          title={t("card.btn.del_record_title")}
         >
-          Kaydı sil
+          {t("card.btn.del_record")}
         </button>
 
         <button
@@ -369,9 +376,9 @@ export default function DownloadCard(props: Props) {
           class="btn btn-sm btn-danger-ghost"
           onClick={() => void onDelete()}
           disabled={isBusy(props.item.id)}
-          title="Kaydı ve dosyayı sil"
+          title={t("card.btn.delete_title")}
         >
-          Sil
+          {t("card.btn.delete")}
         </button>
       </footer>
 
@@ -379,7 +386,7 @@ export default function DownloadCard(props: Props) {
       <Show when={channelMode()}>
         <div class="channel-editor">
           <label for={`ch-${props.item.id}`}>
-            Kanal sayısı: <strong>{pendingChannels()}</strong>
+            {t("card.channels.label")} <strong>{pendingChannels()}</strong>
           </label>
           <input
             id={`ch-${props.item.id}`}
@@ -398,20 +405,17 @@ export default function DownloadCard(props: Props) {
               onClick={() => void onApplyChannels()}
               disabled={isBusy(props.item.id)}
             >
-              Uygula
+              {t("card.channels.apply")}
             </button>
             <button
               type="button"
               class="btn btn-sm btn-ghost"
               onClick={() => setChannelMode(false)}
             >
-              Vazgeç
+              {t("card.channels.cancel")}
             </button>
           </div>
-          <p class="channel-editor-note">
-            Çalışan bir indirmede kanal sayısı değişince indirme duraklatılıp
-            yeni sayıyla sürdürülür.
-          </p>
+          <p class="channel-editor-note">{t("card.channels.note")}</p>
         </div>
       </Show>
     </article>
