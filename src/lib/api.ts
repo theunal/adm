@@ -67,6 +67,26 @@ export function clearFinished(): Promise<void> {
   return invoke<void>("clear_finished");
 }
 
+/** Çalışan tüm indirmeleri duraklatır; etkilenen sayıyı döner. */
+export function pauseAllDownloads(): Promise<number> {
+  return invoke<number>("pause_all_downloads");
+}
+
+/** Sürdürülebilir tüm indirmeleri sürdürür; etkilenen sayıyı döner. */
+export function resumeAllDownloads(): Promise<number> {
+  return invoke<number>("resume_all_downloads");
+}
+
+/** Çalışan tüm indirmeleri iptal eder; etkilenen sayıyı döner. */
+export function cancelAllDownloads(): Promise<number> {
+  return invoke<number>("cancel_all_downloads");
+}
+
+/** Bir yolun bulunduğu birimde kalan bayt sayısı (durum çubuğu). */
+export function diskFreeSpace(path: string): Promise<number> {
+  return invoke<number>("disk_free_space", { path });
+}
+
 /** Bir indirmenin kanal sayısını değiştirir. */
 export function changeChannelCount(
   id: number,

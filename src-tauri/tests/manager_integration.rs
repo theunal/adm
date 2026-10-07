@@ -398,3 +398,123 @@ async fn varsayilan_klasor_kullanilabilir() {
     let dir: PathBuf = adm_lib::manager::default_download_dir();
     assert!(dir.ends_with("Downloads"), "beklenen: {}", dir.display());
 }
+
+/// Toplu işlem testleri için birkaç kayıt oluşturur.
+///
+/// Adresler `127.0.0.1:1` üzerinde erişilemez olduğundan görevler hemen
+/// `Failed` olur; testler yalnızca **hangi durumların hedeflendiğini**
+/// denetler, ağ davranışını değil.
+async fn toplu_icin_kayitlar(manager: &DownloadManager, ad: &str, n: usize) -> Vec<i64> {
+    let mut ids = Vec::new();
+    for i in 0..n {
+        if let Ok(id) = manager
+            .start(StartRequest {
+                url: format!("http://127.0.0.1:1/{ad}_{i}.bin"),
+                file_path: None,
+                channel_count: 2,
+            })
+            .await
+        {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+/// Görevlerin bitmesini bekler (hepsi erişilemez adrese bağlı).
+async fn bitmesini_bekle(manager: &DownloadManager) {
+    for _ in 0..100 {
+        if manager.list_active().await.unwrap().is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn toplu_surdur_yalnizca_surdurulebilirleri_hedefler() {
+    let db = setup("toplu_surdur").await;
+    let manager = DownloadManager::new(db);
+
+    let ids = toplu_icin_kayitlar(&manager, "toplu_surdur", 3).await;
+    assert!(!ids.is_empty(), "kayıt oluşmalıydı");
+
+    bitmesini_bekle(&manager).await;
+
+    // Üç kayıt da erişilemez adrese bağlı olduğundan `Failed` olur;
+    // `Failed` sürdürülebilir bir durumdur.
+    let affected = manager
+        .resume_all()
+        .await
+        .expect("toplu sürdür hata verdi");
+    assert_eq!(
+        affected,
+        ids.len(),
+        "tüm başarısız kayıtlar sürdürülmeliydi, hedeflenen: {affected}"
+    );
+
+    for id in ids {
+        cleanup(&manager, id).await;
+    }
+}
+
+#[tokio::test]
+async fn toplu_duraklat_calisanlari_hedefler() {
+    let db = setup("toplu_duraklat").await;
+    let manager = DownloadManager::new(db);
+
+    let ids = toplu_icin_kayitlar(&manager, "toplu_duraklat", 2).await;
+    if ids.is_empty() {
+        return;
+    }
+
+    let affected = manager.pause_all().await.expect("toplu duraklat hata verdi");
+    assert!(
+        affected <= ids.len(),
+        "hedeflenen sayı kayıt sayısını aşmamalı"
+    );
+
+    for id in ids {
+        if let Some(item) = manager.get(id).await.unwrap() {
+            assert!(
+                matches!(
+                    item.status,
+                    DownloadStatus::Paused
+                        | DownloadStatus::Cancelled
+                        | DownloadStatus::Failed
+                        | DownloadStatus::Completed
+                ),
+                "duraklatma sonrası geçerli durum beklenir, alındı: {:?}",
+                item.status
+            );
+        }
+        cleanup(&manager, id).await;
+    }
+}
+
+#[tokio::test]
+async fn toplu_iptal_bittikten_sonra_hicbiri_hedeflemez() {
+    let db = setup("toplu_iptal").await;
+    let manager = DownloadManager::new(db);
+
+    let ids = toplu_icin_kayitlar(&manager, "toplu_iptal", 2).await;
+    bitmesini_bekle(&manager).await;
+
+    // Görevler bitti; çalışan kayıt kalmadığı için 0 dönmeli.
+    let affected = manager.cancel_all().await.expect("toplu iptal hata verdi");
+    assert_eq!(affected, 0, "bitmiş kayıtlar iptal edilmemeli");
+
+    for id in ids {
+        cleanup(&manager, id).await;
+    }
+}
+
+#[tokio::test]
+async fn toplu_islem_bos_listede_sifir_doner() {
+    let db = setup("toplu_bos").await;
+    let manager = DownloadManager::new(db);
+
+    assert_eq!(manager.pause_all().await.unwrap(), 0);
+    assert_eq!(manager.resume_all().await.unwrap(), 0);
+    assert_eq!(manager.cancel_all().await.unwrap(), 0);
+}

@@ -92,6 +92,63 @@ pub async fn clear_finished(manager: State<'_, DownloadManager>) -> Res<()> {
     manager.clear_finished().await.map_err(tr)
 }
 
+/// Çalışan tüm indirmeleri duraklatır; etkilenen sayıyı döner.
+#[tauri::command]
+pub async fn pause_all_downloads(manager: State<'_, DownloadManager>) -> Res<usize> {
+    manager.pause_all().await.map_err(tr)
+}
+
+/// Sürdürülebilir tüm indirmeleri sürdürür; etkilenen sayıyı döner.
+#[tauri::command]
+pub async fn resume_all_downloads(manager: State<'_, DownloadManager>) -> Res<usize> {
+    manager.resume_all().await.map_err(tr)
+}
+
+/// Çalışan tüm indirmeleri iptal eder; etkilenen sayıyı döner.
+#[tauri::command]
+pub async fn cancel_all_downloads(manager: State<'_, DownloadManager>) -> Res<usize> {
+    manager.cancel_all().await.map_err(tr)
+}
+
+/// Bir yolun bulunduğu birimde kalan bayt sayısı (durum çubuğu için).
+///
+/// Yol bir dosyaya da işaret edebilir: `sysinfo` verilen yolun kendisini değil,
+/// bulunduğu dosya sistemini sorgular. Sürücü, bağlantı noktası yolun bir
+/// üst yolu olan ilk disk olarak seçilir.
+#[tauri::command]
+pub fn disk_free_space(path: String) -> Res<u64> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+
+    let mut dir = std::path::Path::new(&path);
+    while !dir.exists() {
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+
+    let dir_key = dir.to_string_lossy().trim_end_matches(['\\', '/']).to_ascii_uppercase();
+
+    // Uzunluğu en büyük eşleşme kazanır: iç içe bağlı noktalarda en derin
+    // bağlantı noktası doğru olan olur.
+    let best = disks
+        .list()
+        .iter()
+        .filter_map(|d| {
+            let mount = d
+                .mount_point()
+                .to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_ascii_uppercase();
+            (dir_key == mount || dir_key.starts_with(&format!("{mount}\\"))).then_some(
+                (mount.len(), d.available_space()),
+            )
+        })
+        .max_by_key(|(len, _)| *len);
+
+    Ok(best.map(|(_, free)| free).unwrap_or(0))
+}
+
 /// Bir indirmenin kanal sayısını değiştirir.
 #[tauri::command]
 pub async fn change_channel_count(

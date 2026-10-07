@@ -444,6 +444,26 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "The application is closing, cancelling {0} downloads",
     ),
     (
+        "log.bulk_paused",
+        "{0} indirme duraklatıldı",
+        "Paused {0} downloads",
+    ),
+    (
+        "log.bulk_resumed",
+        "{0} indirme sürdürüldü",
+        "Resumed {0} downloads",
+    ),
+    (
+        "log.bulk_cancelled",
+        "{0} indirme iptal edildi",
+        "Cancelled {0} downloads",
+    ),
+    (
+        "err.disk_space",
+        "Disk alanı okunamadı: {0}",
+        "Could not read the disk space: {0}",
+    ),
+    (
         "log.completed",
         "İndirme tamamlandı: {0}",
         "The download completed: {0}",

@@ -427,6 +427,87 @@ impl DownloadManager {
         Ok(())
     }
 
+    // -----------------------------------------------------------------
+    // Toplu işlemler
+    // -----------------------------------------------------------------
+
+    /// Tek bir kayda toplu işlem uygular; hata durumda yutulur.
+    ///
+    /// Toplu işlemler "mümkün olan ne varsa" semantiğindedir: listede
+    /// sürdürülemeyen bir kayıt varsa (ör. tamamlanmış) işlem onu atlar ve
+    /// kalanlara devam eder. Bu yüzden hata yalnızca log'a yazılır.
+    async fn bulk_each<F, Fut>(&self, ids: &[i64], mut op: F)
+    where
+        F: FnMut(i64) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        for id in ids {
+            if let Err(e) = op(*id).await {
+                self.log("error", i18n::render(&format!("{e:#}")), Some(*id));
+            }
+        }
+    }
+
+    /// Duruma uyan tüm kayıtların kimlikleri (veritabanı sırası korunur).
+    async fn ids_where<F>(&self, pred: F) -> Result<Vec<i64>>
+    where
+        F: Fn(&DownloadStatus) -> bool,
+    {
+        Ok(self
+            .db
+            .list_all()
+            .await?
+            .into_iter()
+            .filter(|item| pred(&item.status))
+            .map(|item| item.id)
+            .collect())
+    }
+
+    /// Çalışan tüm indirmeleri duraklatır; etkilenen sayıyı döner.
+    pub async fn pause_all(&self) -> Result<usize> {
+        let ids = self
+            .ids_where(|s| matches!(s, DownloadStatus::Queued | DownloadStatus::Downloading))
+            .await?;
+        let count = ids.len();
+        self.bulk_each(&ids, |id| async move { self.pause(id).await }).await;
+        self.log_bulk("log.bulk_paused", count);
+        Ok(count)
+    }
+
+    /// Duraklatılmış / başarısız tüm indirmeleri sürdürür.
+    ///
+    /// `resume` görevi yeniden başlattığı için geçmiş kayıtlarda
+    /// tamamlanmış olanlar atlanır (durumları `is_resumable` değil).
+    pub async fn resume_all(&self) -> Result<usize> {
+        let ids = self
+            .ids_where(|s| s.is_resumable())
+            .await?;
+        let count = ids.len();
+        self.bulk_each(&ids, |id| async move { self.resume(id).await }).await;
+        self.log_bulk("log.bulk_resumed", count);
+        Ok(count)
+    }
+
+    /// Çalışan tüm indirmeleri iptal eder; etkilenen sayıyı döner.
+    pub async fn cancel_all(&self) -> Result<usize> {
+        let ids = self
+            .ids_where(|s| matches!(s, DownloadStatus::Queued | DownloadStatus::Downloading))
+            .await?;
+        let count = ids.len();
+        self.bulk_each(&ids, |id| async move { self.cancel(id).await }).await;
+        self.log_bulk("log.bulk_cancelled", count);
+        Ok(count)
+    }
+
+    /// Toplu işlem özetini log'a yazar (işlem yapılmadıysa sessiz).
+    fn log_bulk(&self, key: &str, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.log("info", t(key, &[&count.to_string()]), None);
+        self.emit(DownloadEvent::ListChanged);
+    }
+
     /// Bir indirmenin kanal sayısını değiştirir.
     ///
     /// Çalışan görevlerde kanal sayısı anlık değiştirilemez (aralıklar indirme

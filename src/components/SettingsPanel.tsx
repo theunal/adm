@@ -1,6 +1,9 @@
 /**
  * Ayarlar ekranı — dil, varsayılan kanal sayısı ve indirme konumları.
  *
+ * Panel artık **menü çubuğundan** açılır (Seçenekler ▸ Ayarlar…) ve tablonun
+ * yerini alır; kenar çubuğunda ayar girdisi yoktur.
+ *
  * Konum kuralları: video / ses / diğer uzantıları ayrı klasörlere gider;
  * eşleşmeyen dosyalar ve **boş bırakılan** kategoriler genel hedefe düşer.
  * Uzantı listeleri Rust tarafında sabittir (`settings.rs`), burada yalnızca
@@ -147,9 +150,9 @@ export default function SettingsPanel() {
       ------------------------------------------------------------- */}
       <section class="settings-section">
         <h2 class="section-title">{t("settings.section.channels")}</h2>
-        {/* Sol menüdeki kanal alanının birebir aynısı: `.field` sınıfı
-            önayarların kaydırıcıyla sol hizalı kalmasını sağlar. */}
-        <div class="field field-channels">
+        {/* Kaydırıcı doğrudan bölüm içinde durur; yan hizalı önayarlar
+            `.slider-row` içinde aynı genişliği paylaşır. */}
+        <div class="field">
           <label for="set-channels">
             {t("settings.channels_label")}
             <span class="field-hint">

@@ -14,6 +14,13 @@ hatalar düzeltilmiş, arayüz yeniden tasarlanmıştır.
 - **Kanal bazlı devam** — duraklatıldığında kanal sınırları saklanır, kaldığı
   bayttan devam eder
 - **İş hırsızlığı** — biten kanal, en çok işi kalan kanalın yarısını üstlenir
+- **IDM düzeninde arayüz** — menü çubuğu, araç çubuğu, kenar çubuğunda
+  görev/kategori filtresi, ızgara tabloda sütunlu liste (Boyut · İlerleme ·
+  Hız · Kalan · Kanal), alt dock (hız grafiği / olay günlüğü) ve durum çubuğu
+- **Toplu işlemler** — duraklat / sürdür / iptal tüm listeye tek komutla
+  uygulanır; silme seçili satırlarda çalışır
+- **Çoklu seçim** — Ctrl/Shift ile satır seçimi, sağ tık bağlam menüsü,
+  çift tıkla dosya açma
 - **Gerçek zamanlı arayüz** — 500 ms'de bir olay; hız, kalan süre, kanal
   dağılımı ve hız grafiği (sparkline)
 - **Kalıcı geçmiş** — SQLite (`%LocalAppData%\ADM\downloads.db`)
@@ -80,29 +87,45 @@ npm run tauri:icon
 
 ## Mimari
 
+Arayüz klasik IDM yerleşimini takip eder: başlık çubuğu → menü çubuğu →
+araç çubuğu → (kenar çubuğu + tablo) → alt dock → durum çubuğu.
+
 ```text
 src/                     SolidJS arayüzü
-├── App.tsx              uygulama kabuğu (yerleşim, sekmeler)
+├── App.tsx              uygulama kabuğu (yerleşim + klavye kısayolları)
 ├── components/
-│   ├── TitleBar.tsx         özel başlık çubuğu (küçült/büyüt/kapat)
-│   ├── NewDownloadForm.tsx  yeni indirme formu
-│   ├── DownloadList.tsx     sekmeli liste
-│   ├── DownloadCard.tsx     indirme kartı (ilerleme, kanal, eylemler)
-│   ├── StatusBadge.tsx      durum rozeti
-│   ├── Sparkline.tsx        hız grafiği
-│   └── LogPanel.tsx         olay günlüğü
+│   ├── TitleBar.tsx         pencere başlığı + dil anahtarı + pencere düğmeleri
+│   ├── MenuBar.tsx          Dosya / İndirmeler / Görevler / Seçenekler / Yardım
+│   ├── Toolbar.tsx          yeşil "URL Ekle" + toplu duraklat/sürdür/iptal/sil
+│   ├── Sidebar.tsx          görev filtresi (sayaçlı) + kategori listesi
+│   ├── NewDownloadForm.tsx  URL alanı + hedef klasör önizlemesi
+│   ├── DownloadTable.tsx    grid başlıkları + satırlar + alt bilgi çubuğu
+│   ├── DownloadRow.tsx      tek satır (ilerleme, kanal segmentleri, eylemler)
+│   ├── FileIcon.tsx         uzantıya göre dosya simgesi
+│   ├── RowContextMenu.tsx   sağ tık menüsü (tek katmanda çizilir)
+│   ├── PropertiesDialog.tsx indirme özellikleri penceresi
+│   ├── AboutDialog.tsx      "ADM Hakkında" penceresi
+│   ├── BottomDock.tsx       alt dock (hız grafiği / olay günlüğü sekmeleri)
+│   ├── SpeedGraph.tsx       büyük dinamik hız grafiği + istatistikler
+│   ├── LogPanel.tsx         olay günlüğü listesi
+│   ├── SettingsPanel.tsx    ayarlar (menüden açılır)
+│   ├── Sparkline.tsx        satır içi mini hız grafiği
+│   └── StatusBar.tsx        disk boş · hız · aktif · indirilen · süre
 ├── lib/
 │   ├── api.ts            Tauri komutları ve olay aboneliği
-│   ├── store.ts          sinyal tabanlı durum yönetimi
-│   ├── format.ts         biçimlendirme + Türkçe çeviri katmanı
-│   └── useFeedback.ts    log/hata yardımcıları
-└── styles.css            tasarım sistemi (koyu tema, teal aksan)
+│   ├── store.ts          sinyal tabanlı durum yönetimi (filtre, seçim, sayaç)
+│   ├── bulk.ts           toplu işlemler (tek komut ya da seçili satırlar)
+│   ├── ui.ts             kabuk düzeyi arayüz durumu (pencere, panel, menü)
+│   ├── settings.ts       ayarlar okuma/yazma
+│   ├── format.ts         biçimlendirme + dosya kategorileri + çeviri katmanı
+│   └── i18n/             TR/EN sözlükleri
+└── styles.css            tasarım sistemi (Win32 kromu, IDM yeşili)
 
 src-tauri/src/
 ├── models.rs     DownloadStatus, ChannelState, DownloadItem
 ├── db.rs         sqlx/SQLite: havuz, şema, CRUD
 ├── engine.rs     çok kanallı indirme motoru
-├── manager.rs    DashMap + broadcast: görev yönetimi
+├── manager.rs    DashMap + broadcast: görev yönetimi, toplu işlemler
 ├── commands.rs   #[tauri::command] katmanı
 └── lib.rs        uygulama kurulumu
 ```

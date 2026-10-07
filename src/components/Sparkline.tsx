@@ -77,11 +77,11 @@ export default function Sparkline(props: Props) {
           <linearGradient id={gradientId()} x1="0" y1="0" x2="0" y2="1">
             <stop
               offset="0%"
-              stop-color={props.fill ?? "rgba(45, 212, 191, 0.35)"}
+              stop-color={props.fill ?? "rgba(45, 123, 212, 0.35)"}
             />
             <stop
               offset="100%"
-              stop-color={props.fill ?? "rgba(45, 212, 191, 0)"}
+              stop-color={props.fill ?? "rgba(45, 123, 212, 0)"}
             />
           </linearGradient>
         </defs>
@@ -93,7 +93,7 @@ export default function Sparkline(props: Props) {
         <polyline
           points={points().line}
           fill="none"
-          stroke={props.stroke ?? "#2dd4bf"}
+          stroke={props.stroke ?? "#2e73ce"}
           stroke-width="1.6"
           stroke-linejoin="round"
           stroke-linecap="round"

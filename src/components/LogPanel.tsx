@@ -1,9 +1,12 @@
 /**
- * Log paneli — uygulama ve komut kaynaklı tüm mesajları zaman damgalı
+ * Olay günlüğü — uygulama ve komut kaynaklı tüm mesajları zaman damgalı
  * biçimde listeler.
  *
  * Yeni mesaj geldiğinde otomatik kaydırılır; kullanıcı yukarı kaydırırsa
  * otomatik kaydırma durur (okunmamış mesajların gözden geçmesini önler).
+ *
+ * Panel başlığı alt dock'tadır (`BottomDock`), bu yüzden burada yalnızca liste
+ * çizilir.
  */
 import { For, Show, createEffect, createSignal } from "solid-js";
 import { clearLogs, logs } from "../lib/store";
@@ -33,35 +36,34 @@ export default function LogPanel() {
   const empty = () => logs.entries.length === 0;
 
   return (
-    <section class="log-panel" aria-label={t("log.aria")}>
-      <header class="log-head">
-        <h2 class="section-title">{t("log.title")}</h2>
-        <div class="log-head-right">
-          <Show when={!autoScroll()}>
-            <button
-              type="button"
-              class="btn btn-xs btn-ghost"
-              onClick={() => {
-                setAutoScroll(true);
-                bottom?.scrollIntoView({ block: "end" });
-              }}
-            >
-              {t("log.to_bottom")}
-            </button>
-          </Show>
-          <span class="log-count">{logs.entries.length}</span>
+    <div class="log-panel-inner">
+      <div class="log-toolbar">
+        <Show when={!autoScroll()}>
           <button
             type="button"
-            class="btn btn-xs btn-ghost"
-            onClick={() => clearLogs()}
-            disabled={empty()}
+            class="btn"
+            onClick={() => {
+              setAutoScroll(true);
+              bottom?.scrollIntoView({ block: "end" });
+            }}
           >
-            {t("log.clear")}
+            {t("log.to_bottom")}
           </button>
-        </div>
-      </header>
+        </Show>
 
-      <div class="log-list" ref={scroller} onScroll={onScroll}>
+        <span class="log-count">{logs.entries.length}</span>
+
+        <button
+          type="button"
+          class="btn"
+          onClick={() => clearLogs()}
+          disabled={empty()}
+        >
+          {t("log.clear")}
+        </button>
+      </div>
+
+      <div class="log-list" ref={scroller} onScroll={onScroll} aria-label={t("log.aria")}>
         <Show
           when={!empty()}
           fallback={<p class="log-empty">{t("log.empty")}</p>}
@@ -77,6 +79,6 @@ export default function LogPanel() {
         </Show>
         <div ref={bottom} />
       </div>
-    </section>
+    </div>
   );
 }

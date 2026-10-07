@@ -9,54 +9,31 @@
  * tetikler: arayüz metinleri, belge/pencere başlığı ve Rust tarafındaki mesaj
  * dili birlikte değişir.
  */
-import { For, Show } from "solid-js";
+import { For } from "solid-js";
 import {
   closeWindow,
   minimizeWindow,
   toggleMaximizeWindow,
 } from "../lib/api";
-import { activeCount, summary } from "../lib/store";
-import { formatBytes, formatSpeed } from "../lib/format";
 import { changeLang, settings } from "../lib/settings";
 import { t, type Locale } from "../lib/i18n";
+import logoUrl from "../assets/adm-logo-128.png";
 
 /** Dil anahtarındaki seçenekler. */
 const LANGS: Locale[] = ["tr", "en"];
 
 export default function TitleBar() {
-  const totals = () => summary();
-
   return (
     <header class="titlebar" data-tauri-drag-region>
-      {/* Sol: uygulama kimliği */}
+      {/* Sol: uygulama kimliği (IDM'de yalnızca simge + ad) */}
       <div class="titlebar-brand" data-tauri-drag-region>
         <span class="brand-mark" aria-hidden="true">
-          ADM
+          <img src={logoUrl} alt="" />
         </span>
-        <div class="brand-text">
-          <span class="brand-title">ADM</span>
-          <span class="brand-sub">{t("title.brand_sub")}</span>
-        </div>
-      </div>
-
-      {/* Orta: canlı özet (yalnızca sürüklenebilir alan) */}
-      <div class="titlebar-summary" data-tauri-drag-region>
-        <Show when={activeCount() > 0} fallback={<span class="summary-idle">{t("title.idle")}</span>}>
-          <span class="summary-item">
-            <span class="summary-value">{activeCount()}</span>
-            <span class="summary-label">{t("title.summary.active")}</span>
-          </span>
-          <span class="summary-sep" aria-hidden="true">•</span>
-          <span class="summary-item">
-            <span class="summary-value">{formatSpeed(totals().totalSpeed)}</span>
-            <span class="summary-label">{t("title.summary.speed")}</span>
-          </span>
-          <span class="summary-sep" aria-hidden="true">•</span>
-          <span class="summary-item">
-            <span class="summary-value">{formatBytes(totals().totalDownloaded)}</span>
-            <span class="summary-label">{t("title.summary.downloaded")}</span>
-          </span>
-        </Show>
+        <span class="brand-title">ADM</span>
+        <span class="brand-sub" data-tauri-drag-region>
+          {t("title.brand_sub")}
+        </span>
       </div>
 
       {/* Sağ: dil anahtarı + pencere düğmeleri */}
@@ -88,7 +65,7 @@ export default function TitleBar() {
           aria-label={t("title.win.minimize")}
           onClick={() => void minimizeWindow()}
         >
-          <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
             <rect x="2" y="5.5" width="8" height="1" fill="currentColor" />
           </svg>
         </button>
@@ -100,7 +77,7 @@ export default function TitleBar() {
           aria-label={t("title.win.maximize_aria")}
           onClick={() => void toggleMaximizeWindow()}
         >
-          <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
             <rect
               x="2.5"
               y="2.5"
@@ -120,7 +97,7 @@ export default function TitleBar() {
           aria-label={t("title.win.close")}
           onClick={() => void closeWindow()}
         >
-          <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
             <path
               d="M3 3 L9 9 M9 3 L3 9"
               stroke="currentColor"

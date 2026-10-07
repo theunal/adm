@@ -4,6 +4,11 @@
  * WPF sürümünde 500 ms'de bir `SELECT *` ile tüm liste tazeleniyordu;
  * burada Rust tarafından yayınlanan gerçek zamanlı olaylar dinlenir ve
  * yalnızca değişen kayıt güncellenir.
+ *
+ * Görünüm IDM düzenine göre kenar çubuğundan sürülür: `view` ya bir **görev**
+ * filtresi (İndiriliyor / Tamamlandı / …) ya bir **kategori** (Video / Ses /
+ * …) tutar. Aynı anda ikisinden biri etkindir — IDM'de de kategori seçimi
+ * görev seçiminin yerini alır.
  */
 import { createStore, produce } from "solid-js/store";
 import { createSignal } from "solid-js";
@@ -13,9 +18,10 @@ import {
 } from "./api";
 import { onLocaleChange, t } from "./i18n";
 import {
+  categoryOf,
   nowStamp,
-  percentOf,
   statusLabel,
+  type CategoryKey,
   type DownloadEvent,
   type DownloadItem,
   type DownloadStatus,
@@ -23,11 +29,52 @@ import {
   type SpeedSample,
 } from "./format";
 
-/** Sekmeler. `settings` liste yerine ayar panelini gösterir. */
-export type Tab = "active" | "history" | "settings";
-
 /** Maksimum log satırı (bellek sınırlı kalsın). */
 const MAX_LOGS = 300;
+
+/* -----------------------------------------------------------------
+   Görünüm (kenar çubuğu filtreleri)
+   ----------------------------------------------------------------- */
+
+/** Kenar çubuğundaki "Görevler" girdileri. */
+export type TaskFilter =
+  | "all"
+  | "downloading"
+  | "queued"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/** Etkin kenar çubuğu seçimi. */
+export type View =
+  | { kind: "task"; value: TaskFilter }
+  | { kind: "category"; value: CategoryKey };
+
+/** Tüm görev filtreleri (sayaç sırasıyla). */
+export const TASK_FILTERS: TaskFilter[] = [
+  "downloading",
+  "queued",
+  "paused",
+  "completed",
+  "failed",
+  "cancelled",
+  "all",
+];
+
+/** Tüm kategori filtreleri (sayaç sırasıyla). */
+export const CATEGORY_FILTERS: CategoryKey[] = [
+  "video",
+  "audio",
+  "program",
+  "archive",
+  "document",
+  "other",
+];
+
+/* -----------------------------------------------------------------
+   Durum
+   ----------------------------------------------------------------- */
 
 interface DownloadState {
   /** Tüm kayıtlar (kimliğe göre indeksli). */
@@ -40,6 +87,8 @@ interface DownloadState {
   speed: Record<number, number>;
   /** Aynı id için işlem bekleyen mi? (çift tıklama koruması). */
   busy: Record<number, boolean>;
+  /** Tabloda seçili satırlar. */
+  selected: Record<number, boolean>;
 }
 
 const [state, setState] = createStore<DownloadState>({
@@ -48,13 +97,32 @@ const [state, setState] = createStore<DownloadState>({
   speedHistory: {},
   speed: {},
   busy: {},
+  selected: {},
 });
 
 const [logs, setLogs] = createStore<{ entries: LogEntry[] }>({ entries: [] });
-const [activeTab, setActiveTab] = createSignal<Tab>("active");
+const [view, setView] = createSignal<View>({ kind: "task", value: "all" });
 const [ready, setReady] = createSignal(false);
 
+/**
+ * "Şimdi" damgası (epoch ms).
+ *
+ * Çalışan indirmelerin geçen süresi ve toplam süre bu değerden hesaplanır.
+ * İlerleme olayları ~500 ms'de bir geldiği için bu sinyal doğal bir saat
+ * görevi görür; ayrı bir `setInterval` kurmaya gerek yoktur.
+ */
+const [clock, setClock] = createSignal(Date.now());
+
+/**
+ * Shift+Click aralığı için son tıklanan satır.
+ */
+let anchorId: number | null = null;
+
 let logSeq = 0;
+
+/* -----------------------------------------------------------------
+   Günlük
+   ----------------------------------------------------------------- */
 
 /** Yeni log satırı ekler ve listeyi sınırlar. */
 function pushLog(
@@ -87,21 +155,58 @@ export function clearLogs() {
   setLogs("entries", []);
 }
 
-/** Aktif sekmeyi değiştirir. */
-export function selectTab(tab: Tab) {
-  setActiveTab(tab);
+/**
+ * Log satırı ekler (bileşenler bu fonksiyonu kullanır).
+ *
+ * `useFeedback` modülü bu fonksiyona bağlanır; böylece bileşenlerin
+ * `store` detaylarına (iç `pushLog` dahil) doğrudan erişmesi gerekmez.
+ */
+export function appendLog(
+  level: LogEntry["level"],
+  message: string,
+  downloadId: number | null = null,
+) {
+  pushLog(level, message, downloadId);
 }
+
+/* -----------------------------------------------------------------
+   Kenar çubuğu görünümü
+   ----------------------------------------------------------------- */
+
+/** Etkin görünüm. */
+export { view };
+
+/** Görev filtresini seçer (kategori seçimini de değiştirir). */
+export function selectTask(value: TaskFilter) {
+  setView({ kind: "task", value });
+  clearSelection();
+}
+
+/** Kategori filtresini seçer (görev seçimini de değiştirir). */
+export function selectCategory(value: CategoryKey) {
+  setView({ kind: "category", value });
+  clearSelection();
+}
+
+/** Bu görev filtresi etkin mi? */
+export function isTaskActive(value: TaskFilter): boolean {
+  const v = view();
+  return v.kind === "task" && v.value === value;
+}
+
+/** Bu kategori filtresi etkin mi? */
+export function isCategoryActive(value: CategoryKey): boolean {
+  const v = view();
+  return v.kind === "category" && v.value === value;
+}
+
+/* -----------------------------------------------------------------
+   Kayıt erişimi
+   ----------------------------------------------------------------- */
 
 /** İndirmenin şu an çalışıp çalışmadığını döner. */
 function isRunning(item: DownloadItem): boolean {
   return item.status === "Queued" || item.status === "Downloading";
-}
-
-/** İlerleme yüzdesi. */
-export function itemPercent(id: number): number {
-  const item = state.byId[id];
-  if (!item) return 0;
-  return percentOf(item.downloadedBytes, item.totalBytes);
 }
 
 /** Anlık hız (MB/s). */
@@ -119,74 +224,289 @@ export function isBusy(id: number): boolean {
   return state.busy[id] ?? false;
 }
 
-/** Başarısız indirmelerin listesi (geçmiş sekmesinde uyarı olarak). */
-export function failedItems(): DownloadItem[] {
-  return allItems().filter((i) => i.status === "Failed");
-}
-
-/** Tüm kayıtlar (sıralı). */
+/** Tüm kayıtlar (sırasız). */
 export function allItems(): DownloadItem[] {
   return state.order
     .map((id) => state.byId[id])
     .filter((i): i is DownloadItem => Boolean(i));
 }
 
+/** Başarısız indirmelerin listesi (uyarı olarak). */
+export function failedItems(): DownloadItem[] {
+  return allItems().filter((i) => i.status === "Failed");
+}
+
+/** Sıralama ağırlığı: çalışanlar üstte, tamamlananlar altta. */
+const STATUS_RANK: Record<DownloadStatus, number> = {
+  Downloading: 0,
+  Queued: 1,
+  Paused: 2,
+  Failed: 3,
+  Cancelled: 4,
+  Completed: 5,
+};
+
+/** Tüm kayıtlar: durum sırası, sonra en son güncellenen üstte. */
+function sortedItems(): DownloadItem[] {
+  return allItems().sort((a, b) => {
+    const ra = STATUS_RANK[a.status];
+    const rb = STATUS_RANK[b.status];
+    if (ra !== rb) return ra - rb;
+    return b.lastUpdated.localeCompare(a.lastUpdated);
+  });
+}
+
+/** Görev filtresi bir duruma eşleniyor mu? */
+function matchesTask(item: DownloadItem, filter: TaskFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "downloading":
+      return item.status === "Downloading";
+    case "queued":
+      return item.status === "Queued";
+    case "paused":
+      return item.status === "Paused";
+    case "completed":
+      return item.status === "Completed";
+    case "failed":
+      return item.status === "Failed";
+    case "cancelled":
+      return item.status === "Cancelled";
+  }
+}
+
 /**
- * Aktif sekmesindeki kayıtlar: çalışan ve duraklatılmış olanlar,
- * en son güncellenen üstte.
+ * Kenar çubuğundaki etkin görünüme uyan kayıtlar.
+ *
+ * Bu liste tablonun satır kaynağıdır; araç çubuğundaki toplu işlemler de
+ * seçim boşken bu listeyi hedefler.
  */
-export function activeItems(): DownloadItem[] {
-  return allItems()
-    .filter((i) => i.status === "Queued" || i.status === "Downloading" || i.status === "Paused")
-    .sort((a, b) => {
-      const ra = isRunning(a) ? 1 : 0;
-      const rb = isRunning(b) ? 1 : 0;
-      if (ra !== rb) return rb - ra;
-      return b.lastUpdated.localeCompare(a.lastUpdated);
-    });
-}
-
-/** Geçmiş sekmesindeki kayıtlar: tamamlanmış / başarısız / iptal. */
-export function historyItems(): DownloadItem[] {
-  return allItems()
-    .filter((i) => i.status !== "Queued" && i.status !== "Downloading" && i.status !== "Paused")
-    .sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
-}
-
-/** Sekmeye göre görünür liste. */
 export function visibleItems(): DownloadItem[] {
-  return activeTab() === "active" ? activeItems() : historyItems();
+  const v = view();
+  const items = sortedItems();
+  if (v.kind === "task") {
+    return items.filter((i) => matchesTask(i, v.value));
+  }
+  return items.filter((i) => categoryOf(i.fileName) === v.value);
 }
 
-/** Sekmedeki kayıt sayısı. */
-export function activeCount(): number {
-  return allItems().filter(
-    (i) => i.status === "Queued" || i.status === "Downloading" || i.status === "Paused",
-  ).length;
+/** Görünüm başlığı çubuğunda gösterilecek etiket sayısı. */
+export function visibleCount(): number {
+  return visibleItems().length;
 }
 
-export function historyCount(): number {
-  return allItems().length - activeCount();
+/* -----------------------------------------------------------------
+   Sayaçlar (kenar çubuğu)
+   ----------------------------------------------------------------- */
+
+export type CountMap<T extends string> = Record<T, number>;
+
+/** Her görev filtresi için kayıt sayısı. */
+export function taskCounts(): CountMap<TaskFilter> {
+  const counts = {
+    all: 0,
+    downloading: 0,
+    queued: 0,
+    paused: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+  } satisfies CountMap<TaskFilter>;
+
+  for (const item of allItems()) {
+    counts.all += 1;
+    switch (item.status) {
+      case "Downloading":
+        counts.downloading += 1;
+        break;
+      case "Queued":
+        counts.queued += 1;
+        break;
+      case "Paused":
+        counts.paused += 1;
+        break;
+      case "Completed":
+        counts.completed += 1;
+        break;
+      case "Failed":
+        counts.failed += 1;
+        break;
+      case "Cancelled":
+        counts.cancelled += 1;
+        break;
+    }
+  }
+  return counts;
 }
 
-/** Genel özet: toplam indirilen bayt ve anlık toplam hız. */
-export function summary(): { totalDownloaded: number; totalSpeed: number } {
+/** Her kategori için kayıt sayısı. */
+export function categoryCounts(): CountMap<CategoryKey> {
+  const counts = {
+    video: 0,
+    audio: 0,
+    program: 0,
+    archive: 0,
+    document: 0,
+    other: 0,
+  } satisfies CountMap<CategoryKey>;
+
+  for (const item of allItems()) {
+    counts[categoryOf(item.fileName)] += 1;
+  }
+  return counts;
+}
+
+/* -----------------------------------------------------------------
+   Seçim
+   ----------------------------------------------------------------- */
+
+/** Seçili kayıtlar. */
+export function selectedItems(): DownloadItem[] {
+  return allItems().filter((i) => state.selected[i.id]);
+}
+
+/** Seçim boş mu? */
+export function hasSelection(): boolean {
+  return Object.keys(state.selected).length > 0;
+}
+
+/** Seçimi temizler. */
+export function clearSelection() {
+  for (const id of Object.keys(state.selected)) {
+    setState("selected", Number(id), false);
+  }
+  anchorId = null;
+}
+
+/**
+ * Bir satırı seçim durumuna göre değiştirir.
+ *
+ * * `single` — yalnızca bu satır seçilir (yeni çapa).
+ * * `toggle`  — Ctrl/Cmd: satırın durumunu çevirir, diğerleri korunur.
+ * * `range`   — Shift: görünür listede çapaya kadar aralık seçilir.
+ */
+export function selectRow(
+  id: number,
+  mode: "single" | "toggle" | "range",
+) {
+  if (mode === "range" && anchorId !== null) {
+    const ids = visibleItems().map((i) => i.id);
+    const from = ids.indexOf(anchorId);
+    const to = ids.indexOf(id);
+    if (from >= 0 && to >= 0) {
+      if (!hasSelection()) clearSelection();
+      const [lo, hi] = from <= to ? [from, to] : [to, from];
+      for (let i = lo; i <= hi; i += 1) {
+        setState("selected", ids[i], true);
+      }
+      return;
+    }
+  }
+
+  if (mode === "toggle") {
+    const next = !state.selected[id];
+    setState("selected", id, next);
+    anchorId = id;
+    // Son satırı bırakıldıysa seçim bayraçlarını da temizle.
+    if (!next && !hasSelection()) anchorId = id;
+    return;
+  }
+
+  clearSelection();
+  setState("selected", id, true);
+  anchorId = id;
+}
+
+/** Tüm görünür satırları seçer / seçimi kaldırır. */
+export function toggleSelectAll() {
+  const ids = visibleItems().map((i) => i.id);
+  const allSelected = ids.length > 0 && ids.every((id) => state.selected[id]);
+
+  if (allSelected) {
+    clearSelection();
+    return;
+  }
+  clearSelection();
+  for (const id of ids) setState("selected", id, true);
+}
+
+/**
+ * Toplu işlemlerin hedefi.
+ *
+ * Seçim varsa yalnızca seçili kayıtlar, yoksa görünür listenin tamamı.
+ * Silme gibi "yoksa hiçbir şey yapma" işlemlerinde bu varsayılan kullanılır;
+ * tüm listeyi duraklat/sürdür/iptal eylemleri ise her zaman tüm kayıtları
+ * hedefler (Rust tarafında tek komut).
+ */
+export function bulkTargets(): DownloadItem[] {
+  const selected = selectedItems();
+  return selected.length > 0 ? selected : visibleItems();
+}
+
+/* -----------------------------------------------------------------
+   Özet (durum çubuğu)
+   ----------------------------------------------------------------- */
+
+/** Bir kaydın geçen süresi (saniye). */
+export function itemElapsed(item: DownloadItem): number {
+  const start = new Date(item.createdAt).getTime();
+  if (Number.isNaN(start)) return 0;
+  const end = item.completedAt
+    ? new Date(item.completedAt).getTime()
+    : clock();
+  if (Number.isNaN(end) || end <= start) return 0;
+  return (end - start) / 1000;
+}
+
+export interface Totals {
+  /** Tamamlanan + süren kayıtların indirdiği toplam bayt. */
+  totalDownloaded: number;
+  /** Çalışan kayıtların anlık toplam hızı (MB/s). */
+  totalSpeed: number;
+  /** Çalışan kayıt sayısı (sırada + indiriliyor). */
+  activeCount: number;
+  /** Tamamlanan kayıt sayısı. */
+  completedCount: number;
+  /** Tüm kayıtların geçen süre toplamı (saniye). */
+  totalSeconds: number;
+}
+
+/** Genel özet: toplam indirilen bayt, anlık toplam hız ve süreler. */
+export function totals(): Totals {
   let totalDownloaded = 0;
   let totalSpeed = 0;
+  let activeCount = 0;
+  let completedCount = 0;
+  let totalSeconds = 0;
 
   for (const id of state.order) {
     const item = state.byId[id];
     if (!item) continue;
+
     if (item.status === "Completed") {
-      totalDownloaded += item.downloadedBytes;
-    } else if (isRunning(item)) {
-      totalDownloaded += item.downloadedBytes;
+      completedCount += 1;
+    }
+    if (isRunning(item)) {
+      activeCount += 1;
       totalSpeed += state.speed[id] ?? 0;
     }
+    totalDownloaded += item.downloadedBytes;
+    totalSeconds += itemElapsed(item);
   }
 
-  return { totalDownloaded, totalSpeed };
+  return {
+    totalDownloaded,
+    totalSpeed,
+    activeCount,
+    completedCount,
+    totalSeconds,
+  };
 }
+
+/* -----------------------------------------------------------------
+   Kayıt yaşam döngüsü
+   ----------------------------------------------------------------- */
 
 /** Bir kaydın durumunu işaretliyor. */
 export function markBusy(id: number, busy: boolean) {
@@ -204,6 +524,9 @@ function upsert(item: DownloadItem) {
 /** İlerleme olayını uygular. */
 function applyProgress(ev: Extract<DownloadEvent, { kind: "progress" }>) {
   const existing = state.byId[ev.id];
+
+  // Saat her ilerleme turunda ilerler (süre metinleri canlı kalsın).
+  setClock(Date.now());
 
   // Hız geçmişini güncelle (yalnızca bellekte).
   if (ev.speedHistory.length > 0) {
@@ -236,8 +559,9 @@ function applyProgress(ev: Extract<DownloadEvent, { kind: "progress" }>) {
 function applyCompleted(ev: Extract<DownloadEvent, { kind: "completed" }>) {
   const existing = state.byId[ev.id];
   setState("speed", ev.id, 0);
+  setClock(Date.now());
 
-  // Görev bitti: bekleyen komut kilidi kalkmalı, aksi halde karttaki
+  // Görev bitti: bekleyen komut kilidi kalkmalı, aksi halde satırdaki
   // düğmeler pasif kalır ve kullanıcı yeniden başlatamaz.
   setState("busy", ev.id, false);
 
@@ -272,22 +596,8 @@ function itemName(id: number): string {
   return state.byId[id]?.fileName ?? `#${id}`;
 }
 
-/**
- * Log satırı ekler (bileşenler bu fonksiyonu kullanır).
- *
- * `useFeedback` modülü bu fonksiyona bağlanır; böylece bileşenlerin
- * `store` detaylarına (iç `pushLog` dahil) doğrudan erişmesi gerekmez.
- */
-export function appendLog(
-  level: LogEntry["level"],
-  message: string,
-  downloadId: number | null = null,
-) {
-  pushLog(level, message, downloadId);
-}
-
 /** Yükleme tamamlandı mı? */
-export { ready, activeTab, logs, state };
+export { ready, logs, state };
 
 /**
  * Depoyu başlatır: ilk veriyi yükler ve olaylara abone olur.
@@ -348,11 +658,12 @@ async function reloadList(): Promise<void> {
       seen.add(item.id);
     }
 
-    // Silinen kayıtların hız verisini temizle.
+    // Silinen kayıtların hız ve seçim verisini temizle.
     for (const id of Object.keys(state.speed)) {
       if (!seen.has(Number(id))) {
         setState("speed", Number(id), undefined as unknown as number);
         setState("speedHistory", Number(id), undefined as unknown as SpeedSample[]);
+        setState("selected", Number(id), false);
       }
     }
   } catch (e) {

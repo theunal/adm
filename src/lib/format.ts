@@ -216,3 +216,81 @@ export function urlLabel(url: string): string {
 export function nowStamp(): string {
   return new Date().toLocaleTimeString(localeTag(), { hour12: false });
 }
+
+/* -----------------------------------------------------------------
+   Dosya sınıflandırması (kenar çubuğu kategorileri + tablo ikonu)
+   ----------------------------------------------------------------- */
+
+/** Kenar çubuğundaki kategori kutuları (IDM "Categories" bölümü). */
+export type CategoryKey =
+  | "video"
+  | "audio"
+  | "program"
+  | "archive"
+  | "document"
+  | "other";
+
+/**
+ * Bir indirmenin uzantısına göre arayüz kategorisi.
+ *
+ * `settings.rs` yalnızca **hedef klasörü** çözer (Video / Ses / Diğer /
+ * Genel); buradaki liste daha ayrıntılıdır ve yalnızca **görsel gruplama**
+ * içindir. İki liste bağımsızdır: ayarlarda kategori klasörü değişse bile tablo
+ * ikonu değişmez.
+ */
+const VIDEO_EXT = new Set([
+  "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg",
+  "m2ts", "ts", "3gp", "rmvb", "ogv", "vob", "mts", "m2v", "divx", "mp4v",
+]);
+
+const AUDIO_EXT = new Set([
+  "mp3", "flac", "wav", "aac", "ogg", "oga", "m4a", "wma", "opus", "alac",
+  "aiff", "ape", "mid", "midi", "dsf", "dff", "amr", "mka",
+]);
+
+const PROGRAM_EXT = new Set([
+  "exe", "msi", "apk", "dmg", "deb", "rpm", "appimage", "bat", "cmd", "com",
+  "jar", "msu", "pkg", "run", "sh", "app",
+]);
+
+const ARCHIVE_EXT = new Set([
+  "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "iso", "cbz",
+  "cbr", "wim", "cab", "arj", "lzh", "z",
+]);
+
+const DOCUMENT_EXT = new Set([
+  "pdf", "epub", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf",
+  "odt", "ods", "csv", "md", "djvu", "mobi", "chm", "html", "htm",
+]);
+
+/** Dosya adındaki küçük harf uzantı (yoksa boş dize). */
+export function fileExtension(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  if (dot <= 0) return "";
+  return fileName.slice(dot + 1).toLowerCase();
+}
+
+/**
+ * Dosya adını arayüz kategorisine eşler.
+ *
+ * Uzantı yoksa `other` döner; kısayol (`.bashrc`) ve uzantısız dosyalar
+ * yanlışlıkla "gizli dosya uzantısı" sayılmaz.
+ */
+export function categoryOf(fileName: string): CategoryKey {
+  const ext = fileExtension(fileName);
+  if (!ext) return "other";
+
+  if (VIDEO_EXT.has(ext)) return "video";
+  if (AUDIO_EXT.has(ext)) return "audio";
+  if (PROGRAM_EXT.has(ext)) return "program";
+  if (ARCHIVE_EXT.has(ext)) return "archive";
+  if (DOCUMENT_EXT.has(ext)) return "document";
+  return "other";
+}
+
+/** Tablo ikonunda gösterilecek kısaltma (en fazla 3 karakter, büyük harf). */
+export function iconLabel(fileName: string): string {
+  const ext = fileExtension(fileName);
+  if (!ext) return "•";
+  return ext.slice(0, 3).toUpperCase();
+}
