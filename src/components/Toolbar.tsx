@@ -1,198 +1,259 @@
 /**
  * Araç çubuğu.
  *
- * Soldaki büyük yeşil düğme IDM'in "Add URL" düğmesidir ve tek doğrudan
- * indirme başlatma girişidir: basıldığında **Yeni İndirme** penceresi açılır
- * (adres oraya yazılır). Pencereyi açan diğer yollar: menüdeki
- * `Dosya ▸ URL Ekle` ve `Ctrl+N`.
+ * FDM düzeni: solda açılır listeli filtre ve sıralama düğmeleri, sağda
+ * mavi **İndirme ekle** düğmesi, arama kutusu ve ≡ menü düğmesi.
  *
- * Ortadaki üç düğme **tüm listeye** uygulanır (tek Rust komutu): duraklat,
- * sürdür, iptal. Sağdaki sil düğmesi yalnızca seçili satırlarda etkindir.
+ * Kenar çubuğu kaldırıldığı için görev ve kategori filtreleri artık
+ * "Tüm dosyalar" açılır listesinde; sıralama "En yeni" açılır listesinde.
+ * Toplu duraklat/sürdür/iptal/sil eylemleri ≡ menüsünde ve satır
+ * bağlam menüsündedir.
  */
-import { Show, createMemo } from "solid-js";
-import { confirm } from "../lib/api";
-import { bulkCancel, bulkPause, bulkResume, bulkDelete } from "../lib/bulk";
-import { hasSelection, selectedItems, taskCounts, totals } from "../lib/store";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
-  addDialogOpen,
-  graphOpen,
-  logOpen,
-  setAddDialogOpen,
-  setGraphOpen,
-  setLogOpen,
-} from "../lib/ui";
+  CATEGORY_FILTERS,
+  TASK_FILTERS,
+  categoryCounts,
+  isCategoryActive,
+  isTaskActive,
+  search,
+  selectCategory,
+  selectTask,
+  setSearch,
+  setSort,
+  sortKey,
+  taskCounts,
+  view,
+  type SortKey,
+  type TaskFilter,
+} from "../lib/store";
+import { setAddDialogOpen } from "../lib/ui";
 import { t } from "../lib/i18n";
+import MenuBar from "./MenuBar";
+import type { CategoryKey } from "../lib/format";
+
+/** Görev filtresine karşık etiket anahtarı. */
+const TASK_LABEL: Record<TaskFilter, string> = {
+  all: "side.task.all",
+  downloading: "side.task.downloading",
+  queued: "side.task.queued",
+  paused: "side.task.paused",
+  completed: "side.task.completed",
+  failed: "side.task.failed",
+  cancelled: "side.task.cancelled",
+};
+
+/** Kategoriye karşık etiket anahtarı. */
+const CATEGORY_LABEL: Record<CategoryKey, string> = {
+  video: "side.cat.video",
+  audio: "side.cat.audio",
+  program: "side.cat.program",
+  archive: "side.cat.archive",
+  document: "side.cat.document",
+  other: "side.cat.other",
+};
+
+/** Sıralama ölçütlerinin menü sırası. */
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: "status", label: "sort.status" },
+  { key: "newest", label: "sort.newest" },
+  { key: "oldest", label: "sort.oldest" },
+  { key: "name", label: "sort.name" },
+  { key: "size", label: "sort.size" },
+  { key: "progress", label: "sort.progress" },
+];
+
+/** Hangi açılır liste açık (`null` ise hiçbiri). */
+type OpenList = "filter" | "sort" | null;
 
 export default function Toolbar() {
-  const stats = createMemo(() => totals());
+  const [open, setOpen] = createSignal<OpenList>(null);
 
-  /** Çalışan indirme var mı? (duraklat / iptal düğmelerini canlandırır) */
-  const hasRunning = () => stats().activeCount > 0;
+  /** Etkin filtrenin okunabilir adı ("Tüm dosyalar" düğmesinin etiketi). */
+  const filterLabel = createMemo(() => {
+    const v = view();
+    return t(v.kind === "task" ? TASK_LABEL[v.value] : CATEGORY_LABEL[v.value]);
+  });
 
-  /** Sürdürülebilir indirme var mı? (duraklatılan + başarısız + iptal) */
-  const hasResumable = () => {
-    const c = taskCounts();
-    return c.paused + c.failed + c.cancelled > 0;
-  };
+  /** Etkin sıralamanın okunabilir adı. */
+  const sortLabel = createMemo(
+    () => SORTS.find((s) => s.key === sortKey())?.label ?? "sort.status",
+  );
 
-  /** Seçili satır sayısı (sil düğmesi + sayaç etiketi). */
-  const selectedCount = () => selectedItems().length;
+  // Dış tıklama ve Escape açılır listeleri kapatır.
+  createEffect(() => {
+    if (!open()) return;
 
-  /** Seçili kayıtları onaylayarak siler. */
-  async function onDelete() {
-    const items = selectedItems();
-    if (items.length === 0) return;
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest(".dd-anchor, .menu-anchor")) return;
+      setOpen(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(null);
+    };
 
-    const ok = await confirm(
-      t("dialog.bulk_delete.body", { count: items.length }),
-      t("dialog.bulk_delete.title"),
-    );
-    if (!ok) return;
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
+    onCleanup(() => {
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
+    });
+  });
 
-    try {
-      await bulkDelete(items, true);
-    } catch (e) {
-      pushLogSafe("error", t("act.failed", { action: t("act.delete"), error: errorText(e) }));
-    }
+  function toggle(which: Exclude<OpenList, null>) {
+    setOpen((cur) => (cur === which ? null : which));
   }
 
   return (
-    <div class="toolbar" role="toolbar" aria-label={t("side.tasks")}>
+    <div class="toolbar" role="toolbar">
+      {/* Filtre — görevler ve kategoriler */}
+      <div class="dd-anchor">
+        <button
+          type="button"
+          class={`tb-dd ${open() === "filter" ? "tb-dd-open" : ""}`}
+          aria-haspopup="true"
+          aria-expanded={open() === "filter"}
+          onClick={() => toggle("filter")}
+        >
+          <svg class="tb-dd-icon" viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+            <path
+              d="M1.5 2.5 H12.5 L8.4 7.4 V11.5 L5.6 12.8 V7.4 Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-linejoin="round"
+            />
+          </svg>
+          {filterLabel()}
+          <svg class="tb-dd-caret" viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">
+            <path d="M2 4 L5 7 L8 4 Z" fill="currentColor" />
+          </svg>
+        </button>
+
+        <Show when={open() === "filter"}>
+          <div class="dd-pop">
+            <div class="dd-head">{t("side.tasks")}</div>
+            <For each={TASK_FILTERS}>
+              {(filter) => (
+                <button
+                  type="button"
+                  class={`dd-item ${isTaskActive(filter) ? "dd-item-active" : ""}`}
+                  onClick={() => {
+                    selectTask(filter);
+                    setOpen(null);
+                  }}
+                >
+                  <span class="dd-check" aria-hidden="true">
+                    <Show when={isTaskActive(filter)}>✓</Show>
+                  </span>
+                  {t(TASK_LABEL[filter])}
+                  <span class="dd-count">{taskCounts()[filter]}</span>
+                </button>
+              )}
+            </For>
+
+            <div class="dd-sep" />
+            <div class="dd-head">{t("side.categories")}</div>
+            <For each={CATEGORY_FILTERS}>
+              {(cat) => (
+                <button
+                  type="button"
+                  class={`dd-item ${isCategoryActive(cat) ? "dd-item-active" : ""}`}
+                  onClick={() => {
+                    selectCategory(cat);
+                    setOpen(null);
+                  }}
+                >
+                  <span class="dd-check" aria-hidden="true">
+                    <Show when={isCategoryActive(cat)}>✓</Show>
+                  </span>
+                  {t(CATEGORY_LABEL[cat])}
+                  <span class="dd-count">{categoryCounts()[cat]}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+
+      {/* Sıralama */}
+      <div class="dd-anchor">
+        <button
+          type="button"
+          class={`tb-dd ${open() === "sort" ? "tb-dd-open" : ""}`}
+          aria-haspopup="true"
+          aria-expanded={open() === "sort"}
+          onClick={() => toggle("sort")}
+        >
+          <svg class="tb-dd-icon" viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+            <path
+              d="M2 3 H12 M4 7 H10 M6.5 11 H7.5"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linecap="round"
+            />
+          </svg>
+          {t(sortLabel())}
+          <svg class="tb-dd-caret" viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">
+            <path d="M2 4 L5 7 L8 4 Z" fill="currentColor" />
+          </svg>
+        </button>
+
+        <Show when={open() === "sort"}>
+          <div class="dd-pop">
+            <For each={SORTS}>
+              {(s) => (
+                <button
+                  type="button"
+                  class={`dd-item ${sortKey() === s.key ? "dd-item-active" : ""}`}
+                  onClick={() => {
+                    setSort(s.key);
+                    setOpen(null);
+                  }}
+                >
+                  <span class="dd-check" aria-hidden="true">
+                    <Show when={sortKey() === s.key}>✓</Show>
+                  </span>
+                  {t(s.label)}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+
+      <span class="tb-spacer" />
+
       <button
         type="button"
-        class="tb-btn-primary"
+        class="tb-add"
         title={t("tb.add_title")}
-        onClick={() => setAddDialogOpen(!addDialogOpen())}
+        onClick={() => setAddDialogOpen(true)}
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-          <path
-            d="M8 2.5 L8 9.5 M8 9.5 L3.6 13.5 M8 9.5 L12.4 13.5 M3.6 13.5 L3.6 3.5 M3.6 3.5 L12.4 3.5 M12.4 3.5 L12.4 13.5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.7"
-            stroke-linecap="round"
-          />
+        <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+          <path d="M7 2.5 V11.5 M2.5 7 H11.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
         {t("tb.add")}
       </button>
 
-      <span class="toolbar-sep" role="separator" />
-
-      {/* Toplu indirme denetimi — tüm liste */}
-      <div class="toolbar-group">
-        <button
-          type="button"
-          class="tb-btn"
-          title={t("tb.pause_all_title")}
-          disabled={!hasRunning()}
-          onClick={() => void bulkPause()}
-        >
-          <svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">
-            <rect x="3" y="2.5" width="3" height="9" fill="currentColor" />
-            <rect x="8" y="2.5" width="3" height="9" fill="currentColor" />
-          </svg>
-          {t("tb.pause_all")}
-        </button>
-
-        <button
-          type="button"
-          class="tb-btn"
-          title={t("tb.resume_all_title")}
-          disabled={!hasResumable()}
-          onClick={() => void bulkResume()}
-        >
-          <svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">
-            <path d="M4 2.5 L11 7 L4 11.5 Z" fill="currentColor" />
-          </svg>
-          {t("tb.resume_all")}
-        </button>
-
-        <button
-          type="button"
-          class="tb-btn tb-btn-danger"
-          title={t("tb.cancel_all_title")}
-          disabled={!hasRunning()}
-          onClick={() => void bulkCancel()}
-        >
-          <svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">
-            <rect x="3" y="3" width="8" height="8" fill="currentColor" />
-          </svg>
-          {t("tb.cancel_all")}
-        </button>
+      {/* Arama */}
+      <div class="tb-search">
+        <svg class="tb-search-icon" viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+          <circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path d="M9 9 L12.5 12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+        </svg>
+        <input
+          type="search"
+          value={search()}
+          placeholder={t("tb.search")}
+          aria-label={t("tb.search")}
+          spellcheck={false}
+          onInput={(e) => setSearch(e.currentTarget.value)}
+        />
       </div>
 
-      <span class="toolbar-sep" role="separator" />
-
-      {/* Seçime bağlı eylem */}
-      <div class="toolbar-group">
-        <button
-          type="button"
-          class="tb-btn tb-btn-danger"
-          title={t("tb.delete_title")}
-          disabled={!hasSelection()}
-          onClick={() => void onDelete()}
-        >
-          <svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">
-            <path
-              d="M2.5 3.5 H11.5 M5.5 3.5 V2 H8.5 V3.5 M4 3.5 L4.6 12 H9.4 L10 3.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.2"
-            />
-          </svg>
-          {t("tb.delete")}
-        </button>
-      </div>
-
-      <Show when={selectedCount() > 0}>
-        <span
-          class="tb-selection"
-          title={t("row.selected", { count: selectedCount() })}
-        >
-          {selectedCount()} {t("tb.selection")}
-        </span>
-      </Show>
-
-      <span class="toolbar-spacer" />
-
-      {/* Panel açık/kapay düğmeleri */}
-      <div class="toolbar-group">
-        <button
-          type="button"
-          class={`tb-btn tb-btn-icon ${graphOpen() ? "tb-btn-toggled" : ""}`}
-          title={t("tb.graph_title")}
-          aria-pressed={graphOpen()}
-          onClick={() => setGraphOpen(!graphOpen())}
-        >
-          <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
-            <path
-              d="M1.5 11.5 L4.5 6 L7 8.5 L9.5 3.5 L12.5 11.5 Z"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.3"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
-
-        <button
-          type="button"
-          class={`tb-btn tb-btn-icon ${logOpen() ? "tb-btn-toggled" : ""}`}
-          title={t("tb.log_title")}
-          aria-pressed={logOpen()}
-          onClick={() => setLogOpen(!logOpen())}
-        >
-          <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
-            <path
-              d="M2 2.5 H12 V11.5 H2 Z M4.5 5 H9.5 M4.5 7.5 H9.5 M4.5 10 H7"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.2"
-            />
-          </svg>
-        </button>
-      </div>
+      <MenuBar />
     </div>
   );
 }

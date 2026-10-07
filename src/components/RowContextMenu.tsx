@@ -8,14 +8,15 @@
  * Menü tek bir katmanda (`ctx-layer`) çizilir; tablo gövdesinin kaydırma
  * konteynerinin `overflow` değeri onu kırpamaz.
  */
-import { Show, createEffect, onCleanup } from "solid-js";
-import { confirm, openFolder, openPath } from "../lib/api";
+import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { changeChannelCount, confirm, openFolder, openPath } from "../lib/api";
 import {
   cancelItem,
   deleteItem,
   pauseItem,
   resumeItem,
 } from "../lib/bulk";
+import { MAX_CHANNELS, MIN_CHANNELS } from "../lib/settings";
 import { errorText, pushLogSafe } from "../lib/useFeedback";
 import { contextMenu, setContextMenu, setPropertiesItem } from "../lib/ui";
 import { t } from "../lib/i18n";
@@ -24,9 +25,18 @@ import type { DownloadItem } from "../lib/format";
 /** Menü genişliği (kenar boşluğu için ekran kenarına yaslanır). */
 const MENU_W = 210;
 /** Tahmini menü yüksekliği — ekranın altına taşmayı önler. */
-const MENU_H = 330;
+const MENU_H = 430;
 
 export default function RowContextMenu() {
+  /** Kaydırıcının anlık değeri (menü kapanana kadar Rust'a gitmez). */
+  const [channelDraft, setChannelDraft] = createSignal(0);
+
+  // Menü her açıldığında kaydırıcıyı kaydın gerçek kanal sayısına getir.
+  createEffect(() => {
+    const item = contextMenu()?.item;
+    if (item) setChannelDraft(item.channelCount);
+  });
+
   /**
    * Menü açıkken çalışan yön tuşları ve `Escape`.
    *
@@ -87,6 +97,25 @@ export default function RowContextMenu() {
     });
   }
 
+  /** Kanal sayısı değişikliğini uygular (menüyü açık tutar). */
+  async function onChannels(count: number) {
+    const item = contextMenu()?.item;
+    if (!item || count === item.channelCount) return;
+    try {
+      await changeChannelCount(item.id, count);
+      pushLogSafe("info", t("log.channels_changed", {
+        name: item.fileName,
+        count: count.toString(),
+      }), item.id);
+    } catch (e) {
+      pushLogSafe(
+        "error",
+        t("act.failed", { action: t("act.channels"), error: errorText(e) }),
+        item.id,
+      );
+    }
+  }
+
   return (
     <Show when={contextMenu()}>
       {(state) => (
@@ -103,7 +132,7 @@ export default function RowContextMenu() {
           />
 
           <div
-            class="menu-pop-ctx"
+            class="ctx-pop"
             style={position()}
             role="menu"
             onClick={(e) => e.stopPropagation()}
@@ -192,6 +221,30 @@ export default function RowContextMenu() {
             >
               {t("menu.item.delete_download")}
             </button>
+
+            <div class="menu-sep" role="separator" />
+
+            {/* Kanal sayısı düzenleyicisi. Satır içi düğmeler kaldırıldığı
+                için buraya taşındı. Değer `change` (fare bırakılınca) uygulanır;
+                `input` sırasında her adımda komut göndermemek için. */}
+            <div class="ctx-channels">
+              <div class="ctx-channels-head">
+                {t("act.channels_label")} <strong>{channelDraft()}</strong>
+              </div>
+              <input
+                type="range"
+                class="slider"
+                min={MIN_CHANNELS}
+                max={MAX_CHANNELS}
+                step={1}
+                value={channelDraft()}
+                aria-label={t("act.channels_label")}
+                onClick={(e) => e.stopPropagation()}
+                onInput={(e) => setChannelDraft(Number(e.currentTarget.value))}
+                onChange={(e) => void onChannels(Number(e.currentTarget.value))}
+              />
+              <p class="ctx-channels-note">{t("act.channels_note")}</p>
+            </div>
 
             <div class="menu-sep" role="separator" />
 

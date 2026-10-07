@@ -1,23 +1,19 @@
 /**
- * Uygulama kabuğu — klasik IDM yerleşimi.
+ * Uygulama kabuğu — Free Download Manager düzeni.
  *
  * Sütunlar (yukarıdan aşağı):
  *
  * ```text
- * TitleBar   pencere başlığı + TR/EN + pencere düğmeleri
- * MenuBar    Dosya ▾ İndirmeler ▾ Görevler ▾ Seçenekler ▾ Yardım ▾
- * Toolbar    yeşil "URL Ekle" + toplu duraklat/sürdür/iptal/sil + panel düğmeleri
- * ┌──────────┬───────────────────────────────────┐
- * │ Sidebar  │ DownloadTable  (veya SettingsPanel)│
- * │ görevler │ BottomDock      (grafik / günlük)  │
- * │ kategor. │                                   │
- * └──────────┴───────────────────────────────────┘
- * StatusBar  boş alan · hız · aktif · indirilen · süre
+ * TitleBar   logo · uygulama adı · pencere düğmeleri · TR/EN
+ * Toolbar    filtre ▾ · sıralama ▾ ········· İndirme ekle · ara · ≡ menü
+ * Tablo      # · onay · Ad · Boyut · Durum · ⋮ · İndirme · Kalan · Ekleme
+ * AltDock    hız grafiği / günlük (durum çubuğundaki ▾ ile açılır)
+ * StatusBar  ana anahtar · hız · kalite rozeti · boş alan · seçili ad · ▾
  * ```
  *
- * Tüm durum `src/lib/store.ts` üzerinden yönetilir; Rust tarafından gelen
- * gerçek zamanlı olaylar bu kabuğa bağlanır. Klavye kısayolları da burada
- * toplanır (menüde yalnızca ipuçları görünür).
+ * Kenar çubuğu ve menü çubuğu satırı kaldırıldı: filtreler araç çubuğundaki
+ * açılır listeye, menüler ≡ paneline taşındı. Tüm durum `src/lib/store.ts`
+ * üzerinden yönetilir; klavye kısayolları da burada toplanır.
  */
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { initStore, selectedItems, toggleSelectAll } from "./lib/store";
@@ -43,9 +39,7 @@ import {
 import { bulkCancel, bulkPause, bulkResume, deleteSelected } from "./lib/bulk";
 import { confirm } from "./lib/api";
 import TitleBar from "./components/TitleBar";
-import MenuBar from "./components/MenuBar";
 import Toolbar from "./components/Toolbar";
-import Sidebar from "./components/Sidebar";
 import DownloadTable from "./components/DownloadTable";
 import BottomDock from "./components/BottomDock";
 import StatusBar from "./components/StatusBar";
@@ -173,12 +167,9 @@ export default function App() {
         }
       >
         <TitleBar />
-        <MenuBar />
         <Toolbar />
 
         <div class="app-body">
-          <Sidebar />
-
           <main class="content">
             {/* Ayarlar menüsü tablonun yerini alır. */}
             <Show when={!settingsOpen()} fallback={<SettingsPanel />}>

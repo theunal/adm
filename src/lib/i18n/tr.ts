@@ -23,7 +23,6 @@ export const tr = {
   // -----------------------------------------------------------------
   // Başlık çubuğu (TitleBar.tsx)
   // -----------------------------------------------------------------
-  "title.brand_sub": "Gelişmiş İndirme Yöneticisi",
   "title.lang.label": "Dil",
   "title.win.close": "Kapat",
   "title.win.maximize": "Büyüt / Küçült",
@@ -60,23 +59,13 @@ export const tr = {
   // -----------------------------------------------------------------
   // Araç çubuğu (Toolbar.tsx)
   // -----------------------------------------------------------------
-  "tb.add": "URL Ekle",
+  "tb.add": "İndirme ekle",
   "tb.add_title": "Yeni indirme başlat (Ctrl+N)",
-  "tb.pause_all": "Duraklat",
-  "tb.pause_all_title": "Tüm indirmeleri duraklat",
-  "tb.resume_all": "Sürdür",
-  "tb.resume_all_title": "Tüm indirmeleri sürdür",
-  "tb.cancel_all": "İptal",
-  "tb.cancel_all_title": "Tüm indirmeleri iptal et",
-  "tb.delete": "Sil",
-  "tb.delete_title": "Seçili indirmeleri sil",
-  "tb.clear": "Listeyi Temizle",
-  "tb.clear_title": "Tamamlanan, başarısız ve iptal edilen kayıtları sil",
+  "tb.search": "İndirmelerde ara...",
   "tb.graph": "Grafik",
   "tb.graph_title": "Hız grafiğini aç/kapat",
   "tb.log": "Günlük",
   "tb.log_title": "Olay günlüğünü aç/kapat",
-  "tb.selection": "seçili",
 
   // -----------------------------------------------------------------
   // Kenar çubuğu (Sidebar.tsx)
@@ -105,7 +94,6 @@ export const tr = {
   "form.channels_hint": "{count} kanal",
   "form.db_hint": "İndirme geçmişi kaydediliyor",
   "form.db_title": "Kayıtların tutulduğu konum: {path}",
-  "form.err.default_dir": "Varsayılan klasör okunamadı: {error}",
   "form.err.start": "İndirme başlatılamadı: {error}",
   "form.err_url.empty": "Önce bir bağlantı adresi girin",
   "form.err_url.scheme": "Yalnızca http:// veya https:// adresleri desteklenir",
@@ -124,12 +112,20 @@ export const tr = {
   "col.idx": "#",
   "col.name": "Dosya Adı",
   "col.size": "Boyut",
-  "col.progress": "İlerleme",
   "col.speed": "Hız",
   "col.eta": "Kalan",
-  "col.channels": "Kanal",
   "col.status": "Durum",
-  "col.actions": "İşlemler",
+  "col.date": "Ekleme",
+
+  // -----------------------------------------------------------------
+  // Sıralama ölçütleri (Toolbar.tsx)
+  // -----------------------------------------------------------------
+  "sort.status": "Duruma göre",
+  "sort.newest": "En yeni",
+  "sort.oldest": "En eski",
+  "sort.name": "Ada göre",
+  "sort.size": "Boyuta göre",
+  "sort.progress": "İlerlemeye göre",
 
   // -----------------------------------------------------------------
   // Tablo satırı (DownloadRow.tsx)
@@ -137,32 +133,23 @@ export const tr = {
   "row.aria": "İndirme listesi",
   "row.progress_aria": "İndirme ilerlemesi",
   "row.size_unknown": "Boyut bilinmiyor",
-  "row.selected": "{count} kayıt seçildi",
-  "row.hint": "Çift tık: dosyayı aç · Sağ tık: işlemler · Shift/Ctrl ile çoklu seçim",
+  "row.select_aria": "{name} kaydını seç",
+  "row.select_title": "Kaydı seç (Shift/Ctrl ile çoklu)",
+  "row.more_title": "İşlemler",
+  "row.channels_title": "{count} kanal",
 
   // -----------------------------------------------------------------
   // Satır eylemleri (DownloadRow.tsx)
   // -----------------------------------------------------------------
   "act.pause": "Duraklat",
-  "act.pause_title": "İndirmeyi duraklat",
   "act.resume": "Sürdür",
-  "act.resume_title": "Kaldığı yerden sürdür",
   "act.cancel": "İptal",
-  "act.cancel_title": "İndirmeyi iptal et",
   "act.delete": "Sil",
-  "act.delete_title": "Kaydı ve dosyayı sil",
   "act.delete_record": "Kaydı sil",
-  "act.delete_record_title": "Kaydı sil, dosyayı koru",
   "act.open": "Aç",
-  "act.open_title": "Dosyayı aç",
   "act.folder": "Konum",
-  "act.folder_title": "Klasörü aç",
   "act.channels": "Kanallar",
-  "act.channels_title": "Kanal sayısını değiştir",
-  "act.busy_title": "İşlem sürüyor",
   "act.failed": "{action} başarısız: {error}",
-  "act.channels_apply": "Uygula",
-  "act.channels_cancel": "Vazgeç",
   "act.channels_label": "Kanal sayısı:",
   "act.channels_note":
     "Çalışan bir indirmede kanal sayısı değişince indirme duraklatılıp yeni sayıyla sürdürülür.",
@@ -172,8 +159,8 @@ export const tr = {
   // -----------------------------------------------------------------
   "list.clear": "Listeyi Temizle",
   "list.clear_title": "Tamamlanan, başarısız ve iptal edilen kayıtları sil",
-  "list.empty_title": "Bu görünümde indirme yok",
-  "list.empty_hint": "Soldaki kenar çubuğundan başka bir görev veya kategori seçin.",
+  "list.drop_title": "URL'yi sürükleyip bırakın",
+  "list.drop_hint": "Ya da araç çubuğundaki İndirme ekle düğmesini kullanın",
   "list.err.clear": "Kayıtlar temizlenemedi: {error}",
   "list.failed_hint": "{count} başarısız • {bytes} yarım",
   "list.failed_hint_title": "Başarısız kayıtların indirdiği miktar",
@@ -193,8 +180,6 @@ export const tr = {
 
   // Özellikler penceresi
   "props.title": "İndirme Özellikleri",
-  "props.file": "Dosya",
-  "props.path": "Konum",
   "props.url": "Adres",
   "props.size": "Boyut",
   "props.status": "Durum",
@@ -214,7 +199,6 @@ export const tr = {
   // -----------------------------------------------------------------
   "graph.title": "Hız Grafiği",
   "graph.empty": "Henüz hız verisi yok.",
-  "graph.axis_speed": "MB/s",
   "graph.axis_time": "Zaman",
   "graph.peak": "Tepe hız",
   "graph.average": "Ortalama hız",
@@ -229,6 +213,7 @@ export const tr = {
   "log.clear": "Temizle",
   "log.empty": "Henüz olay yok.",
   "log.to_bottom": "En alta git",
+  "log.channels_changed": "{name} kanal sayısı {count} olarak ayarlandı",
   "spark.empty_title": "Hız geçmişi oluşuyor",
 
   // -----------------------------------------------------------------
@@ -236,10 +221,17 @@ export const tr = {
   // -----------------------------------------------------------------
   "sb.disk_free": "Disk boş",
   "sb.speed": "Anlık hız",
-  "sb.active": "Aktif",
-  "sb.downloaded": "İndirilen",
-  "sb.time": "Toplam süre",
-  "sb.ready": "Hazır",
+  "sb.on": "AÇIK",
+  "sb.off": "KAPALI",
+  "sb.master_title": "Tüm indirmeleri duraklat / sürdür",
+  "sb.free": "boş",
+  "sb.quality_title": "Ölçülen bağlantı hızına göre kalite kademesi",
+  "sb.quality.ok": "YÜKSEK",
+  "sb.quality.warn": "ORTA",
+  "sb.quality.idle": "DÜŞÜK",
+  "sb.selected_many": "{count} kayıt seçili",
+  "sb.dock_show": "Hız grafiğini aç",
+  "sb.dock_hide": "Alt paneli kapat",
 
   // -----------------------------------------------------------------
   // Ayarlar (SettingsPanel.tsx)

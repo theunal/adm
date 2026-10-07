@@ -191,6 +191,25 @@ export function formatDateTime(iso: string | null): string {
   });
 }
 
+/**
+ * ISO zaman damgasını kısa biçime çevirir: bu yıl ise `07 Ağu`,
+ * farklı yıl ise `07.08.2025`.
+ *
+ * Listede "Ekleme" sütunu için; yılı her satırda tekrarlamak gürültü yaratır.
+ */
+export function formatShortDate(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const opts: Intl.DateTimeFormatOptions =
+    date.getFullYear() === new Date().getFullYear()
+      ? { day: "2-digit", month: "short" }
+      : { day: "2-digit", month: "2-digit", year: "2-digit" };
+
+  return date.toLocaleDateString(localeTag(), opts);
+}
+
 /** Sayıyı etkin dilin biçiminde yazar (TR'de ondalık ayırıcı virgül). */
 export function formatNumber(value: number, decimals = 0): string {
   return value.toLocaleString(localeTag(), {

@@ -104,6 +104,12 @@ const [logs, setLogs] = createStore<{ entries: LogEntry[] }>({ entries: [] });
 const [view, setView] = createSignal<View>({ kind: "task", value: "all" });
 const [ready, setReady] = createSignal(false);
 
+/** Liste sıralaması (araç çubuğundaki açılır listeden değişir). */
+const [sortKey, setSortKey] = createSignal<SortKey>("status");
+
+/** Arama kutusu metni; dosya adı ve adres içinde eşleşen kayıtları süzer. */
+const [search, writeSearch] = createSignal("");
+
 /**
  * "Şimdi" damgası (epoch ms).
  *
@@ -176,6 +182,22 @@ export function appendLog(
 /** Etkin görünüm. */
 export { view };
 
+/** Etkin sıralama ölçütü. */
+export { sortKey };
+
+/** Arama metni. */
+export { search };
+
+/** Sıralama ölçütünü değiştirir. */
+export function setSort(value: SortKey) {
+  setSortKey(value);
+}
+
+/** Arama metnini değiştirir. */
+export function setSearch(value: string) {
+  writeSearch(value);
+}
+
 /** Görev filtresini seçer (kategori seçimini de değiştirir). */
 export function selectTask(value: TaskFilter) {
   setView({ kind: "task", value });
@@ -246,14 +268,47 @@ const STATUS_RANK: Record<DownloadStatus, number> = {
   Completed: 5,
 };
 
-/** Tüm kayıtlar: durum sırası, sonra en son güncellenen üstte. */
+/**
+ * Liste sıralaması.
+ *
+ * `status` varsayılandır ve eski davranışı korur: önce durum sırası
+ * (çalışanlar üstte), sonra en son güncellenen. Araç çubuğundaki sıralama
+ * açılır listesi bu değeri değiştirir.
+ */
+export type SortKey = "status" | "newest" | "oldest" | "name" | "size" | "progress";
+
+/** Tamamlanma oranı (0..1). Boyut bilinmiyorsa 0. */
+function progressRatio(item: DownloadItem): number {
+  return item.totalBytes > 0 ? item.downloadedBytes / item.totalBytes : 0;
+}
+
+/** Tüm kayıtlar, seçili ölçüte göre sıralanmış olarak. */
 function sortedItems(): DownloadItem[] {
-  return allItems().sort((a, b) => {
-    const ra = STATUS_RANK[a.status];
-    const rb = STATUS_RANK[b.status];
-    if (ra !== rb) return ra - rb;
-    return b.lastUpdated.localeCompare(a.lastUpdated);
-  });
+  const list = allItems();
+
+  switch (sortKey()) {
+    case "newest":
+      return list.sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
+    case "oldest":
+      return list.sort((a, b) => a.lastUpdated.localeCompare(b.lastUpdated));
+    case "name":
+      return list.sort((a, b) =>
+        a.fileName.localeCompare(b.fileName, undefined, { numeric: true }),
+      );
+    case "size":
+      return list.sort((a, b) => b.totalBytes - a.totalBytes);
+    case "progress":
+      return list.sort((a, b) => progressRatio(b) - progressRatio(a));
+    case "status":
+    default:
+      // Durum sırası, sonra en son güncellenen üstte.
+      return list.sort((a, b) => {
+        const ra = STATUS_RANK[a.status];
+        const rb = STATUS_RANK[b.status];
+        if (ra !== rb) return ra - rb;
+        return b.lastUpdated.localeCompare(a.lastUpdated);
+      });
+  }
 }
 
 /** Görev filtresi bir duruma eşleniyor mu? */
@@ -277,18 +332,32 @@ function matchesTask(item: DownloadItem, filter: TaskFilter): boolean {
 }
 
 /**
- * Kenar çubuğundaki etkin görünüme uyan kayıtlar.
+ * Görünüme, aramaya ve sıralamaya uyan kayıtlar.
  *
- * Bu liste tablonun satır kaynağıdır; araç çubuğundaki toplu işlemler de
- * seçim boşken bu listeyi hedefler.
+ * Sıra: durum/kategori filtresi → arama → sıralama. Arama **süzgeçtir**;
+ * sayaçlar (`taskCounts` / `categoryCounts`) yalnızca durum filtresine bakar,
+ * böylece kenar çubuğundaki sayılar arama yazarken kaybolmaz.
  */
 export function visibleItems(): DownloadItem[] {
   const v = view();
-  const items = sortedItems();
+  const needle = search().trim().toLowerCase();
+
+  let items = sortedItems();
   if (v.kind === "task") {
-    return items.filter((i) => matchesTask(i, v.value));
+    items = items.filter((i) => matchesTask(i, v.value));
+  } else {
+    items = items.filter((i) => categoryOf(i.fileName) === v.value);
   }
-  return items.filter((i) => categoryOf(i.fileName) === v.value);
+
+  if (needle) {
+    items = items.filter(
+      (i) =>
+        i.fileName.toLowerCase().includes(needle) ||
+        i.url.toLowerCase().includes(needle),
+    );
+  }
+
+  return items;
 }
 
 /** Görünüm başlığı çubuğunda gösterilecek etiket sayısı. */

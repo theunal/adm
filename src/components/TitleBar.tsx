@@ -25,15 +25,12 @@ const LANGS: Locale[] = ["tr", "en"];
 export default function TitleBar() {
   return (
     <header class="titlebar" data-tauri-drag-region>
-      {/* Sol: uygulama kimliği (IDM'de yalnızca simge + ad) */}
+      {/* Sol: uygulama kimliği (yalnızca simge + ad) */}
       <div class="titlebar-brand" data-tauri-drag-region>
         <span class="brand-mark" aria-hidden="true">
           <img src={logoUrl} alt="" />
         </span>
         <span class="brand-title">ADM</span>
-        <span class="brand-sub" data-tauri-drag-region>
-          {t("title.brand_sub")}
-        </span>
       </div>
 
       {/* Sağ: dil anahtarı + pencere düğmeleri */}

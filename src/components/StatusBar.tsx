@@ -1,24 +1,84 @@
 /**
- * Alt durum çubuğu — IDM'in pencere alt şeridi.
+ * Alt durum çubuğu.
  *
- * Soldan sağa: boş disk alanı · anlık hız · aktif görev · indirilen toplam ·
- * toplam süre. Disk alanı Rust tarafından okunur (`disk_free_space`) ve
- * ayarlardaki genel konuma göre hesaplanır.
+ * Soldan sağa: ana açık/kapalı anahtarı (tüm indirmeleri duraklatır ya da
+ * sürdürür) · indirme hızı · bağlantı kalitesi rozeti · boş alan ·
+ * seçili kaydın adı · alt panel açma düğmesi.
+ *
+ * "YÜKSEK" rozeti FDM'deki bağlantı kalitesi göstergesinin karşılığıdır;
+ * burada **ölçülen** anlık hıza göre üç kademe belirlenir. Sahte bir değer
+ * göstermektense hız gerçeğini yansıtmak daha doğrudur.
  */
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { diskFreeSpace } from "../lib/api";
-import { totals } from "../lib/store";
+import { bulkPause, bulkResume } from "../lib/bulk";
+import { selectedItems, totals } from "../lib/store";
 import { settings } from "../lib/settings";
-import { formatBytes, formatDuration, formatNumber, formatSpeed } from "../lib/format";
+import { formatBytes, formatSpeed } from "../lib/format";
+import { errorText, pushLogSafe } from "../lib/useFeedback";
+import {
+  graphOpen,
+  logOpen,
+  setGraphOpen,
+  setLogOpen,
+} from "../lib/ui";
 import { t } from "../lib/i18n";
 
 /** Boş alanın yenilenme aralığı (ms). */
 const REFRESH_MS = 30_000;
 
+/** Hız kademesi eşikleri (MB/s). */
+const QUALITY_HIGH = 2.0;
+const QUALITY_MEDIUM = 0.5;
+
 export default function StatusBar() {
   const stats = createMemo(() => totals());
-  /** `0` henüz okunmadı / okunamadı anlamına gelir. */
   const [freeSpace, setFreeSpace] = createSignal(0);
+
+  /** Alt panel (grafik / günlük) açık mı? */
+  const dockOpen = () => graphOpen() || logOpen();
+
+  /** Bağlantı kalitesi kademesi: `idle` | `warn` | `ok`. */
+  const quality = createMemo<"idle" | "warn" | "ok">(() => {
+    const mbps = stats().totalSpeed;
+    if (mbps >= QUALITY_HIGH) return "ok";
+    if (mbps >= QUALITY_MEDIUM) return "warn";
+    return "idle";
+  });
+
+  const qualityLabel = createMemo(() => t(`sb.quality.${quality()}`));
+
+  /** Seçili kaydın adı (yoksa liste durumu). */
+  const current = createMemo(() => {
+    const sel = selectedItems();
+    if (sel.length === 1) return sel[0].fileName;
+    if (sel.length > 1) return t("sb.selected_many", { count: sel.length });
+    return "";
+  });
+
+  /** Anahtar: çalışan indirme varsa "ON" (duraklatılabilir), yoksa "OFF". */
+  const masterOn = createMemo(() => stats().activeCount > 0);
+
+  async function onToggleMaster() {
+    try {
+      if (masterOn()) await bulkPause();
+      else await bulkResume();
+    } catch (e) {
+      pushLogSafe("error", t("act.failed", {
+        action: masterOn() ? t("act.pause") : t("act.resume"),
+        error: errorText(e),
+      }));
+    }
+  }
+
+  function onToggleDock() {
+    if (dockOpen()) {
+      setGraphOpen(false);
+      setLogOpen(false);
+    } else {
+      setGraphOpen(true);
+    }
+  }
 
   // Disk alanı ayar konumuna göre okunur; ayar değişirse yeniden okunur.
   createEffect(() => {
@@ -48,38 +108,62 @@ export default function StatusBar() {
 
   return (
     <footer class="statusbar">
-      <div class="status-cell">
-        <span class="status-key">{t("sb.disk_free")}</span>
-        <span class="status-val">
-          <Show when={freeSpace() > 0} fallback="—">
-            {formatBytes(freeSpace())}
-          </Show>
+      {/* Ana açık/kapalı */}
+      <button
+        type="button"
+        class={`sb-switch ${masterOn() ? "sb-switch-on" : ""}`}
+        title={t("sb.master_title")}
+        aria-pressed={masterOn()}
+        onClick={() => void onToggleMaster()}
+      >
+        <span class="sb-led" aria-hidden="true" />
+        {masterOn() ? t("sb.on") : t("sb.off")}
+      </button>
+
+      {/* Hız */}
+      <span class="sb-speeds" title={t("sb.speed")}>
+        <span class="sb-speed-down">▼ {formatSpeed(stats().totalSpeed)}</span>
+      </span>
+
+      {/* Kalite rozeti */}
+      <span class={`sb-badge sb-badge-${quality()}`} title={t("sb.quality_title")}>
+        {qualityLabel()}
+      </span>
+
+      {/* Boş alan */}
+      <Show when={freeSpace() > 0}>
+        <span class="sb-speeds" title={t("sb.disk_free")}>
+          {formatBytes(freeSpace())} {t("sb.free")}
         </span>
-      </div>
+      </Show>
 
-      <div class="status-cell">
-        <span class="status-key">{t("sb.speed")}</span>
-        <span class="status-val">{formatSpeed(stats().totalSpeed)}</span>
-      </div>
+      <span class="sb-spacer" />
 
-      <div class="status-cell">
-        <span class="status-key">{t("sb.active")}</span>
-        <span class="status-val">{formatNumber(stats().activeCount)}</span>
-      </div>
+      <Show when={current()}>
+        <span class="sb-current" title={current()}>
+          {current()}
+        </span>
+      </Show>
 
-      <div class="status-cell">
-        <span class="status-key">{t("sb.downloaded")}</span>
-        <span class="status-val">{formatBytes(stats().totalDownloaded)}</span>
-      </div>
-
-      <div class="status-cell">
-        <span class="status-key">{t("sb.time")}</span>
-        <span class="status-val">{formatDuration(stats().totalSeconds)}</span>
-      </div>
-
-      <div class="status-cell status-cell-push">
-        <span class="status-key">{t("sb.ready")}</span>
-      </div>
+      <button
+        type="button"
+        class="sb-collapse"
+        title={dockOpen() ? t("sb.dock_hide") : t("sb.dock_show")}
+        aria-label={dockOpen() ? t("sb.dock_hide") : t("sb.dock_show")}
+        aria-pressed={dockOpen()}
+        onClick={onToggleDock}
+      >
+        <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+          <path
+            d={dockOpen() ? "M2 8 L6 4 L10 8" : "M2 4 L6 8 L10 4"}
+            stroke="currentColor"
+            stroke-width="1.4"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
     </footer>
   );
 }

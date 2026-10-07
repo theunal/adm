@@ -14,9 +14,13 @@ hatalar düzeltilmiş, arayüz yeniden tasarlanmıştır.
 - **Kanal bazlı devam** — duraklatıldığında kanal sınırları saklanır, kaldığı
   bayttan devam eder
 - **İş hırsızlığı** — biten kanal, en çok işi kalan kanalın yarısını üstlenir
-- **IDM düzeninde arayüz** — menü çubuğu, araç çubuğu, kenar çubuğunda
-  görev/kategori filtresi, ızgara tabloda sütunlu liste (Boyut · İlerleme ·
-  Hız · Kalan · Kanal), alt dock (hız grafiği / olay günlüğü) ve durum çubuğu
+- **FDM düzeninde arayüz** — düz koyu tema, araç çubuğunda filtre ve sıralama
+  açılır listeleri ile arama kutusu, ızgara tabloda sütunlu liste (Boyut ·
+  Durum · Hız · Kalan · Ekleme), sürükle-bırak boş alanı, alt dock (hız grafiği
+  / olay günlüğü) ve durum çubuğunda ana açık/kapalı anahtarı ile kalite
+  rozeti
+- **Arama ve sıralama** — liste dosya adı ve adres içinde süzülür; duruma,
+  tarihe, ada, boyuta veya ilerlemeye göre sıralanır
 - **Toplu işlemler** — duraklat / sürdür / iptal tüm listeye tek komutla
   uygulanır; silme seçili satırlarda çalışır
 - **Çoklu seçim** — Ctrl/Shift ile satır seçimi, sağ tık bağlam menüsü,
@@ -87,39 +91,40 @@ npm run tauri:icon
 
 ## Mimari
 
-Arayüz klasik IDM yerleşimini takip eder: başlık çubuğu → menü çubuğu →
-araç çubuğu → (kenar çubuğu + tablo) → alt dock → durum çubuğu.
+Arayüz Free Download Manager düzenini takip eder: başlık çubuğu → araç çubuğu
+→ tablo → alt dock → durum çubuğu. Kenar çubuğu ve menü çubuğu satırı yoktur:
+görev/kategori filtreleri araç çubuğundaki açılır listede, menüler ≡ panelinde
+toplanmıştır.
 
 ```text
 src/                     SolidJS arayüzü
 ├── App.tsx              uygulama kabuğu (yerleşim + klavye kısayolları)
 ├── components/
 │   ├── TitleBar.tsx         pencere başlığı + dil anahtarı + pencere düğmeleri
-│   ├── MenuBar.tsx          Dosya / İndirmeler / Görevler / Seçenekler / Yardım
-│   ├── Toolbar.tsx          yeşil "URL Ekle" + toplu duraklat/sürdür/iptal/sil
-│   ├── Sidebar.tsx          görev filtresi (sayaçlı) + kategori listesi
-│   ├── NewDownloadForm.tsx  URL alanı + hedef klasör önizlemesi
-│   ├── DownloadTable.tsx    grid başlıkları + satırlar + alt bilgi çubuğu
-│   ├── DownloadRow.tsx      tek satır (ilerleme, kanal segmentleri, eylemler)
+│   ├── MenuBar.tsx          ≡ paneli: Dosya / İndirmeler / Görevler / Seçenekler / Yardım
+│   ├── Toolbar.tsx          filtre ▾ · sıralama ▾ · "İndirme ekle" · arama · ≡
+│   ├── NewDownloadDialog.tsx  URL alanı + doğrulama + hedef klasör önizlemesi
+│   ├── DownloadTable.tsx    grid başlıkları + satırlar + sürükle-bırak boş alanı
+│   ├── DownloadRow.tsx      tek satır (onay kutusu, ince ilerleme çizgisi, ⋮ menüsü)
 │   ├── FileIcon.tsx         uzantıya göre dosya simgesi
-│   ├── RowContextMenu.tsx   sağ tık menüsü (tek katmanda çizilir)
+│   ├── RowContextMenu.tsx   sağ tık menüsü (tek katmanda çizilir) + kanal düzenleyici
 │   ├── PropertiesDialog.tsx indirme özellikleri penceresi
 │   ├── AboutDialog.tsx      "ADM Hakkında" penceresi
 │   ├── BottomDock.tsx       alt dock (hız grafiği / olay günlüğü sekmeleri)
 │   ├── SpeedGraph.tsx       büyük dinamik hız grafiği + istatistikler
 │   ├── LogPanel.tsx         olay günlüğü listesi
-│   ├── SettingsPanel.tsx    ayarlar (menüden açılır)
+│   ├── SettingsPanel.tsx    ayarlar (≡ menüsünden açılır)
 │   ├── Sparkline.tsx        satır içi mini hız grafiği
-│   └── StatusBar.tsx        disk boş · hız · aktif · indirilen · süre
+│   └── StatusBar.tsx        ana açık/kapalı · hız · kalite · boş alan · panel düğmesi
 ├── lib/
 │   ├── api.ts            Tauri komutları ve olay aboneliği
-│   ├── store.ts          sinyal tabanlı durum yönetimi (filtre, seçim, sayaç)
+│   ├── store.ts          sinyal tabanlı durum yönetimi (filtre, arama, sıralama, seçim)
 │   ├── bulk.ts           toplu işlemler (tek komut ya da seçili satırlar)
 │   ├── ui.ts             kabuk düzeyi arayüz durumu (pencere, panel, menü)
 │   ├── settings.ts       ayarlar okuma/yazma
-│   ├── format.ts         biçimlendirme + dosya kategorileri + çeviri katmanı
+│   ├── format.ts         biçimlendirme + URL doğrulama + dosya kategorileri
 │   └── i18n/             TR/EN sözlükleri
-└── styles.css            tasarım sistemi (Win32 kromu, IDM yeşili)
+└── styles.css            tasarım sistemi (düz koyu tema, mavi aksan)
 
 src-tauri/src/
 ├── models.rs     DownloadStatus, ChannelState, DownloadItem

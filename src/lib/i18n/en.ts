@@ -18,7 +18,6 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   // Başlık çubuğu (TitleBar.tsx)
   // -----------------------------------------------------------------
-  "title.brand_sub": "Advanced Download Manager",
   "title.lang.label": "Language",
   "title.win.close": "Close",
   "title.win.maximize": "Maximize / Restore",
@@ -55,23 +54,13 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   // Araç çubuğu (Toolbar.tsx)
   // -----------------------------------------------------------------
-  "tb.add": "Add URL",
+  "tb.add": "Add download",
   "tb.add_title": "Start a new download (Ctrl+N)",
-  "tb.pause_all": "Pause",
-  "tb.pause_all_title": "Pause all downloads",
-  "tb.resume_all": "Resume",
-  "tb.resume_all_title": "Resume all downloads",
-  "tb.cancel_all": "Stop",
-  "tb.cancel_all_title": "Stop all downloads",
-  "tb.delete": "Delete",
-  "tb.delete_title": "Delete the selected downloads",
-  "tb.clear": "Clear List",
-  "tb.clear_title": "Delete completed, failed and cancelled records",
+  "tb.search": "Search downloads...",
   "tb.graph": "Graph",
   "tb.graph_title": "Toggle the speed graph",
   "tb.log": "Log",
   "tb.log_title": "Toggle the events log",
-  "tb.selection": "selected",
 
   // -----------------------------------------------------------------
   // Kenar çubuğu (Sidebar.tsx)
@@ -100,7 +89,6 @@ export const en: Dict = {
   "form.channels_hint": "{count} channels",
   "form.db_hint": "Download history is recorded",
   "form.db_title": "Where records are stored: {path}",
-  "form.err.default_dir": "Could not read the default folder: {error}",
   "form.err.start": "Could not start the download: {error}",
   "form.err_url.empty": "Enter an address first",
   "form.err_url.scheme": "Only http:// and https:// addresses are supported",
@@ -119,12 +107,20 @@ export const en: Dict = {
   "col.idx": "#",
   "col.name": "File Name",
   "col.size": "Size",
-  "col.progress": "Progress",
   "col.speed": "Speed",
   "col.eta": "Time Left",
-  "col.channels": "Conn.",
   "col.status": "Status",
-  "col.actions": "Actions",
+  "col.date": "Added",
+
+  // -----------------------------------------------------------------
+  // Sort keys (Toolbar.tsx)
+  // -----------------------------------------------------------------
+  "sort.status": "By status",
+  "sort.newest": "Newest",
+  "sort.oldest": "Oldest",
+  "sort.name": "By name",
+  "sort.size": "By size",
+  "sort.progress": "By progress",
 
   // -----------------------------------------------------------------
   // Tablo satırı (DownloadRow.tsx)
@@ -132,32 +128,23 @@ export const en: Dict = {
   "row.aria": "Download list",
   "row.progress_aria": "Download progress",
   "row.size_unknown": "Size unknown",
-  "row.selected": "{count} records selected",
-  "row.hint": "Double-click: open the file · Right-click: actions · Shift/Ctrl: multi-select",
+  "row.select_aria": "Select {name}",
+  "row.select_title": "Select the record (Shift/Ctrl for multiple)",
+  "row.more_title": "Actions",
+  "row.channels_title": "{count} channels",
 
   // -----------------------------------------------------------------
   // Satır eylemleri (DownloadRow.tsx)
   // -----------------------------------------------------------------
   "act.pause": "Pause",
-  "act.pause_title": "Pause the download",
   "act.resume": "Resume",
-  "act.resume_title": "Resume where it left off",
   "act.cancel": "Stop",
-  "act.cancel_title": "Stop the download",
   "act.delete": "Delete",
-  "act.delete_title": "Delete the record and the file",
   "act.delete_record": "Delete from list",
-  "act.delete_record_title": "Delete the record, keep the file",
   "act.open": "Open",
-  "act.open_title": "Open the file",
   "act.folder": "Location",
-  "act.folder_title": "Open the containing folder",
   "act.channels": "Channels",
-  "act.channels_title": "Change the channel count",
-  "act.busy_title": "The operation is running",
   "act.failed": "Could not {action}: {error}",
-  "act.channels_apply": "Apply",
-  "act.channels_cancel": "Cancel",
   "act.channels_label": "Channel count:",
   "act.channels_note":
     "Changing the channel count of a running download pauses it and resumes it with the new count.",
@@ -167,8 +154,8 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   "list.clear": "Clear List",
   "list.clear_title": "Delete completed, failed and cancelled records",
-  "list.empty_title": "No downloads in this view",
-  "list.empty_hint": "Pick another task or category in the sidebar on the left.",
+  "list.drop_title": "Drop a URL here",
+  "list.drop_hint": "Or use the Add download button in the toolbar",
   "list.err.clear": "Could not clear the records: {error}",
   "list.failed_hint": "{count} failed • {bytes} partial",
   "list.failed_hint_title": "How much the failed records downloaded",
@@ -188,8 +175,6 @@ export const en: Dict = {
 
   // Özellikler penceresi
   "props.title": "Download Properties",
-  "props.file": "File",
-  "props.path": "Location",
   "props.url": "Address",
   "props.size": "Size",
   "props.status": "Status",
@@ -209,7 +194,6 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   "graph.title": "Speed Graph",
   "graph.empty": "No speed data yet.",
-  "graph.axis_speed": "MB/s",
   "graph.axis_time": "Time",
   "graph.peak": "Peak speed",
   "graph.average": "Average speed",
@@ -224,6 +208,7 @@ export const en: Dict = {
   "log.clear": "Clear",
   "log.empty": "No events yet.",
   "log.to_bottom": "Go to bottom",
+  "log.channels_changed": "{name} channel count set to {count}",
   "spark.empty_title": "Building the speed history",
 
   // -----------------------------------------------------------------
@@ -231,10 +216,17 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   "sb.disk_free": "Free space",
   "sb.speed": "Current speed",
-  "sb.active": "Active",
-  "sb.downloaded": "Downloaded",
-  "sb.time": "Total time",
-  "sb.ready": "Ready",
+  "sb.on": "ON",
+  "sb.off": "OFF",
+  "sb.master_title": "Pause / resume all downloads",
+  "sb.free": "free",
+  "sb.quality_title": "Quality tier derived from the measured speed",
+  "sb.quality.ok": "HIGH",
+  "sb.quality.warn": "MEDIUM",
+  "sb.quality.idle": "LOW",
+  "sb.selected_many": "{count} records selected",
+  "sb.dock_show": "Open the speed graph",
+  "sb.dock_hide": "Hide the bottom panel",
 
   // -----------------------------------------------------------------
   // Ayarlar (SettingsPanel.tsx)

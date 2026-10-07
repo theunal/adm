@@ -45,23 +45,25 @@ export default function DownloadTable() {
 
   return (
     <div class="table-wrap">
-      {/* Sütun başlıkları */}
+      {/* Sütun başlıkları — FDM sırası. Hücre sayısı ızgaradaki sütun
+          sayısıyla (9) birebir aynı olmalıdır; bir hücre eksikse tüm
+          başlıklar bir sütun sola kayar. */}
       <div class="dlg-head" role="row">
         <div class="dlg-head-cell dlg-head-cell-center" title={t("col.idx")}>
           {t("col.idx")}
         </div>
+        <div class="dlg-head-cell dlg-head-cell-center" />
         <div class="dlg-head-cell">{t("col.name")}</div>
         <div class="dlg-head-cell dlg-head-cell-right">{t("col.size")}</div>
-        <div class="dlg-head-cell">{t("col.progress")}</div>
+        <div class="dlg-head-cell">{t("col.status")}</div>
+        <div class="dlg-head-cell dlg-head-cell-center" />
         <div class="dlg-head-cell dlg-head-cell-right">{t("col.speed")}</div>
         <div class="dlg-head-cell dlg-head-cell-right dlg-col-eta">
           {t("col.eta")}
         </div>
-        <div class="dlg-head-cell dlg-head-cell-center dlg-col-ch">
-          {t("col.channels")}
+        <div class="dlg-head-cell dlg-head-cell-right dlg-col-date">
+          {t("col.date")}
         </div>
-        <div class="dlg-head-cell">{t("col.status")}</div>
-        <div class="dlg-head-cell dlg-head-cell-right">{t("col.actions")}</div>
       </div>
 
       {/* Gövde */}
@@ -83,12 +85,31 @@ export default function DownloadTable() {
           <Show
             when={items().length > 0}
             fallback={
-              <div class="empty-state">
-                <span class="empty-icon" aria-hidden="true">
-                  ↓
-                </span>
-                <p class="empty-title">{t("list.empty_title")}</p>
-                <p class="empty-hint">{t("list.empty_hint")}</p>
+              <div class="dropzone">
+                <svg
+                  class="dropzone-icon"
+                  viewBox="0 0 24 24"
+                  width="30"
+                  height="30"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M12 3 V13 M12 13 L7.5 8.5 M12 13 L16.5 8.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M5 15 V18 A2 2 0 0 0 7 20 H17 A2 2 0 0 0 19 18 V15"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <p class="dropzone-text">{t("list.drop_title")}</p>
+                <p class="dropzone-hint">{t("list.drop_hint")}</p>
               </div>
             }
           >

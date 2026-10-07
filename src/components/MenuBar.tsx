@@ -1,13 +1,16 @@
 /**
- * Menü çubuğu — IDM'in üst menü şeridi.
+ * Menü tanımı ve ≡ paneli.
  *
- * Beş kök menü: Dosya · İndirmeler · Görevler · Seçenekler · Yardım.
+ * Beş bölüm: Dosya · İndirmeler · Görevler · Seçenekler · Yardım.
  *
- * Menüler **tıklamayla** açılır; imleç üzerine geldiğinde açılmaz.
- * Açıkken şeridin dışına tıklamak ya da `Escape` kapatır, başka bir kök
- * menüye tıklamak o menüyü açar. Alt menülerde kısayol ipuçları
- * (`Ctrl+N`, `Del` …) sağda gösterilir; kısayolların kendisi `App.tsx`
- * içindeki genel klavye işleyicisi tarafından gerçeklenir.
+ * Menü çubuğu ayrı bir satır olmaktan çıkarıldı; menüler araç çubuğundaki
+ * **≡** düğmesinden açılan panelde gösterilir. Tanım (`MENUS`) canlı duruma
+ * bağlı olduğu için girdiler üretici olarak yazıldı: sayaçlar, etkin filtre
+ * ve açık/kapalı paneller anında doğru görünür.
+ *
+ * Alt menülerde kısayol ipuçları (`Ctrl+N`, `Del` …) sağda görünür;
+ * kısayolların kendisi `App.tsx` içindeki genel klavye işleyicisinde
+ * gerçeklenir.
  */
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import {
@@ -287,48 +290,39 @@ const MENUS: MenuRoot[] = [
   },
 ];
 
+
+/**
+ * ≡ menü paneli.
+ *
+ * Menü çubuğu satırı kaldırıldı; tüm menüler araç çubuğundaki **≡**
+ * düğmesinden açılan tek panelde, beş sütun hâlinde gösterilir. Sütun
+ * düzeni eski menü çubuğuyla aynıdır, yalnızca yerleşimi yatay.
+ *
+ * Menü **yalnızca tıklamayla** açılır (üzerine gelince değil). Açıkken
+ * dışarıya tıklamak ya da `Escape` kapatır. Dış tıklama dinleyicisi
+ * `capture` aşamasında çalışır; aksi halde kabuktaki genel tıklama
+ * işleyicisi önce çalışıp paneli kapatabilirdi.
+ */
 export default function MenuBar() {
-  /** Açık kök menü (`null` ise hiçbiri açık değil). */
-  const [openId, setOpenId] = createSignal<string | null>(null);
-  /** Menü şeridinin DOM referansı (dış tıklama denetimi için). */
-  let bar: HTMLElement | undefined;
+  /** Panel açık mı? */
+  const [open, setOpen] = createSignal(false);
+  /** Panelin DOM referansı (dış tıklama denetimi için). */
+  let bar: HTMLDivElement | undefined;
 
-  const isOpen = (id: string) => openId() === id;
-
-  /** Menü etiketine tıklanınca açar / kapatır. */
-  function toggle(id: string) {
-    setOpenId((cur) => (cur === id ? null : id));
-  }
-
-  /** Girdi seçildi: eylemi çalıştır ve menüyü kapat. */
+  /** Girdi seçildi: eylemi çalıştır ve paneli kapat. */
   function activate(entry: Extract<MenuEntry, { kind: "item" }>) {
     entry.run?.();
-    setOpenId(null);
+    setOpen(false);
   }
 
-  /**
-   * Menü **yalnızca tıklayınca** açılır (üzerine gelince değil).
-   *
-   * Açıkken iki davranış gerekiyor:
-   *
-   * * Şeridin dışına tıklama kapatır. Dinleyici `capture` aşamasında
-   *   çalışır; aksi halde kabuktaki (App) genel tıklama işleyicisi önce
-   *   çalışıp menüyü kapatabilirdi.
-   * * `Escape` kapatır (klavye odağı menüde olduğunda `window` hedefi
-   *   yakalanmaz).
-   *
-   * İmleç, etiketten açılır listeye (`.menu-pop`) inerken `mouseleave`
-   * tetiklenmez: liste `.menu-root`un bir **çocuğu** olduğu için imleç
-   * hâlâ menünün üzerindedir.
-   */
   createEffect(() => {
-    if (!openId()) return;
+    if (!open()) return;
 
     const onPointerDown = (event: MouseEvent) => {
-      if (!bar?.contains(event.target as Node)) setOpenId(null);
+      if (!bar?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenId(null);
+      if (event.key === "Escape") setOpen(false);
     };
 
     window.addEventListener("mousedown", onPointerDown, true);
@@ -340,23 +334,33 @@ export default function MenuBar() {
   });
 
   return (
-    <nav class="menubar" role="menubar" ref={bar}>
-      <For each={MENUS}>
-        {(menu) => (
-          <div class="menu-root" role="none">
-            <button
-              type="button"
-              role="menuitem"
-              aria-haspopup="menu"
-              aria-expanded={isOpen(menu.id)}
-              class={`menu-label ${isOpen(menu.id) ? "menu-label-open" : ""}`}
-              onClick={() => toggle(menu.id)}
-            >
-              {t(menu.key)}
-            </button>
+    <div class="menu-anchor" ref={bar}>
+      <button
+        type="button"
+        class={`tb-icon ${open() ? "tb-icon-open" : ""}`}
+        title={t("menu.file")}
+        aria-haspopup="menu"
+        aria-expanded={open()}
+        aria-label={t("menu.file")}
+        onClick={() => setOpen(!open())}
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <path
+            d="M2 4 H13 M2 8 H10 M2 12 H13"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linecap="round"
+          />
+          <path d="M11.6 6.4 L14.2 8 L11.6 9.6 Z" fill="currentColor" />
+        </svg>
+      </button>
 
-            <Show when={isOpen(menu.id)}>
-              <div class="menu-pop" role="menu">
+      <Show when={open()}>
+        <div class="menu-panel" role="menu">
+          <For each={MENUS}>
+            {(menu) => (
+              <div class="menu-col">
+                <div class="menu-col-title">{t(menu.key)}</div>
                 <For each={menu.entries()}>
                   {(entry) =>
                     entry.kind === "sep" ? (
@@ -369,11 +373,9 @@ export default function MenuBar() {
                         disabled={entry.enabled ? !entry.enabled() : false}
                         onClick={() => activate(entry)}
                       >
-                        <Show when={entry.checked?.()}>
-                          <span class="menu-check" aria-hidden="true">
-                            ✓
-                          </span>
-                        </Show>
+                        <span class="menu-check" aria-hidden="true">
+                          <Show when={entry.checked?.()}>✓</Show>
+                        </span>
                         {t(entry.key)}
                         <Show when={entry.accel}>
                           <span class="menu-accel">{entry.accel}</span>
@@ -383,10 +385,10 @@ export default function MenuBar() {
                   }
                 </For>
               </div>
-            </Show>
-          </div>
-        )}
-      </For>
-    </nav>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 }
