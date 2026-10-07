@@ -13,7 +13,7 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   "app.init_failed": "Failed to start the app: {error}",
   "app.loading": "Loading records…",
-  "app.root_missing": "Root element (#root) not found",
+  "app.root_missing": "The interface could not be started",
 
   // -----------------------------------------------------------------
   // Başlık çubuğu (TitleBar.tsx)
@@ -98,8 +98,8 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   "form.browse": "Browse",
   "form.channels_hint": "{count} channels",
-  "form.db_hint": "SQLite records enabled",
-  "form.db_title": "Database: {path}",
+  "form.db_hint": "Download history is recorded",
+  "form.db_title": "Where records are stored: {path}",
   "form.err.default_dir": "Could not read the default folder: {error}",
   "form.err.start": "Could not start the download: {error}",
   "form.submit": "Add",

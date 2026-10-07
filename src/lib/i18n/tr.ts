@@ -18,7 +18,7 @@ export const tr = {
   // -----------------------------------------------------------------
   "app.init_failed": "Uygulama başlatılamadı: {error}",
   "app.loading": "Kayıtlar yükleniyor…",
-  "app.root_missing": "Kök öğe (#root) bulunamadı",
+  "app.root_missing": "Arayüz başlatılamadı",
 
   // -----------------------------------------------------------------
   // Başlık çubuğu (TitleBar.tsx)
@@ -103,8 +103,8 @@ export const tr = {
   // -----------------------------------------------------------------
   "form.browse": "Gözat",
   "form.channels_hint": "{count} kanal",
-  "form.db_hint": "SQLite kayıtları etkin",
-  "form.db_title": "Veritabanı: {path}",
+  "form.db_hint": "İndirme geçmişi kaydediliyor",
+  "form.db_title": "Kayıtların tutulduğu konum: {path}",
   "form.err.default_dir": "Varsayılan klasör okunamadı: {error}",
   "form.err.start": "İndirme başlatılamadı: {error}",
   "form.submit": "Ekle",
