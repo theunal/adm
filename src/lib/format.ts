@@ -218,6 +218,51 @@ export function nowStamp(): string {
 }
 
 /* -----------------------------------------------------------------
+   URL doğrulama (yeni indirme penceresi)
+   ----------------------------------------------------------------- */
+
+/** Adres denetiminin sonucu; `reason` i18n anahtarına çevrilir. */
+export type UrlCheck =
+  | { ok: true }
+  | { ok: false; reason: "empty" | "syntax" | "scheme" };
+
+/**
+ * İndirilecek adresi doğrular.
+ *
+ * Sırayla üç soru: adres var mı, `new URL` ayrıştırabiliyor mu, protokol
+ * http/https mi.
+ *
+ * * `trim()` yalnızca boş girdiyi "boş" saymak için gerekli: URL ayrıştırıcı
+ *   dış boşlukları kendisi attığı için `"   "` da parse hatası verirdi ve
+ *   kullanıcı "geçersiz adres" yerine "adres girin" mesajını görmeli.
+ * * `javascript:` gibi şemalar "scheme" olarak elenir — motor yalnızca
+ *   http/https indirir, diğerleri sessizce takılı kalmasın.
+ *
+ * Şema denetimi sona bırakıldı çünkü `htp:/a.com` gibi yanlış yazılmış bir şema
+ * ayrıştırılabilir (`protocol=htp:`) ve "yalnızca http/https" mesajı "geçersiz
+ * adres"den daha doğru bir ipucu verir. Ayrıştırılmış bir http/https adresinin
+ * ana makinesi zaten boş olamaz (`new URL("http://")` hata verir), bu yüzden
+ * ayrıca denetlenmez.
+ */
+export function checkDownloadUrl(raw: string): UrlCheck {
+  const value = raw.trim();
+  if (!value) return { ok: false, reason: "empty" };
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return { ok: false, reason: "syntax" };
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { ok: false, reason: "scheme" };
+  }
+
+  return { ok: true };
+}
+
+/* -----------------------------------------------------------------
    Dosya sınıflandırması (kenar çubuğu kategorileri + tablo ikonu)
    ----------------------------------------------------------------- */
 

@@ -37,14 +37,10 @@ export const [graphOpen, setGraphOpen] = createSignal(true);
 export const [logOpen, setLogOpen] = createSignal(false);
 
 /**
- * URL girdisine odaklanma isteği.
+ * "Yeni İndirme" penceresi.
  *
- * Menüden "URL Ekle" ya da Ctrl+N ile de kısayoldan erişilebilir; girdi bileşeni
- * bu sayacı izleyerek odaklanır. Sinyal boolean değer sayacıdır: aynı istek
- * iki kez geldiğinde değişim tetiklenir.
+ * Adres alanı kenar çubuğunda değil, burada: araç çubuğundaki yeşil
+ * **URL Ekle** düğmesi, menüdeki `Dosya ▸ URL Ekle` ve `Ctrl+N` bu pencereyi
+ * açar. Pencere `Escape` ile de kapanır (`App.tsx` genel işleyicisi).
  */
-const [urlFocusToken, setUrlFocusToken] = createSignal(0);
-export const urlFocusTokenValue = urlFocusToken;
-export function focusUrlInput() {
-  setUrlFocusToken((n) => n + 1);
-}
+export const [addDialogOpen, setAddDialogOpen] = createSignal(false);

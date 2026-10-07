@@ -2,8 +2,9 @@
  * Araç çubuğu.
  *
  * Soldaki büyük yeşil düğme IDM'in "Add URL" düğmesidir ve tek doğrudan
- * indirme başlatma girişidir: basıldığında kenar çubuğundaki URL alanına
- * odaklanır (form doldurulup gönderilir).
+ * indirme başlatma girişidir: basıldığında **Yeni İndirme** penceresi açılır
+ * (adres oraya yazılır). Pencereyi açan diğer yollar: menüdeki
+ * `Dosya ▸ URL Ekle` ve `Ctrl+N`.
  *
  * Ortadaki üç düğme **tüm listeye** uygulanır (tek Rust komutu): duraklat,
  * sürdür, iptal. Sağdaki sil düğmesi yalnızca seçili satırlarda etkindir.
@@ -14,9 +15,10 @@ import { bulkCancel, bulkPause, bulkResume, bulkDelete } from "../lib/bulk";
 import { hasSelection, selectedItems, taskCounts, totals } from "../lib/store";
 import { errorText, pushLogSafe } from "../lib/useFeedback";
 import {
-  focusUrlInput,
+  addDialogOpen,
   graphOpen,
   logOpen,
+  setAddDialogOpen,
   setGraphOpen,
   setLogOpen,
 } from "../lib/ui";
@@ -61,7 +63,7 @@ export default function Toolbar() {
         type="button"
         class="tb-btn-primary"
         title={t("tb.add_title")}
-        onClick={() => focusUrlInput()}
+        onClick={() => setAddDialogOpen(!addDialogOpen())}
       >
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
           <path

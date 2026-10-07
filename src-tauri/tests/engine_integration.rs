@@ -41,6 +41,12 @@ enum RangeSupport {
     Flaky,
     /// `Range` desteklemez: `Accept-Ranges: none`.
     None,
+    /// `Content-Length` tam dosyayı vaat eder ama gövdeyi **yarıda keser**.
+    ///
+    /// Gerçek hayatta bağlantı kopması, CDN kenarı ve kaba kapatma gibi
+    /// durumlarda görülür. `Range` desteklenmediği için motor tek kanala
+    /// düşer; akış beklenenden erken kapanır.
+    Truncating,
 }
 
 /// Kaç baytlık veri üreteceği.
@@ -48,6 +54,47 @@ enum RangeSupport {
 /// 4 MB: motor kanal başına en az 1 MB aralık planladığı için bu boyutla
 /// 4 kanal planlanır (çok kanallı yazma yolu gerçekten sınanır).
 const FILE_SIZE: usize = 4 * 1024 * 1024;
+
+/// Test sunucusunun davranış ayarları.
+#[derive(Clone)]
+struct ServerOpts {
+    range: RangeSupport,
+    throttle: Option<Duration>,
+    /// Kaç istekte gövde yarıda kesilecek (yalnızca `Truncating`).
+    truncate_count: usize,
+    /// `/yonlendir` isteğinin `Location` hedefi.
+    ///
+    /// `None` ise sunucu kendine göreli adres (`/dosya.bin`) döner. Doldurulduğunda
+    /// **mutlak** bir adres verilir; böylece motorun başka bir host:port'a
+    /// (yani başka bir kaynağa) sıçraması sınanır.
+    redirect_to: Option<String>,
+}
+
+impl ServerOpts {
+    fn new(range: RangeSupport) -> Self {
+        Self {
+            range,
+            throttle: None,
+            truncate_count: 0,
+            redirect_to: None,
+        }
+    }
+
+    fn throttled(mut self, d: Duration) -> Self {
+        self.throttle = Some(d);
+        self
+    }
+
+    fn truncating(mut self, times: usize) -> Self {
+        self.truncate_count = times;
+        self
+    }
+
+    fn redirecting_to(mut self, url: String) -> Self {
+        self.redirect_to = Some(url);
+        self
+    }
+}
 
 /// Test için basit HTTP/1.1 sunucusu.
 struct TestServer {
@@ -62,13 +109,31 @@ impl TestServer {
     /// `throttle` verildiğinde her bayt yazımı arasında gecikme koyar
     /// (yavaş bağlantı taklidi — duraklatma testleri için).
     fn start(range: RangeSupport, throttle: Option<Duration>) -> Self {
+        let opts = ServerOpts::new(range);
+        Self::with(match throttle {
+            Some(d) => opts.throttled(d),
+            None => opts,
+        })
+    }
+
+    /// İlk `fail_times` istekte gövdeyi yarıda kesen sunucu.
+    ///
+    /// Sonraki isteklerde dosya **eksiksiz** gönderilir; böylece "motor tekrar
+    /// denedi mi?" sorusu dosya içeriğinden ayırt edilebilir.
+    fn start_truncating(fail_times: usize) -> Self {
+        Self::with(ServerOpts::new(RangeSupport::Truncating).truncating(fail_times))
+    }
+
+    fn with(opts: ServerOpts) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bağlantı noktası alınamadı");
         let addr = listener.local_addr().expect("adres okunamadı");
         let hits = Arc::new(AtomicUsize::new(0));
         let shutdown = Arc::new(AtomicBool::new(false));
+        let truncations = Arc::new(AtomicUsize::new(opts.truncate_count));
 
         let h = Arc::clone(&hits);
         let s = Arc::clone(&shutdown);
+        let t = Arc::clone(&truncations);
 
         std::thread::spawn(move || {
             listener.set_nonblocking(true).ok();
@@ -76,10 +141,12 @@ impl TestServer {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let h2 = Arc::clone(&h);
+                        let t2 = Arc::clone(&t);
+                        let o2 = opts.clone();
                         // Her bağlantı kendi iş parçacığında işlenir; kanallar
                         // eşzamanlı konuşabilsin.
                         std::thread::spawn(move || {
-                            handle(stream, range, throttle, h2);
+                            handle(stream, &o2, h2, t2);
                         });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -147,9 +214,9 @@ fn parse_range(headers: &str) -> Option<(u64, Option<u64>)> {
 /// Tek bir HTTP isteğini işler.
 fn handle(
     mut stream: TcpStream,
-    range: RangeSupport,
-    throttle: Option<Duration>,
+    opts: &ServerOpts,
     hits: Arc<AtomicUsize>,
+    truncations: Arc<AtomicUsize>,
 ) {
     hits.fetch_add(1, Ordering::SeqCst);
 
@@ -182,11 +249,16 @@ fn handle(
         .to_string();
     let headers: String = lines.collect::<Vec<_>>().join("\r\n");
 
-    // Yönlendirme: `/yonlendir` -> `/dosya.bin`
+    // Yönlendirme: `/yonlendir` -> `redirect_to` ya da kendi `/dosya.bin`'i.
     if path == "/yonlendir" {
+        let target = opts
+            .redirect_to
+            .clone()
+            .unwrap_or_else(|| "/dosya.bin".to_string());
         let body = "yönlendiriliyor";
         let response = format!(
-            "HTTP/1.1 302 Found\r\nLocation: /dosya.bin\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            target,
             body.len(),
             body
         );
@@ -209,6 +281,8 @@ fn handle(
     }
 
     let requested = parse_range(&headers);
+    let range = opts.range;
+    let throttle = opts.throttle;
 
     match range {
         RangeSupport::None => {
@@ -220,6 +294,31 @@ fn handle(
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.write_all(&body);
+            let _ = stream.flush();
+        }
+        RangeSupport::Truncating => {
+            // `Content-Length` tam dosyayı vaat eder; gövde ise ya tam ya da
+            // yarım gönderilir. `truncate_count` sıfırlandığında sonraki
+            // istekler eksiksiz döner — böylece motorun tekrar denediği,
+            // dosyanın **içeriğinden** anlaşılır.
+            //
+            // Yoklama isteği (`bytes=0-0`) sayılmaz: motor gövdeyi okumadan
+            // yalnızca başlıklara bakar, bütçe onun için harcanmamalıdır.
+            let is_probe = matches!(requested, Some((0, Some(0))));
+            let kes = !is_probe
+                && truncations
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+                    .is_ok();
+
+            let body = test_payload();
+            let gonderilecek = if kes { FILE_SIZE / 2 } else { FILE_SIZE };
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nAccept-Ranges: none\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                FILE_SIZE
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body[..gonderilecek]);
             let _ = stream.flush();
         }
         RangeSupport::IgnoresRange => {
@@ -751,6 +850,104 @@ async fn bos_url_hata_verir() {
         .await;
 
     assert!(result.is_err(), "erişilemeyen adres hata vermeli");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn baska_hosta_yonlendirir_ve_cok_kanalli_indirir() {
+    // Gerçek hayatta kısa bağlantılar **başka bir hosta** yönlendirir
+    // (ör. `link.testfile.org/70MB` -> `files.testfile.org/.../dosya.zip`).
+    // Motor yönlendirmeyi izlemeli, çözülen son adresten çok kanallı
+    // indirme yapmalı ve kanalları yönlendiren sunucuya göndermemeli.
+    let hedef = TestServer::start(RangeSupport::Proper, None);
+    let kaynak = TestServer::with(
+        ServerOpts::new(RangeSupport::Proper).redirecting_to(hedef.file_url()),
+    );
+
+    let path = temp_path("capraz_host.bin");
+
+    let engine = DownloadEngine::new();
+    let signal = AbortSignal::new();
+    let (_, hook) = recorder();
+
+    engine
+        .download(&kaynak.redirect_url(), &path, 8, None, signal, hook)
+        .await
+        .expect("yönlendirme sonrası indirme başarısız");
+
+    // İçerik hedef sunucudaki dosyayla birebir aynı olmalı.
+    let written = std::fs::read(&path).expect("dosya okunamadı");
+    assert_eq!(written, test_payload(), "içerik bayt bayt eşleşmiyor");
+
+    // Yönlendiren sunucuya yalnızca bir kez (yoklama) gidilmeliydi; tüm
+    // kanal istekleri çözülen hedefe gitmiş olmalı.
+    assert_eq!(
+        kaynak.hits(),
+        1,
+        "kanal istekleri yönlendirme kaynağına gitmemeliydi"
+    );
+    assert!(
+        hedef.hits() > 1,
+        "kanal istekleri hedef sunucuya gitmeliydi, alınan: {}",
+        hedef.hits()
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn tek_kanalda_yarim_akis_tekrar_deneyip_tamamlar() {
+    // Sunucu ilk veri isteğinde gövdeyi yarıda kapatıyor (bağlantı koptu).
+    // `Range` desteklenmediği için motor tek kanala düşüyor.
+    //
+    // Eskiden tek kanal modunda yarım akış "bitti" sayılıyordu; görev
+    // `err.incomplete` ile kalıcı olarak düşüyordu. Range'li kanallar ise
+    // 3 kez geri çekilip kendini toparlıyordu — bu asimetrik hatalıydı.
+    // Motor bu kez baştan alarak tekrar denemeli, dosya birebir tamamlanmalı
+    // ve indirilen bayt sayısı şişmemeli.
+    let server = TestServer::start_truncating(1);
+    let path = temp_path("yarim_akis.bin");
+
+    let engine = DownloadEngine::new();
+    let signal = AbortSignal::new();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let hook: adm_lib::engine::ProgressHook = Arc::new(move |snap| {
+        sink.lock().unwrap().push(snap.downloaded_bytes);
+    });
+
+    engine
+        .download(&server.file_url(), &path, 8, None, signal, hook)
+        .await
+        .expect("yarım akıştan sonra tekrar deneyip tamamlamalıydı");
+
+    let written = std::fs::read(&path).expect("dosya okunamadı");
+    assert_eq!(written, test_payload(), "dosya içeriği bozuk");
+
+    // 1 istek yoklama + 1 kesik + 1 tam yeniden deneme.
+    assert!(
+        server.hits() >= 3,
+        "motor kesik akıştan sonra tekrar denemeliydi, istek sayısı: {}",
+        server.hits()
+    );
+
+    // Yeniden deneme başa sarıldığı için sayaç şişmemeli: ilerleme
+    // geriye gidemez ve dosya boyutunu aşamaz.
+    let history = seen.lock().unwrap();
+    for pair in history.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "indirilen miktar geriye gidemez: {} -> {}",
+            pair[0],
+            pair[1]
+        );
+        assert!(
+            pair[1] <= FILE_SIZE as u64,
+            "indirilen miktar dosya boyutunu aşamaz: {}",
+            pair[1]
+        );
+    }
 
     let _ = std::fs::remove_file(&path);
 }

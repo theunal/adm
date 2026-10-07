@@ -81,7 +81,6 @@ export const tr = {
   // -----------------------------------------------------------------
   // Kenar çubuğu (Sidebar.tsx)
   // -----------------------------------------------------------------
-  "side.new": "Yeni İndirme",
   "side.tasks": "Görevler",
   "side.categories": "Kategoriler",
   "side.task.downloading": "İndiriliyor",
@@ -99,20 +98,23 @@ export const tr = {
   "side.cat.other": "Diğer Dosyalar",
 
   // -----------------------------------------------------------------
-  // Yeni indirme formu (NewDownloadForm.tsx)
+  // Yeni indirme penceresi (NewDownloadDialog.tsx)
   // -----------------------------------------------------------------
   "form.browse": "Gözat",
+  "form.cancel": "Vazgeç",
   "form.channels_hint": "{count} kanal",
   "form.db_hint": "İndirme geçmişi kaydediliyor",
   "form.db_title": "Kayıtların tutulduğu konum: {path}",
   "form.err.default_dir": "Varsayılan klasör okunamadı: {error}",
   "form.err.start": "İndirme başlatılamadı: {error}",
+  "form.err_url.empty": "Önce bir bağlantı adresi girin",
+  "form.err_url.scheme": "Yalnızca http:// veya https:// adresleri desteklenir",
+  "form.err_url.syntax": "Geçerli bir adres girin (örn. https://sunucu/dosya.bin)",
   "form.submit": "Ekle",
   "form.submitting": "Ekleniyor…",
+  "form.title": "Yeni İndirme",
+  "form.url_label": "Bağlantı adresi",
   "form.url_placeholder": "https://sunucu/dosya.bin",
-  "form.warn.bad_scheme": "URL http:// veya https:// ile başlamalı",
-  "form.warn.no_url": "Önce bir URL girin",
-  "add.url_title": "Bağlantı adresi (yapıştırın)",
   "add.save_to": "Kayıt",
   "add.channels": "Bağlantı",
 

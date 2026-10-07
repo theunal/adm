@@ -76,7 +76,6 @@ export const en: Dict = {
   // -----------------------------------------------------------------
   // Kenar çubuğu (Sidebar.tsx)
   // -----------------------------------------------------------------
-  "side.new": "New Download",
   "side.tasks": "Tasks",
   "side.categories": "Categories",
   "side.task.downloading": "Downloading",
@@ -97,17 +96,20 @@ export const en: Dict = {
   // Yeni indirme formu (NewDownloadForm.tsx)
   // -----------------------------------------------------------------
   "form.browse": "Browse",
+  "form.cancel": "Cancel",
   "form.channels_hint": "{count} channels",
   "form.db_hint": "Download history is recorded",
   "form.db_title": "Where records are stored: {path}",
   "form.err.default_dir": "Could not read the default folder: {error}",
   "form.err.start": "Could not start the download: {error}",
+  "form.err_url.empty": "Enter an address first",
+  "form.err_url.scheme": "Only http:// and https:// addresses are supported",
+  "form.err_url.syntax": "Enter a valid address (e.g. https://server/file.bin)",
   "form.submit": "Add",
   "form.submitting": "Adding…",
+  "form.title": "New Download",
+  "form.url_label": "Address",
   "form.url_placeholder": "https://server/file.bin",
-  "form.warn.bad_scheme": "The URL must start with http:// or https://",
-  "form.warn.no_url": "Enter a URL first",
-  "add.url_title": "Address (paste it here)",
   "add.save_to": "Save to",
   "add.channels": "Connections",
 

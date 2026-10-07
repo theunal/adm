@@ -25,13 +25,14 @@ import { initSettings, settingsReady } from "./lib/settings";
 import { errorText, pushLogSafe } from "./lib/useFeedback";
 import { t } from "./lib/i18n";
 import {
+  addDialogOpen,
   aboutOpen,
   contextMenu,
-  focusUrlInput,
   graphOpen,
   logOpen,
   propertiesItem,
   setAboutOpen,
+  setAddDialogOpen,
   setContextMenu,
   setGraphOpen,
   setLogOpen,
@@ -52,6 +53,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import RowContextMenu from "./components/RowContextMenu";
 import AboutDialog from "./components/AboutDialog";
 import PropertiesDialog from "./components/PropertiesDialog";
+import NewDownloadDialog from "./components/NewDownloadDialog";
 
 /** `mount` sonrası ayarlar hazır mı? (kabuk, o ana kadar çizilmez) */
 const [booted, setBooted] = createSignal(false);
@@ -98,6 +100,7 @@ export default function App() {
       // `Escape` her zaman çalışır: açık pencere / menüyü kapatır.
       if (event.key === "Escape") {
         if (contextMenu()) setContextMenu(null);
+        else if (addDialogOpen()) setAddDialogOpen(false);
         else if (aboutOpen()) setAboutOpen(false);
         else if (propertiesItem()) setPropertiesItem(null);
         else if (settingsOpen()) setSettingsOpen(false);
@@ -111,7 +114,7 @@ export default function App() {
         switch (event.key.toLowerCase()) {
           case "n":
             event.preventDefault();
-            focusUrlInput();
+            setAddDialogOpen(true);
             break;
           case "p":
             event.preventDefault();
@@ -192,6 +195,7 @@ export default function App() {
 
         {/* Katmanlar: bağlam menüsü ve pencereler kabuğun üstünde */}
         <RowContextMenu />
+        <NewDownloadDialog />
         <AboutDialog />
         <PropertiesDialog />
       </Show>

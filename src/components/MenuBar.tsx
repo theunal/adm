@@ -35,10 +35,11 @@ import {
 } from "../lib/store";
 import { errorText, pushLogSafe } from "../lib/useFeedback";
 import {
-  focusUrlInput,
+  addDialogOpen,
   graphOpen,
   logOpen,
   setAboutOpen,
+  setAddDialogOpen,
   setGraphOpen,
   setLogOpen,
   setSettingsOpen,
@@ -172,7 +173,13 @@ const MENUS: MenuRoot[] = [
     entries: () => {
       const item = primaryItem();
       return [
-        { kind: "item", key: "menu.item.add_url", accel: "Ctrl+N", run: focusUrlInput },
+        {
+        kind: "item",
+        key: "menu.item.add_url",
+        accel: "Ctrl+N",
+        checked: () => addDialogOpen(),
+        run: () => setAddDialogOpen(true),
+      },
         {
           kind: "item",
           key: "menu.item.open_file",

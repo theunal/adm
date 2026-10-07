@@ -1,11 +1,13 @@
 /**
  * Kenar çubuğu — IDM'in sol paneli.
  *
- * Üç bloktan oluşur:
+ * İki bloktan oluşur:
  *
- * 1. **Yeni İndirme** — adres alanı + yeşil `Ekle` düğmesi.
- * 2. **Görevler** — durum filtresi; her satırda canlı sayaç.
- * 3. **Kategoriler** — uzantıya göre gruplama; her satırda sayaç.
+ * 1. **Görevler** — durum filtresi; her satırda canlı sayaç.
+ * 2. **Kategoriler** — uzantıya göre gruplama; her satırda sayaç.
+ *
+ * Yeni indirme başlatma burada **değildir**: yeşil **URL Ekle** düğmesi
+ * (`Toolbar`) bir pencere açar (`NewDownloadDialog`).
  *
  * Görev ve kategori listeleri birbirini dışlar: birine tıklamak diğerini
  * seçimsiz bırakır (IDM'de de aynı). Seçim durumu `store.view` içindedir,
@@ -25,7 +27,6 @@ import {
 } from "../lib/store";
 import { t } from "../lib/i18n";
 import type { CategoryKey } from "../lib/format";
-import NewDownloadForm from "./NewDownloadForm";
 
 /** Görev filtresine karşık başlık anahtarı. */
 const TASK_LABEL: Record<TaskFilter, string> = {
@@ -72,17 +73,6 @@ export default function Sidebar() {
 
   return (
     <aside class="sidebar">
-      {/* --- Yeni indirme --- */}
-      <div class="side-block">
-        <div class="side-title">
-          <span class="side-row-icon" aria-hidden="true">
-            ＋
-          </span>
-          {t("side.new")}
-        </div>
-        <NewDownloadForm />
-      </div>
-
       {/* --- Görevler --- */}
       <div class="side-block">
         <div class="side-title">{t("side.tasks")}</div>
