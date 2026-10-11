@@ -1127,7 +1127,10 @@ impl DownloadManager {
         }
 
         let mut use_cookies = true;
-        let (final_path, error) = loop {
+        // `iptal`, indirmenin kullanıcı tarafından duraklatıldığını/iptal
+        // edildiğini bildirir (alt süreç öldürüldü). Dosya yolundaki
+        // `finalize` ile aynı ayrım burada da yapılmalıdır.
+        let (final_path, error, iptal) = loop {
             let (tx, mut rx) = mpsc::unbounded_channel::<crate::video::VideoEvent>();
             let request = crate::video::VideoRequest {
                 url: item.url.clone(),
@@ -1148,6 +1151,10 @@ impl DownloadManager {
             let listener = tokio::spawn(async move {
                 let mut final_path: Option<PathBuf> = None;
                 let mut error: Option<String> = None;
+                // `Finished` olayı görüldü mü? Görülmediyse süreç hiç
+                // başlamamış ya da olay kanalı beklenmedik biçimde
+                // kapanmıştır.
+                let mut finished = false;
                 let mut log = ad_events
                     .log
                     .lock()
@@ -1186,12 +1193,23 @@ impl DownloadManager {
                             }
                         }
                         crate::video::VideoEvent::FinalPath(path) => final_path = Some(path),
-                        crate::video::VideoEvent::Finished(result) => match result {
-                            Ok(Some(path)) => final_path = Some(path),
-                            Ok(None) => {}
-                            Err(msg) => error = Some(msg),
-                        },
+                        crate::video::VideoEvent::Finished(result) => {
+                            finished = true;
+                            match result {
+                                Ok(Some(path)) => final_path = Some(path),
+                                Ok(None) => {}
+                                Err(msg) => error = Some(msg),
+                            }
+                        }
                     }
+                }
+
+                // Olay akışı `Finished` olmadan kapandı: alt süreç hiç
+                // başlatılamamış olabilir (bozuk yt-dlp yolu). Bu durumda
+                // indirmeyi sessizce "tamamlandı" saymak dosyayı
+                // kaybettirirdi; açık hata bildirilir.
+                if !finished && error.is_none() {
+                    error = Some(i18n::t("err.task_ended_unexpectedly", &[]));
                 }
 
                 // Günlüğü paylaşılan alana yaz.
@@ -1199,38 +1217,69 @@ impl DownloadManager {
                 (final_path, error)
             });
 
+            /// Video akışının bir turunun sonucu.
+            enum TurSonucu {
+                /// Süreç bitti (final yol ve/veya hata ile).
+                Bitti(Option<PathBuf>, Option<String>),
+                /// Kullanıcı duraklattı veya iptal etti.
+                Iptal,
+            }
+
             // Kullanıcı duraklatınca/iptal edince alt süreci durdur ve bekle.
-            let (final_path, error) = tokio::select! {
-                result = listener => result.unwrap_or((None, None)),
+            let sonuc = tokio::select! {
+                result = listener => {
+                    let (path, err) = result.unwrap_or((None, None));
+                    TurSonucu::Bitti(path, err)
+                }
                 _ = signal.wait() => {
                     runner.abort();
-                    (None, None)
+                    TurSonucu::Iptal
                 }
             };
 
-            match error {
-                Some(msg) if use_cookies && crate::video::is_signed_in_client_failure(&msg) => {
-                    // Çerez kapatılıp bir kez daha denenir.
-                    use_cookies = false;
-                    continue;
-                }
-                other => break (final_path, other),
+            match sonuc {
+                TurSonucu::Iptal => break (None, None, true),
+                TurSonucu::Bitti(final_path, error) => match error {
+                    Some(msg) if use_cookies && crate::video::is_signed_in_client_failure(&msg) => {
+                        // Çerez kapatılıp bir kez daha denenir.
+                        use_cookies = false;
+                        continue;
+                    }
+                    other => break (final_path, other, false),
+                },
             }
         };
 
-        let (status, error_message, log_level, log_msg) = match error {
-            Some(msg) => (
+        // Dosya yolundaki `finalize` ile aynı eşleme: `Paused` yalnızca
+        // duraklatma bayrağı set edildiyse, aksi halde `Cancelled`.
+        // `Completed` **yalnızca** yt-dlp başarıyla çıktığında verilir.
+        let paused = ad.paused.load(Ordering::SeqCst);
+        let (status, error_message, log_level, log_msg) = if iptal {
+            if paused {
+                (DownloadStatus::Paused, None, "info", t("log.paused", &[]))
+            } else {
+                (
+                    DownloadStatus::Cancelled,
+                    None,
+                    "warn",
+                    t("log.cancelled", &[]),
+                )
+            }
+        } else if let Some(msg) = error {
+            (
                 DownloadStatus::Failed,
                 Some(msg.clone()),
                 "error",
-                t("log.failed", &[&item.file_name, &msg]),
-            ),
-            None => (
+                // Kanonik hata metinleri seçili dile çevrilerek gösterilir.
+                t("log.failed", &[&item.file_name, &i18n::render(&msg)]),
+            )
+        } else {
+            (
                 DownloadStatus::Completed,
                 None,
                 "success",
                 t("log.completed", &[&item.file_name]),
-            ),
+            )
         };
         let _ = log_level;
 
@@ -1762,5 +1811,109 @@ mod tests {
             ..DownloadItem::default()
         };
         assert_eq!(BridgeItem::from_item(negatif).speed, 0);
+    }
+
+    // -----------------------------------------------------------------
+    // uniqueDestination (MC `DownloadStore.uniqueDestination`)
+    // -----------------------------------------------------------------
+
+    /// Testler için benzersiz geçici klasör (testler paralel çalışır).
+    fn gecici_klasor(ad: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("adm_unique_{}_{ad}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("geçici klasör oluşturulamadı");
+        dir
+    }
+
+    #[test]
+    fn bos_hedef_oldugu_gibi_kalir() {
+        let dir = gecici_klasor("bos");
+        let desired = dir.join("film.mp4");
+        let (path, name) = unique_destination(&desired, "film.mp4");
+        assert_eq!(path, desired, "çakışma yoksa yol değişmemeli");
+        assert_eq!(name, "film.mp4", "ad değişmemeli");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn var_olan_dosyaya_parantezli_ad_verir() {
+        let dir = gecici_klasor("bir");
+        std::fs::write(dir.join("film.mp4"), b"x").unwrap();
+
+        let (path, name) = unique_destination(&dir.join("film.mp4"), "film.mp4");
+        assert_eq!(name, "film (2).mp4", "MC biçimi: `ad (2).uzantı`");
+        assert_eq!(path, dir.join("film (2).mp4"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ardisik_cakismalarda_sayac_artar() {
+        let dir = gecici_klasor("ardisik");
+        for ad in ["arsiv.zip", "arsiv (2).zip", "arsiv (3).zip"] {
+            std::fs::write(dir.join(ad), b"x").unwrap();
+        }
+
+        let (path, name) = unique_destination(&dir.join("arsiv.zip"), "arsiv.zip");
+        assert_eq!(name, "arsiv (4).zip");
+        assert_eq!(path, dir.join("arsiv (4).zip"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn uzantisiz_adda_parantez_sona_eklenir() {
+        let dir = gecici_klasor("uzantisiz");
+        std::fs::write(dir.join("arsiv"), b"x").unwrap();
+
+        let (path, name) = unique_destination(&dir.join("arsiv"), "arsiv");
+        assert_eq!(name, "arsiv (2)", "uzantısız adda nokta eklenmemeli");
+        assert_eq!(path, dir.join("arsiv (2)"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cok_noktali_adda_yalnizca_son_uzanti_ayrilir() {
+        let dir = gecici_klasor("coknokta");
+        std::fs::write(dir.join("arşiv.tar.gz"), b"x").unwrap();
+
+        // `pathExtension` yalnızca son parçayı alır: gz.
+        let (path, name) = unique_destination(&dir.join("arşiv.tar.gz"), "arşiv.tar.gz");
+        assert_eq!(name, "arşiv.tar (2).gz");
+        assert_eq!(path, dir.join("arşiv.tar (2).gz"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nokta_ile_baslayan_adda_dosya_adi_korunur() {
+        let dir = gecici_klasor("gizli");
+        std::fs::write(dir.join(".env"), b"x").unwrap();
+
+        // `rsplit_once` burada ("", "env") verir; kök boş olduğu için
+        // uzantı sayılmaz ve ad bütün olarak korunur.
+        let (_, name) = unique_destination(&dir.join(".env"), ".env");
+        assert_eq!(name, ".env (2)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn var_olmayan_ust_klasor_cakisma_saymaz() {
+        // Üst klasör yoksa dosya da yoktur; yol olduğu gibi dönmelidir
+        // (klasör oluşturma `ensure_parent_dir` işidir).
+        let dir = gecici_klasor("ustyok");
+        let desired = dir.join("yok").join("film.mp4");
+        let (path, name) = unique_destination(&desired, "film.mp4");
+        assert_eq!(path, desired);
+        assert_eq!(name, "film.mp4");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ad_ayirma_son_parcayi_uzanti_sayar() {
+        assert_eq!(split_name("a.zip"), ("a".to_string(), Some("zip".to_string())));
+        assert_eq!(split_name("arsiv"), ("arsiv".to_string(), None));
+        assert_eq!(
+            split_name("a.tar.gz"),
+            ("a.tar".to_string(), Some("gz".to_string()))
+        );
+        assert_eq!(split_name(".env"), (".env".to_string(), None));
     }
 }

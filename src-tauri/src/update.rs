@@ -149,7 +149,64 @@ mod tests {
     }
 
     #[test]
+    fn surum_karsilastirma_parca_sayisi_farkli() {
+        // Eksik parçalar 0 sayılır: `1.2` ile `1.2.0` aynı sürümdür.
+        assert!(!is_newer("1.2", "1.2.0"));
+        assert!(!is_newer("1.2.0", "1.2"));
+        // Uzun sürüm daha büyük olabilir.
+        assert!(is_newer("1.2.1", "1.2"));
+        assert!(!is_newer("1.2", "1.2.1"));
+    }
+
+    #[test]
+    fn surum_karsilastirma_etiket_ve_eki_yoksayar() {
+        // `v`/`V` öneki iki tarafta da atılır.
+        assert!(!is_newer("v1.0.0", "V1.0.0"));
+        assert!(is_newer("V2.0.0", "v1.9.9"));
+
+        // Sürüm sonundaki sözel ek (`-beta`) sayısal karşılaştırmayı bozmaz.
+        assert!(!is_newer("1.0.0-beta", "1.0.0"));
+        assert!(!is_newer("1.0.0", "1.0.0-beta"));
+        assert!(is_newer("1.0.1-rc", "1.0.0"));
+
+        // MC'nin `isNewer` portu noktalı ön sürüm ekini **dördüncü sayı**
+        // olarak okur (`1.0.0-beta.1` → [1,0,0,1]); bu MC ile birebir aynı
+        // davranıştır, burada belgelenir ki yanlışlıkla "düzeltilmesin".
+        assert!(is_newer("1.0.0-beta.1", "1.0.0"));
+    }
+
+    #[test]
+    fn surum_karsilastirma_cok_haneli_parcalar() {
+        // Sözlü sıralama değil sayısal sıralama: "10" > "9".
+        assert!(is_newer("0.2.10", "0.2.9"));
+        assert!(is_newer("10.0.0", "2.0.0"));
+        assert!(!is_newer("2.0.0", "10.0.0"));
+    }
+
+    #[test]
+    fn surum_karsilastirma_bozuk_girdide_panik_vermez() {
+        // Boş ve sayı içermeyen girdiler 0 kabul edilir.
+        assert!(!is_newer("", ""));
+        assert!(!is_newer("boş", "boş"));
+        assert!(is_newer("1.0", ""));
+    }
+
+    #[test]
     fn mevcut_surum_okunur() {
-        assert!(!current_version().is_empty());
+        let v = current_version();
+        assert!(!v.is_empty());
+        // `Cargo.toml` sürümü sayısal parçalarla başlamalı.
+        assert!(
+            v.chars().next().is_some_and(|c| c.is_ascii_digit()),
+            "sürüm sayıyla başlamalı: {v}"
+        );
+    }
+
+    #[test]
+    fn surum_sayfasi_dogru_adresi_kurar() {
+        assert_eq!(
+            release_page(),
+            "https://github.com/theunal/adm/releases/latest"
+        );
     }
 }

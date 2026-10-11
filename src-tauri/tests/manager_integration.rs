@@ -3,12 +3,16 @@
 //! Motor testlerinin aksine burada veritabanı, olay yayını ve komut
 //! katmanı birlikte sınanır. Tüm hata mesajları Türkçe olmalıdır.
 
-use std::path::PathBuf;
+use std::io::Write;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use adm_lib::db::Database;
 use adm_lib::manager::{DownloadEvent, DownloadManager, StartRequest};
-use adm_lib::models::DownloadStatus;
+use adm_lib::models::{DownloadKind, DownloadStatus};
 
 /// Testler için izole veritabanı açar.
 ///
@@ -35,6 +39,89 @@ async fn setup(name: &str) -> Database {
 /// Belirli bir kaydı siler (test izolasyonu için).
 async fn cleanup(manager: &DownloadManager, id: i64) {
     let _ = manager.delete(id, false).await;
+}
+
+/// Test çıktı klasörü (paralel testler için benzersiz).
+fn cikti_klasoru(ad: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("adm_mgr_cikti_{}_{ad}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("çıktı klasörü oluşturulamadı");
+    dir
+}
+
+// ---------------------------------------------------------------------
+// Yavaş test sunucusu (kuyruk sınaması için)
+// ---------------------------------------------------------------------
+
+/// Gövdeyi parça parça, gecikmeli gönderen HTTP sunucusu.
+///
+/// `Accept-Ranges` gönderilmediği için motor `Range` isteğine `200` alır ve
+/// tek akışa düşer; indirme birkaç yüz milisaniye boyunca "çalışıyor"
+/// kalır. Kuyruk sınırının gözlemlenebilmesi için gereken budur.
+struct YavasSunucu {
+    addr: SocketAddr,
+    kapan: Arc<AtomicBool>,
+}
+
+impl YavasSunucu {
+    fn baslat(boyut: usize) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bağlantı noktası alınamadı");
+        let addr = listener.local_addr().expect("adres okunamadı");
+        let kapan = Arc::new(AtomicBool::new(false));
+        let k = Arc::clone(&kapan);
+
+        std::thread::spawn(move || {
+            listener.set_nonblocking(true).ok();
+            while !k.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        std::thread::spawn(move || {
+                            stream
+                                .set_write_timeout(Some(Duration::from_secs(10)))
+                                .ok();
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\
+                                 Content-Length: {boyut}\r\nConnection: close\r\n\r\n"
+                            );
+                            if stream.write_all(head.as_bytes()).is_err() {
+                                return;
+                            }
+                            // 64 KB'lık parçalar arasında 40 ms bekle.
+                            let parca = vec![0x41u8; 64 * 1024];
+                            let mut kalan = boyut;
+                            while kalan > 0 {
+                                let n = kalan.min(parca.len());
+                                if stream.write_all(&parca[..n]).is_err() {
+                                    return;
+                                }
+                                kalan -= n;
+                                std::thread::sleep(Duration::from_millis(40));
+                            }
+                            let _ = stream.flush();
+                        });
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Self { addr, kapan }
+    }
+
+    fn url(&self, ad: &str) -> String {
+        format!("http://{}/{ad}", self.addr)
+    }
+}
+
+impl Drop for YavasSunucu {
+    fn drop(&mut self) {
+        self.kapan.store(true, Ordering::SeqCst);
+        // Dinleyiciyi uyandırmak için kısa bir bağlantı yeterli.
+        let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(200));
+    }
 }
 
 #[tokio::test]
@@ -512,4 +599,249 @@ async fn toplu_islem_bos_listede_sifir_doner() {
     assert_eq!(manager.pause_all().await.unwrap(), 0);
     assert_eq!(manager.resume_all().await.unwrap(), 0);
     assert_eq!(manager.cancel_all().await.unwrap(), 0);
+}
+
+// ---------------------------------------------------------------------
+// Kuyruk sınırı (`max_concurrent` / MC `pumpQueue`)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn es_zamanli_sinir_kuyrugu_bekletir_ve_pompalar() {
+    let db = setup("kuyruk").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    // Aynı anda yalnızca bir indirmeye izin ver.
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.max_concurrent = 1;
+    settings.auto_start = true;
+    manager
+        .save_settings(&settings)
+        .await
+        .expect("ayarlar yazılamadı");
+
+    // 2 MB'lık dosya, 64 KB / 40 ms hızında ~1.3 sn sürer.
+    let sunucu = YavasSunucu::baslat(2 * 1024 * 1024);
+    let dir = cikti_klasoru("kuyruk");
+
+    let mut ids: Vec<i64> = Vec::new();
+    for i in 0..3 {
+        let mut req = StartRequest::simple(sunucu.url(&format!("dosya_{i}.bin")), None, 1);
+        req.file_path = Some(dir.join(format!("kuyruk_{i}.bin")).to_string_lossy().to_string());
+        if let Ok(id) = manager.start(req).await {
+            ids.push(id);
+        }
+    }
+    assert_eq!(ids.len(), 3, "üç kayıt oluşmalıydı");
+
+    // Sınır aşılmamalı ve kuyruk kendiliğinden boşalmalı.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
+    let (en_cok_calisan, durumlar) = {
+        let mut en_cok = 0usize;
+        loop {
+            let hepsi = manager.list_all().await.unwrap();
+            let ilgili: Vec<_> = hepsi.iter().filter(|i| ids.contains(&i.id)).collect();
+
+            let calisan = ilgili
+                .iter()
+                .filter(|i| i.status == DownloadStatus::Downloading)
+                .count();
+            en_cok = en_cok.max(calisan);
+
+            let biten = ilgili
+                .iter()
+                .filter(|i| {
+                    matches!(
+                        i.status,
+                        DownloadStatus::Completed
+                            | DownloadStatus::Failed
+                            | DownloadStatus::Cancelled
+                    )
+                })
+                .count();
+            if biten == ids.len() {
+                let durumlar: Vec<DownloadStatus> =
+                    ilgili.iter().map(|i| i.status).collect();
+                break (en_cok, durumlar);
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "kuyruk zamanında boşalmadı: {:?}",
+                ilgili
+                    .iter()
+                    .map(|i| (i.id, i.status, i.error_message.clone()))
+                    .collect::<Vec<_>>()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+
+    assert!(
+        en_cok_calisan <= 1,
+        "max_concurrent=1 iken {en_cok_calisan} indirme aynı anda çalıştı"
+    );
+    assert!(
+        en_cok_calisan >= 1,
+        "en az bir indirme çalışmış olmalı (sınır hiç uygulanmamış olabilir)"
+    );
+    // Kuyrukta bekleyenler de sırayla çalıştı: üçü de tamamlanmalı.
+    for (id, durum) in ids.iter().zip(durumlar.iter()) {
+        assert_eq!(
+            *durum,
+            DownloadStatus::Completed,
+            "id {id} tamamlanmadı (kuyruk pompalanmadı)"
+        );
+    }
+
+    for id in ids {
+        cleanup(&manager, id).await;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn sinir_sifirsa_indirme_baslamaz() {
+    let db = setup("kuyruk_oto").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    // `auto_start` kapalıysa yeni kayıtlar kuyrukta bekler.
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.auto_start = false;
+    manager.save_settings(&settings).await.expect("ayarlar yazılamadı");
+
+    let dir = cikti_klasoru("kuyruk_oto");
+    let mut req = StartRequest::simple("http://127.0.0.1:1/a.bin".to_string(), None, 1);
+    req.file_path = Some(dir.join("oto.bin").to_string_lossy().to_string());
+
+    let id = manager.start(req).await.expect("kayıt oluşturulamadı");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let item = manager.get(id).await.unwrap().expect("kayıt yok");
+    assert_eq!(
+        item.status,
+        DownloadStatus::Queued,
+        "auto_start kapalıyken indirme başlamamalı"
+    );
+    assert!(
+        !Path::new(&item.file_path).exists(),
+        "kuyrukta bekleyen indirme dosya oluşturmamalı"
+    );
+
+    cleanup(&manager, id).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------
+// Video akışı hataları
+// ---------------------------------------------------------------------
+
+/// Çalıştırılamayan bir "yt-dlp.exe" dosyası üretir.
+///
+/// `tools::locate` yalnızca dosyanın var olmasına bakar; bu dosya geçerli
+/// bir yürütülebilir değildir, dolayısıyla alt süreç başlatılamaz.
+fn bozuk_ytdlp(dir: &Path) -> PathBuf {
+    let yol = dir.join("yt-dlp.exe");
+    std::fs::write(&yol, b"bu bir yurutulebilir dosya degil\n").expect("sahte yt-dlp yazılamadı");
+    yol
+}
+
+#[tokio::test]
+async fn ytdlp_calistirilamazsa_video_basarisiz_olur() {
+    let db = setup("video_bozuk").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    let dir = cikti_klasoru("video_bozuk");
+    let sahte = bozuk_ytdlp(&dir);
+
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.ytdlp_path = sahte.to_string_lossy().to_string();
+    settings.auto_start = true;
+    manager.save_settings(&settings).await.expect("ayarlar yazılamadı");
+
+    let mut req = StartRequest::simple(
+        "https://ornek.tld/video-sayfasi".to_string(),
+        None,
+        1,
+    );
+    req.kind = DownloadKind::Video;
+    req.file_path = Some(dir.join("video.mp4").to_string_lossy().to_string());
+
+    let Ok(id) = manager.start(req).await else {
+        // Kayıt oluşturulamadıysa bu senaryo sınanamaz.
+        return;
+    };
+
+    // Görev bitene kadar bekle.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut son = None;
+    while tokio::time::Instant::now() < deadline {
+        let item = manager.get(id).await.unwrap().expect("kayıt silinmemeli");
+        if matches!(
+            item.status,
+            DownloadStatus::Completed
+                | DownloadStatus::Failed
+                | DownloadStatus::Cancelled
+                | DownloadStatus::Paused
+        ) {
+            son = Some(item);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let son = son.expect("video görevi zamanında bitmedi");
+
+    // Asıl doğrulama: alt süreç hiç başlamadığı için indirme
+    // **kesinlikle** tamamlandı sayılmamalıdır. Eskiden olay kanalı
+    // sessizce kapandığı için `Completed` olarak işaretleniyordu.
+    assert_ne!(
+        son.status,
+        DownloadStatus::Completed,
+        "çalıştırılamayan yt-dlp indirmeyi tamamlamış saymamalı"
+    );
+    assert_eq!(son.status, DownloadStatus::Failed, "durum: {:?}", son.status);
+    let msg = son.error_message.expect("başarısız videoda hata mesajı olmalı");
+    assert!(!msg.is_empty(), "hata mesajı boş olmamalı");
+    assert!(
+        msg.chars().any(|c| c as u32 > 0x7F),
+        "hata mesajı Türkçe olmalı: {msg}"
+    );
+    assert!(
+        son.final_path.is_none(),
+        "başarısız videoda final yol olmamalı"
+    );
+
+    cleanup(&manager, id).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn video_kaydi_tur_video_olarak_saklanir() {
+    let db = setup("video_tur").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    let dir = cikti_klasoru("video_tur");
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.auto_start = false; // görev başlamasın, yalnızca kayıt sınansın
+    manager.save_settings(&settings).await.expect("ayarlar yazılamadı");
+
+    let mut req = StartRequest::simple("https://ornek.tld/v".to_string(), None, 1);
+    req.kind = DownloadKind::Video;
+    req.file_path = Some(dir.join("v.mp4").to_string_lossy().to_string());
+
+    let id = manager.start(req).await.expect("video kaydı oluşturulamadı");
+    let item = manager.get(id).await.unwrap().expect("kayıt yok");
+    assert_eq!(item.kind, DownloadKind::Video, "tür video olarak saklanmalı");
+    assert!(item.kind.is_video());
+
+    // Köprü kaydı video çözümlemesini `probing` olarak bildirir.
+    let kopru = manager.bridge_downloads().await;
+    let kayit = kopru.iter().find(|k| k.id == id).expect("köprü kaydı yok");
+    assert_eq!(kayit.state, "queued", "video kuyrukta: {:?}", kayit.state);
+
+    cleanup(&manager, id).await;
+    let _ = std::fs::remove_dir_all(&dir);
 }

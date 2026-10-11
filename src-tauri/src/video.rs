@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -309,9 +308,17 @@ pub async fn run(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    let mut child = command
-        .spawn()
-        .with_context(|| i18n::t("err.ytdlp_spawn_failed", &[&exe.display().to_string()]))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            // Alt süreç başlatılamadıysa olay **mutlaka** yayınlanmalıdır:
+            // aksi halde yönetici kanalın sessizce kapandığını görür ve
+            // indirmeyi yanlışlıkla "tamamlandı" sayardı.
+            let msg = i18n::t("err.ytdlp_spawn_failed", &[&exe.display().to_string()]);
+            let _ = events.send(VideoEvent::Finished(Err(msg.clone())));
+            return Err(anyhow::Error::new(e).context(msg));
+        }
+    };
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -455,19 +462,145 @@ pub fn url_is_youtube(url: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn dmp_satiri_ayristirilir() {
-        // `handle_line` özeldir; çekirdek ayrıştırma `stage_for_line` ile
-        // sınanır. İlerleme ayrıştırması için yardımcı:
-        let line = "DMP|1048576|10485760|10485760|524288.0";
-        let rest = line.trim_start_matches("DMP|");
-        let parts: Vec<&str> = rest.split('|').collect();
-        assert_eq!(parts.len(), 4);
-        let num = |s: &str| s.parse::<f64>().ok().unwrap_or(-1.0) as i64;
-        assert_eq!(num(parts[0]), 1048576);
-        assert_eq!(num(parts[1]), 10485760);
-        assert_eq!(num(parts[3]), 524288);
+    /// Bir satırı `handle_line`'a verir ve üretilen olayları döner.
+    fn satiri_isle(line: &str, is_error: bool) -> (Vec<VideoEvent>, Option<String>) {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let last_error = std::sync::Mutex::new(None);
+        handle_line(line, is_error, &tx, &last_error);
+        drop(tx);
+
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        (events, last_error.into_inner().unwrap_or(None))
     }
+
+    /// Olaylar arasından ilerleme olayını bulur.
+    fn ilerleme(events: &[VideoEvent]) -> Option<VideoProgress> {
+        events.iter().find_map(|e| match e {
+            VideoEvent::Progress(p) => Some(p.clone()),
+            _ => None,
+        })
+    }
+
+    /// Olaylar arasından faz metnini bulur.
+    fn faz(events: &[VideoEvent]) -> Option<String> {
+        events.iter().find_map(|e| match e {
+            VideoEvent::Stage(s) => Some(s.clone()),
+            _ => None,
+        })
+    }
+
+    // -----------------------------------------------------------------
+    // DMP| ilerleme satırı
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn dmp_satiri_ilerleme_olayi_uretir() {
+        // `--progress-template` alan sırası:
+        // downloaded_bytes | total_bytes | total_bytes_estimate | speed
+        let (events, err) = satiri_isle("DMP|1048576|10485760|10485760|524288.0", false);
+        let p = ilerleme(&events).expect("ilerleme olayı beklenirdi");
+        assert_eq!(p.downloaded, 1_048_576);
+        assert_eq!(p.total, 10_485_760);
+        assert_eq!(p.speed, 524_288.0);
+        assert!(err.is_none());
+
+        // MC de `DMP|` satırından sonra hemen döner: ilerleme satırları
+        // günlüğe **yazılmaz**, aksi halde 6000 karakterlik pencereyi
+        // saniyede birkaç satır doldururdu.
+        assert!(
+            !events.iter().any(|e| matches!(e, VideoEvent::Log(_))),
+            "ilerleme satırı günlüğe düşmemeli"
+        );
+    }
+
+    #[test]
+    fn dmp_toplam_yoksa_tahmine_duser() {
+        // Canlı akışta `total_bytes` -1 gelir; `total_bytes_estimate`
+        // kullanılmalı (MC aynı geri düşüşü yapar).
+        let (events, _) = satiri_isle("DMP|2048|-1|8192|1024.0", false);
+        let p = ilerleme(&events).unwrap();
+        assert_eq!(p.downloaded, 2048);
+        assert_eq!(p.total, 8192, "tahmin toplamı kullanılmalı");
+    }
+
+    #[test]
+    fn dmp_bozuk_alanlar_isaretci_degerini_korur() {
+        // Ayrıştırılamayan sayısal alanlar -1 işaretçisine düşer (MC
+        // `Int64(Double(s) ?? -1)`); `downloaded` ve `speed` sıfıra
+        // kırpılır, `total` ise -1 kalır ve **yönetici katmanında**
+        // (`p.total.max(0) as u64`) sıfıra çevrilir.
+        let (events, _) = satiri_isle("DMP|NA|NA|NA|NA", false);
+        let p = ilerleme(&events).expect("ilerleme olayı yine üretilmeli");
+        assert_eq!(p.downloaded, 0, "indirilen negatif olamaz");
+        assert_eq!(p.speed, 0.0, "hız negatif olamaz");
+        assert_eq!(p.total, -1, "toplam işaretçi değeri MC ile aynı");
+    }
+
+    #[test]
+    fn dmp_eksik_alanli_satir_ilerleme_uretmez() {
+        // Dört alandan azı ilerleme sayılmaz; satır yine günlüğe düşer.
+        let (events, _) = satiri_isle("DMP|1024|2048", false);
+        assert!(ilerleme(&events).is_none(), "eksik satır ilerleme olmamalı");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, VideoEvent::Log(_))),
+            "satır günlüğe düşmeli"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // MCFMT| biçim seçimi satırı
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn mc_fmt_satiri_cozunurluk_ve_kodek_gosterir() {
+        // before_dl:MCFMT|resolution|ext|vcodec|acodec|filesize_approx|format_id|duration
+        // MC sırası: çözünürlük · UZANTI · kodek(kök) · ~boyut
+        let (events, _) = satiri_isle(
+            "MCFMT|1920x1080|mp4|avc1.640028|mp4a.40.2|104857600|137|212",
+            false,
+        );
+        let stage = faz(&events).expect("faz metni beklenirdi");
+        assert!(stage.contains("1920x1080"), "çözünürlük görünmeli: {stage}");
+        assert!(stage.contains("MP4"), "uzantı büyük harfle: {stage}");
+        // Kodek yalnızca noktadan önceki köküyle yazılır.
+        assert!(stage.contains("avc1"), "kodek kökü gösterilmeli: {stage}");
+        assert!(
+            !stage.contains("avc1.640028"),
+            "kodek profili gösterilmemeli: {stage}"
+        );
+        assert!(stage.contains("~100.0 MB"), "yaklaşık boyut: {stage}");
+        // Ayraç MC ile aynı.
+        assert!(stage.contains(" · "), "ayraç ` · ` olmalı: {stage}");
+    }
+
+    #[test]
+    fn mc_fmt_eksik_alanlari_atlar() {
+        // `NA` alanları metne eklenmez; boyut bilinmiyorsa atlanır.
+        let (events, _) = satiri_isle("MCFMT|NA|webm|vp9|none|NA|251|0", false);
+        let stage = faz(&events).expect("faz metni beklenirdi");
+        assert!(!stage.contains("NA"), "`NA` gösterilmemeli: {stage}");
+        assert!(!stage.contains("none"), "`none` gösterilmemeli: {stage}");
+        assert!(stage.contains("WEBM"), "uzantı gösterilmeli: {stage}");
+        assert!(stage.contains("vp9"), "kodek gösterilmeli: {stage}");
+        assert!(!stage.contains('~'), "boyut yoksa yaklaşık değer eklenmez");
+        // Yalnızca iki alan kaldığı için ayraç bir kez olur.
+        assert_eq!(stage.matches(" · ").count(), 1, "fazla: {stage}");
+    }
+
+    #[test]
+    fn mc_fmt_eksik_satir_faz_uretmez() {
+        let (events, _) = satiri_isle("MCFMT|1920x1080", false);
+        assert!(faz(&events).is_none(), "altı alandan azsa faz yok");
+    }
+
+    // -----------------------------------------------------------------
+    // Destination / Merger / ExtractAudio satırları
+    // -----------------------------------------------------------------
 
     #[test]
     fn faz_metni_algilanir() {
@@ -480,23 +613,136 @@ mod tests {
             Some(i18n::t("stage.downloading_audio", &[]))
         );
         assert_eq!(
+            stage_for_line("[download] Destination: tek_dosya.mp4"),
+            Some(i18n::t("stage.downloading", &[]))
+        );
+        assert_eq!(
             stage_for_line("[Merger] Merging formats into \"out.mp4\""),
             Some(i18n::t("stage.merging", &[]))
+        );
+        assert_eq!(
+            stage_for_line("[ExtractAudio] Destination: ses.mp3"),
+            Some(i18n::t("stage.extracting_audio", &[]))
+        );
+        assert_eq!(
+            stage_for_line("[VideoRemuxer] Remuxing video from webm to mp4"),
+            Some(i18n::t("stage.converting", &[]))
+        );
+        assert_eq!(
+            stage_for_line("[download] out.mp4 has already been downloaded"),
+            Some(i18n::t("stage.already_downloaded", &[]))
         );
         assert!(stage_for_line("[info] yazılıyor...").is_none());
     }
 
     #[test]
+    fn merger_satiri_faz_olayi_yayinlar() {
+        let (events, _) = satiri_isle("[Merger] Merging formats into \"x.mp4\"", false);
+        assert_eq!(faz(&events), Some(i18n::t("stage.merging", &[])));
+    }
+
+    // -----------------------------------------------------------------
+    // Hata satırları
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn stderr_hata_satiri_kaydedilir() {
+        let (events, err) = satiri_isle("ERROR: Video unavailable", true);
+        assert_eq!(err.as_deref(), Some("ERROR: Video unavailable"));
+        // Hata satırı da günlüğe düşer.
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, VideoEvent::Log(l) if l.starts_with("ERROR")))
+        );
+    }
+
+    #[test]
+    fn stdout_hata_satiri_kaydedilmez() {
+        // yt-dlp bazı `ERROR:` satırlarından sonra kendiliğinden devam eder;
+        // bu yüzden yalnızca stderr'deki hatalar "son hata" sayılır.
+        let (_, err) = satiri_isle("ERROR: oynatma listesi atlandı", false);
+        assert!(err.is_none(), "stdout hatası son hata olmamalı");
+    }
+
+    #[test]
+    fn son_hata_son_yazilanla_guncellenir() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let last_error = std::sync::Mutex::new(None);
+        handle_line("ERROR: birinci", true, &tx, &last_error);
+        handle_line("ERROR: ikinci", true, &tx, &last_error);
+        drop(tx);
+        while rx.try_recv().is_ok() {}
+        assert_eq!(
+            last_error.into_inner().unwrap().as_deref(),
+            Some("ERROR: ikinci")
+        );
+    }
+
+    #[test]
+    fn bos_satir_yoksayilir() {
+        let (events, err) = satiri_isle("   ", false);
+        assert!(events.is_empty(), "boş satır olay üretmemeli");
+        assert!(err.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // Final yol
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn var_olan_dosya_yolu_final_yol_olur() {
+        let dir = std::env::temp_dir().join(format!("adm_video_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("cikti.mp4");
+        std::fs::write(&file, b"x").unwrap();
+
+        let (events, _) = satiri_isle(&file.to_string_lossy(), false);
+        let yol = events.iter().find_map(|e| match e {
+            VideoEvent::FinalPath(p) => Some(p.clone()),
+            _ => None,
+        });
+        assert_eq!(yol.as_deref(), Some(file.as_path()), "final yol tanınmalı");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn olmayan_dosya_yolu_final_yol_sayilmaz() {
+        // yt-dlp günlüğünde yol benzeri metinler olabilir; var olmayan
+        // dosya `after_move:filepath` çıktısı olamaz.
+        let (events, _) = satiri_isle("C:/yok/boyle/bir/dosya.mp4", false);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, VideoEvent::FinalPath(_))),
+            "var olmayan dosya final yol olmamalı"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Yardımcılar
+    // -----------------------------------------------------------------
+
+    #[test]
     fn youtube_tespiti() {
         assert!(url_is_youtube("https://www.youtube.com/watch?v=x"));
         assert!(url_is_youtube("https://youtu.be/x"));
+        assert!(url_is_youtube("https://m.youtube.com/watch?v=x"));
+        assert!(url_is_youtube("https://www.youtube-nocookie.com/embed/x"));
         assert!(!url_is_youtube("https://vimeo.com/123"));
+        // Alan adı taklidi (suffix kontrolü) reddedilmeli.
+        assert!(!url_is_youtube("https://notyoutube.com/watch?v=x"));
     }
 
     #[test]
     fn oturumlu_istemci_reddi() {
         assert!(is_signed_in_client_failure(
             "ERROR: The page needs to be reloaded"
+        ));
+        // Büyük/küçük harf farkı önemsiz.
+        assert!(is_signed_in_client_failure(
+            "error: THE PAGE NEEDS TO BE RELOADED"
         ));
         assert!(!is_signed_in_client_failure("ERROR: Video unavailable"));
     }
@@ -505,6 +751,91 @@ mod tests {
     fn bayt_bicimi() {
         assert_eq!(format_bytes(0), "0 B");
         assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
         assert_eq!(format_bytes(2048), "2.0 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        // Negatif (bozuk) değer 0 sayılır.
+        assert_eq!(format_bytes(-5), "0 B");
+    }
+
+    #[test]
+    fn cikti_adi_sablonu_mc_ile_ayni() {
+        // MC: `%(title).150B [%(id)s].%(ext)s`
+        assert_eq!(
+            video_output_name("https://x.tld/video"),
+            "%(title).150B [%(id)s].%(ext)s"
+        );
+    }
+
+    #[test]
+    fn ytdlp_yoksa_video_akisi_hata_verir() {
+        // Bu ortamda yt-dlp kuruluysa senaryo sınanamaz; sessizce atlanır.
+        if tools::locate(tools::Tool::YtDlp, "").is_some() {
+            return;
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let request = VideoRequest {
+            url: "https://x.tld/video".into(),
+            output_dir: std::env::temp_dir(),
+            format_args: Vec::new(),
+            headers: Vec::new(),
+            cookie_file: None,
+            use_cookies: false,
+            custom_ytdlp_path: String::new(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().expect("tokio çalışma zamanı kurulamadı");
+        let result = rt.block_on(run(request, tx));
+
+        let err = result.expect_err("yt-dlp yokken çalıştırma hata vermeli");
+        assert!(
+            err.to_string().contains("yt-dlp"),
+            "hata yt-dlp'yi anmalı: {err}"
+        );
+        // Alt süreç başlamadığı için hiçbir olay yayınlanmamalı.
+        assert!(rx.try_recv().is_err(), "başarısız çalıştırma olay üretmemeli");
+    }
+
+    #[test]
+    fn calistirilamayan_ytdlp_hata_olayi_yayinlar() {
+        // Var olan ama yürütülebilir olmayan bir dosya: `locate` bulur,
+        // `spawn` başarısız olur. Bu durumda olay **mutlaka** yayınlanmalıdır,
+        // aksi halde yönetici kanalın sessizce kapandığını görüp indirmeyi
+        // "tamamlandı" sayardı.
+        let dir = std::env::temp_dir().join(format!("adm_video_broken_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sahte = dir.join("yt-dlp.exe");
+        std::fs::write(&sahte, b"yurutulebilir degil\n").unwrap();
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let request = VideoRequest {
+            url: "https://x.tld/video".into(),
+            output_dir: dir.clone(),
+            format_args: Vec::new(),
+            headers: Vec::new(),
+            cookie_file: None,
+            use_cookies: false,
+            custom_ytdlp_path: sahte.to_string_lossy().to_string(),
+        };
+
+        let rt = tokio::runtime::Runtime::new().expect("tokio çalışma zamanı kurulamadı");
+        let _ = rt.block_on(run(request, tx));
+
+        let olay = rx
+            .try_recv()
+            .expect("başlatılamayan süreç için olay beklenirdi");
+        match olay {
+            VideoEvent::Finished(Err(msg)) => {
+                assert!(!msg.is_empty(), "hata mesajı boş olmamalı");
+                assert!(
+                    msg.contains("yt-dlp"),
+                    "mesaj yt-dlp'yi anmalı: {msg}"
+                );
+            }
+            other => panic!("`Finished(Err)` beklenirdi, alınan: {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

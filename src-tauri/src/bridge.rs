@@ -235,8 +235,13 @@ pub struct Bridge {
 /// Sunucuyu başlatır; dinleyen porta bağlanamazsa hata döner.
 ///
 /// `handler` tüm yönlendirmeyi üstlenir (uygulama katmanı kurar).
+///
+/// `port == 0` verilirse işletim sistemi geçici (ephemeral) bir port atar ve
+/// `Bridge::port()` gerçek portu döner. `Host` doğrulaması bu gerçek portla
+/// yapılmalıdır, aksi halde istekler 403 ile reddedilirdi.
 pub async fn start(port: u16, handler: Arc<RouteHandler>) -> Result<Bridge, std::io::Error> {
     let listener = TcpListener::bind(("127.0.0.1", port)).await?;
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     Ok(Bridge {
         port,
         listener,
@@ -245,6 +250,11 @@ pub async fn start(port: u16, handler: Arc<RouteHandler>) -> Result<Bridge, std:
 }
 
 impl Bridge {
+    /// Sunucunun gerçekten dinlediği port (0 verildiyse atanan port).
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
     /// Bağlantı kabul döngüsü (sonsuz).
     pub async fn serve(self) {
         let handler = Arc::clone(&self.handler);

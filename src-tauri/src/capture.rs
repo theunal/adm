@@ -203,4 +203,52 @@ mod tests {
         assert!(!looks_like_video_page("https://www.youtube.com/film.mp4"));
         assert!(!looks_like_video_page("https://ornek.tld/sayfa"));
     }
+
+    #[test]
+    fn uzanti_buyuk_kucuk_harf_duyarsiz() {
+        let exts = extensions(&groups(&["video"]), "");
+        // Liste küçük harftir; URL büyük harfli uzantı taşıyabilir.
+        assert!(matches("https://x.tld/FILM.MP4", &exts));
+        assert!(matches("https://x.tld/Film.Mp4", &exts));
+        // Sorgu dizesi ve çapa yok sayılır.
+        assert!(matches("https://x.tld/a.mkv?token=abc#x", &exts));
+    }
+
+    #[test]
+    fn uzantisiz_ve_gecersiz_uzantilar_eslesmez() {
+        let exts = extensions(&groups(&["compressed"]), "");
+        assert!(!matches("https://x.tld/indir", &exts), "uzantı yok");
+        assert!(!matches("https://x.tld/", &exts), "yalnızca kök");
+        assert!(!matches("https://x.tld/a.", &exts), "boş uzantı");
+        assert!(!matches("https://x.tld/a.toolongext", &exts), "8'den uzun");
+        // Uzantı alfanümerik olmalı.
+        assert!(!matches("https://x.tld/a.z-p", &exts), "tire uzantı sayılmaz");
+    }
+
+    #[test]
+    fn ozel_uzanti_gecersiz_girdileri_atar() {
+        // Nokta temizlenir, boşluklar kırpılır, geçersiz karakterli
+        // parçalar (yol, boşluk) atlanır.
+        let exts = extensions(&groups(&[]), ".MP4; , zip , a/b , , 7z");
+        assert_eq!(
+            exts,
+            vec!["7z".to_string(), "mp4".to_string(), "zip".to_string()]
+        );
+    }
+
+    #[test]
+    fn varsayilan_gruplar_resim_icermez() {
+        // MC `defaultGroupIDs`: resim grubu varsayılan olarak kapalıdır
+        // (tarayıcı her küçük görseli ADM'ye devretmesin).
+        assert!(!DEFAULT_GROUPS.contains(&"image"));
+        for g in ["music", "video", "apps", "document", "compressed"] {
+            assert!(DEFAULT_GROUPS.contains(&g), "{g} varsayılan olmalı");
+        }
+    }
+
+    #[test]
+    fn grup_etiketi_i18n_anahtari_dondurur() {
+        assert_eq!(group_label("video"), "capture.video");
+        assert_eq!(group_label("bilinmeyen"), "capture.unknown");
+    }
 }

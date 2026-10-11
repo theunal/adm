@@ -5,9 +5,9 @@
  * sürdürür) · indirme hızı · bağlantı kalitesi rozeti · boş alan · bitmeyen
  * sayısı · **köprü göstergesi** · seçili kaydın adı · alt panel açma düğmesi.
  *
- * "YÜKSEK" rozeti FDM'deki bağlantı kalitesi göstergesinin karşılığıdır;
- * burada **ölçülen** anlık hıza göre üç kademe belirlenir. Sahte bir değer
- * göstermektense hız gerçeğini yansıtmak daha doğrudur.
+ * "YÜKSEK" rozeti bağlantı kalitesi göstergesidir; burada **ölçülen** anlık
+ * hıza göre üç kademe belirlenir. Sahte bir değer göstermektense hız gerçeğini
+ * yansıtmak daha doğrudur.
  *
  * Köprü göstergesi MC'nin tarayıcı bağlantı noktasıdır: yeşil nokta köprünün
  * dinlediğini, ipucu metni bağlı tarayıcıları gösterir.

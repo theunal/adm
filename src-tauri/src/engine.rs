@@ -66,7 +66,11 @@ const THROTTLE_BASE_DELAY: Duration = Duration::from_millis(1500);
 const THROTTLE_MAX_DELAY: Duration = Duration::from_secs(15);
 
 /// Sunucunun sınırlandırdığını bildirdiği durum kodları (MC `throttle`).
-const THROTTLE_STATUSES: [u16; 6] = [408, 425, 429, 500, 502, 503];
+///
+/// MC `SegmentedDownloader` bu yedi kodu tek bir `case` içinde toplar
+/// (`408, 425, 429, 500, 502, 503, 504`); 504'ün eklenmesi önemlidir, aksi
+/// halde ağ geçidi zaman aşımı sert bir hata sayılıp kanal düşürülmez.
+const THROTTLE_STATUSES: [u16; 7] = [408, 425, 429, 500, 502, 503, 504];
 
 /// İlerleme olaylarının yayınlanma aralığı.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
@@ -1316,5 +1320,111 @@ mod tests {
         preallocate(&p, 4096).unwrap();
         assert_eq!(file_len(&p), Some(4096));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------
+    // 429 adaptif sınırlama (MC `throttle` / `activeLimit`)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn sinirlama_kodlari_mc_ile_ayni() {
+        // MC `SegmentedDownloader`: `case 408, 425, 429, 500, 502, 503, 504`.
+        for code in [408u16, 425, 429, 500, 502, 503, 504] {
+            assert!(
+                THROTTLE_STATUSES.contains(&code),
+                "{code} sınırlama kodu olmalı"
+            );
+        }
+        assert_eq!(THROTTLE_STATUSES.len(), 7, "MC tam yedi kod kullanır");
+        // Sıradan sunucu hataları sınırlama sayılmaz.
+        for code in [400u16, 401, 403, 404, 410, 416] {
+            assert!(
+                !THROTTLE_STATUSES.contains(&code),
+                "{code} sınırlama kodu olmamalı"
+            );
+        }
+    }
+
+    #[test]
+    fn sinirlama_kanal_sayisini_bir_azaltir() {
+        let t = Throttle::default();
+        t.active_limit.store(8, Ordering::SeqCst);
+        t.narrow();
+        assert_eq!(t.active_limit.load(Ordering::SeqCst), 7);
+        t.narrow();
+        t.narrow();
+        assert_eq!(t.active_limit.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn sinirlama_tabanda_birde_kalir() {
+        let t = Throttle::default();
+        t.active_limit.store(2, Ordering::SeqCst);
+        for _ in 0..10 {
+            t.narrow();
+        }
+        assert_eq!(
+            t.active_limit.load(Ordering::SeqCst),
+            1,
+            "sınır 1'in altına inmemeli"
+        );
+
+        // Sıfırdan başlasa bile taban 1'dir (taşma olmamalı).
+        let t0 = Throttle::default();
+        assert_eq!(t0.active_limit.load(Ordering::SeqCst), 0);
+        t0.narrow();
+        assert_eq!(t0.active_limit.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn basarili_istek_siniri_max_a_kadar_genisler() {
+        let t = Throttle::default();
+        t.active_limit.store(4, Ordering::SeqCst);
+        t.widen(8);
+        assert_eq!(t.active_limit.load(Ordering::SeqCst), 5);
+        t.widen(8);
+        t.widen(8);
+        assert_eq!(t.active_limit.load(Ordering::SeqCst), 7);
+    }
+
+    #[test]
+    fn genisleme_max_i_asamaz() {
+        let t = Throttle::default();
+        t.active_limit.store(8, Ordering::SeqCst);
+        for _ in 0..5 {
+            t.widen(8);
+        }
+        assert_eq!(
+            t.active_limit.load(Ordering::SeqCst),
+            8,
+            "sınır kanal sayısını aşmamalı"
+        );
+    }
+
+    #[test]
+    fn genisleme_max_sifirsa_bir_kabul_eder() {
+        // Kanal sayısı bozuk (0) gelse bile sınır 1'e çıkar: aksi halde
+        // hiçbir kanal açılamaz ve indirme sessizce dururdu.
+        let t = Throttle::default();
+        t.widen(0);
+        assert_eq!(t.active_limit.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn geri_cekilme_egrisi_mc_ile_ayni() {
+        // MC: `min(15, 1.5 × deneme)` saniye; 10 denemede 15 sn'ye oturur.
+        let delay = |attempt: u32| {
+            THROTTLE_BASE_DELAY
+                .saturating_mul(attempt.min(10))
+                .min(THROTTLE_MAX_DELAY)
+        };
+        assert_eq!(delay(1), Duration::from_millis(1500));
+        assert_eq!(delay(2), Duration::from_secs(3));
+        assert_eq!(delay(10), Duration::from_secs(15));
+        // Doygunluk: 10'un üstünde de üst sınır korunur.
+        assert_eq!(delay(11), Duration::from_secs(15));
+        assert_eq!(delay(u32::MAX), Duration::from_secs(15));
+        // Deneme başına sınır MC ile aynı (12).
+        assert_eq!(MAX_RETRIES_PER_CHANNEL, 12);
     }
 }
