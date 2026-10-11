@@ -18,7 +18,7 @@ import {
   taskCounts,
   visibleItems,
 } from "../lib/store";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import { formatBytes, formatNumber } from "../lib/format";
 import { t } from "../lib/i18n";
 import DownloadRow from "./DownloadRow";
@@ -39,7 +39,7 @@ export default function DownloadTable() {
     try {
       await clearFinished();
     } catch (e) {
-      pushLogSafe("error", t("list.err.clear", { error: errorText(e) }));
+      pushFeedback("error", t("list.err.clear", { error: errorText(e) }));
     }
   }
 

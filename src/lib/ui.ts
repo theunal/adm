@@ -1,10 +1,10 @@
 /**
  * Kabuk düzeyi arayüz durumu.
  *
- * Menü çubuğu, araç çubuğu, kenar çubuğu ve tablo birbirinin render'ını
- * tetiklemeden aynı duruma (açık panel, açık pencere, sağ tık konumu) erişir.
- * Bunları bir `createStore` içinde toplamak yerine ayrı sinyaller olarak
- * tutmak, hangi parçanın neyi okuduğunu açık kılar.
+ * Araç çubuğu, tablo ve durum çubuğu birbirinin render'ını tetiklemeden aynı
+ * duruma (açık pencere, sağ tık konumu, geçici mesaj) erişir. Bunları bir
+ * `createStore` içinde toplamak yerine ayrı sinyaller olarak tutmak, hangi
+ * parçanın neyi okuduğunu açık kılar.
  */
 import { createSignal } from "solid-js";
 import type { DownloadItem } from "./format";
@@ -30,11 +30,21 @@ export const [contextMenu, setContextMenu] = createSignal<ContextState | null>(
   null,
 );
 
-/** Alt panel: hız grafiği. */
-export const [graphOpen, setGraphOpen] = createSignal(true);
-
-/** Alt panel: olay günlüğü. */
-export const [logOpen, setLogOpen] = createSignal(false);
+/**
+ * Alt durum çubuğunda gösterilen geçici mesaj.
+ *
+ * Log paneli kaldırıldığı için eylem hatalarının görünür tek yeri burasıdır:
+ * `useFeedback.pushFeedback()` bir mesajı buraya yazar, `StatusBar` gösterir
+ * ve ~4 saniye sonra kendiliğinden temizlenir. Mesaj yoksa durum çubuğu
+ * seçili kaydın adını gösterir.
+ */
+export interface StatusMessage {
+  level: "info" | "success" | "warn" | "error";
+  text: string;
+}
+export const [statusMessage, setStatusMessage] = createSignal<StatusMessage | null>(
+  null,
+);
 
 /**
  * "Yeni İndirme" penceresi.
@@ -44,3 +54,13 @@ export const [logOpen, setLogOpen] = createSignal(false);
  * açar. Pencere `Escape` ile de kapanır (`App.tsx` genel işleyicisi).
  */
 export const [addDialogOpen, setAddDialogOpen] = createSignal(false);
+
+/**
+ * Alt panel (hız grafiği / olayaily) açık mı?
+ *
+ * Durum çubuğundaki ▾ düğmesi ve ≡ menüsündeki "Hız Grafiği" /
+ * "Olay Günlüğü" girdileri bu sinyalleri değiştirir. İkisi birden kapalıysa
+ * alt dock çizilmez.
+ */
+export const [graphOpen, setGraphOpen] = createSignal(false);
+export const [logOpen, setLogOpen] = createSignal(false);

@@ -36,7 +36,7 @@ import {
   toggleSelectAll,
   type TaskFilter,
 } from "../lib/store";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import {
   addDialogOpen,
   graphOpen,
@@ -113,7 +113,7 @@ function primaryItem(): DownloadItem | null {
 function openSelectedFile(item: DownloadItem | null) {
   if (!item) return;
   void openPath(item.filePath).catch((e: unknown) =>
-    pushLogSafe(
+    pushFeedback(
       "error",
       t("act.failed", { action: t("act.open"), error: errorText(e) }),
       item.id,
@@ -125,7 +125,7 @@ function openSelectedFile(item: DownloadItem | null) {
 function openSelectedFolder(item: DownloadItem | null) {
   if (!item) return;
   void openFolder(item.filePath).catch((e: unknown) =>
-    pushLogSafe(
+    pushFeedback(
       "error",
       t("act.failed", { action: t("act.folder"), error: errorText(e) }),
       item.id,
@@ -138,9 +138,9 @@ async function copySelectedUrl(item: DownloadItem | null) {
   if (!item) return;
   try {
     await navigator.clipboard.writeText(item.url);
-    pushLogSafe("info", t("dialog.copied"), item.id);
+    pushFeedback("info", t("dialog.copied"));
   } catch (e) {
-    pushLogSafe(
+    pushFeedback(
       "error",
       t("act.failed", { action: t("menu.item.copy_url"), error: errorText(e) }),
       item.id,
@@ -165,7 +165,7 @@ async function clearList() {
   try {
     await clearFinished();
   } catch (e) {
-    pushLogSafe("error", t("list.err.clear", { error: errorText(e) }));
+    pushFeedback("error", t("list.err.clear", { error: errorText(e) }));
   }
 }
 

@@ -17,7 +17,7 @@ import {
   resumeItem,
 } from "../lib/bulk";
 import { MAX_CHANNELS, MIN_CHANNELS } from "../lib/settings";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import { contextMenu, setContextMenu, setPropertiesItem } from "../lib/ui";
 import { t } from "../lib/i18n";
 import type { DownloadItem } from "../lib/format";
@@ -71,7 +71,7 @@ export default function RowContextMenu() {
     try {
       await action();
     } catch (e) {
-      pushLogSafe("error", t("act.failed", { action: label, error: errorText(e) }));
+      pushFeedback("error", t("act.failed", { action: label, error: errorText(e) }));
     }
   }
 
@@ -93,7 +93,7 @@ export default function RowContextMenu() {
   async function onCopy(item: DownloadItem) {
     await run(t("menu.item.copy_url"), async () => {
       await navigator.clipboard.writeText(item.url);
-      pushLogSafe("info", t("dialog.copied"), item.id);
+      pushFeedback("info", t("dialog.copied"));
     });
   }
 
@@ -103,12 +103,12 @@ export default function RowContextMenu() {
     if (!item || count === item.channelCount) return;
     try {
       await changeChannelCount(item.id, count);
-      pushLogSafe("info", t("log.channels_changed", {
+      pushFeedback("info", t("log.channels_changed", {
         name: item.fileName,
         count: count.toString(),
       }), item.id);
     } catch (e) {
-      pushLogSafe(
+      pushFeedback(
         "error",
         t("act.failed", { action: t("act.channels"), error: errorText(e) }),
         item.id,

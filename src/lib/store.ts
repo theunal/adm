@@ -19,7 +19,6 @@ import {
 import { onLocaleChange, t } from "./i18n";
 import {
   categoryOf,
-  nowStamp,
   statusLabel,
   type CategoryKey,
   type DownloadEvent,
@@ -28,9 +27,7 @@ import {
   type LogEntry,
   type SpeedSample,
 } from "./format";
-
-/** Maksimum log satırı (bellek sınırlı kalsın). */
-const MAX_LOGS = 300;
+import { pushFeedback } from "./useFeedback";
 
 /* -----------------------------------------------------------------
    Görünüm (kenar çubuğu filtreleri)
@@ -101,6 +98,33 @@ const [state, setState] = createStore<DownloadState>({
 });
 
 const [logs, setLogs] = createStore<{ entries: LogEntry[] }>({ entries: [] });
+let logSeq = 0;
+
+/**
+ * Depoya bir log satırı ekler (bellek sınırlı kalsın).
+ *
+ * En eski satır silinir; `MAX_LOGS` üst sınır aşıldığında baştaki entries
+ * çıkarılır.
+ */
+const MAX_LOGS = 300;
+export function pushLog(
+  level: "info" | "success" | "warn" | "error",
+  message: string,
+  downloadId: number | null = null,
+) {
+  const entry: LogEntry = {
+    id: ++logSeq,
+    level,
+    message,
+    downloadId,
+    time: new Date().toLocaleTimeString(undefined, { hour12: false }),
+  };
+  setLogs("entries", (prev) => {
+    const next = [...prev, entry];
+    if (next.length > MAX_LOGS) next.splice(0, next.length - MAX_LOGS);
+    return next;
+  });
+}
 const [view, setView] = createSignal<View>({ kind: "task", value: "all" });
 const [ready, setReady] = createSignal(false);
 
@@ -123,57 +147,6 @@ const [clock, setClock] = createSignal(Date.now());
  * Shift+Click aralığı için son tıklanan satır.
  */
 let anchorId: number | null = null;
-
-let logSeq = 0;
-
-/* -----------------------------------------------------------------
-   Günlük
-   ----------------------------------------------------------------- */
-
-/** Yeni log satırı ekler ve listeyi sınırlar. */
-function pushLog(
-  level: LogEntry["level"],
-  message: string,
-  downloadId: number | null,
-) {
-  logSeq += 1;
-  const entry: LogEntry = {
-    id: logSeq,
-    level,
-    message,
-    downloadId,
-    time: nowStamp(),
-  };
-
-  setLogs(
-    "entries",
-    produce((list) => {
-      list.push(entry);
-      if (list.length > MAX_LOGS) {
-        list.splice(0, list.length - MAX_LOGS);
-      }
-    }),
-  );
-}
-
-/** Log panelini temizler. */
-export function clearLogs() {
-  setLogs("entries", []);
-}
-
-/**
- * Log satırı ekler (bileşenler bu fonksiyonu kullanır).
- *
- * `useFeedback` modülü bu fonksiyona bağlanır; böylece bileşenlerin
- * `store` detaylarına (iç `pushLog` dahil) doğrudan erişmesi gerekmez.
- */
-export function appendLog(
-  level: LogEntry["level"],
-  message: string,
-  downloadId: number | null = null,
-) {
-  pushLog(level, message, downloadId);
-}
 
 /* -----------------------------------------------------------------
    Kenar çubuğu görünümü
@@ -681,13 +654,9 @@ export async function initStore(): Promise<void> {
     for (const item of items) {
       upsert(item);
     }
-    pushLog("info", t("log.records_loaded", { count: items.length }), null);
   } catch (e) {
-    pushLog(
-      "error",
-      t("log.records_load_failed", { error: errorText(e) }),
-      null,
-    );
+    // Liste yüklenemezse uyar; uygulama yine de kullanılabilir (boş liste).
+    pushFeedback("error", t("log.records_load_failed", { error: errorText(e) }));
   }
 
   await onDownloadEvent((ev) => {
@@ -700,13 +669,6 @@ export async function initStore(): Promise<void> {
         break;
       case "listChanged":
         void reloadList();
-        break;
-      case "log":
-        pushLog(
-          (ev.level as LogEntry["level"]) ?? "info",
-          ev.message,
-          ev.downloadId ?? null,
-        );
         break;
     }
   });
@@ -736,14 +698,13 @@ async function reloadList(): Promise<void> {
       }
     }
   } catch (e) {
-    pushLog("error", t("log.list_refresh_failed", { error: errorText(e) }), null);
+    pushFeedback("error", t("log.list_refresh_failed", { error: errorText(e) }));
   }
 }
 
 // Dil değiştikten sonra Rust'a bildirilmiş oluruz; kalıcı `error_message`
 // kayıtları kanonik biçimde saklandığı için listeyi yeniden okumak onları
-// yeni dilde çevirir. Bu, bellek içi log satırları için geçerli değildir:
-// onlar yazıldıkları dilde kalır.
+// yeni dilde çevirir.
 onLocaleChange(() => {
   void reloadList();
 });

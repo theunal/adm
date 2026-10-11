@@ -21,7 +21,7 @@ import {
   resumeAllDownloads,
   resumeDownload,
 } from "./api";
-import { errorText, markBusy, pushLogSafe } from "./useFeedback";
+import { errorText, markBusy, pushFeedback } from "./useFeedback";
 import { selectedItems } from "./store";
 import { t } from "./i18n";
 import type { DownloadItem } from "./format";
@@ -37,7 +37,7 @@ async function runOne(
     await action();
     return true;
   } catch (e) {
-    pushLogSafe("error", t("act.failed", { action: label, error: errorText(e) }), id);
+    pushFeedback("error", t("act.failed", { action: label, error: errorText(e) }), id);
     return false;
   } finally {
     markBusy(id, false);
@@ -49,7 +49,7 @@ export async function bulkPause(): Promise<void> {
   try {
     await pauseAllDownloads();
   } catch (e) {
-    pushLogSafe("error", t("act.failed", { action: t("act.pause"), error: errorText(e) }));
+    pushFeedback("error", t("act.failed", { action: t("act.pause"), error: errorText(e) }));
   }
 }
 
@@ -58,7 +58,7 @@ export async function bulkResume(): Promise<void> {
   try {
     await resumeAllDownloads();
   } catch (e) {
-    pushLogSafe("error", t("act.failed", { action: t("act.resume"), error: errorText(e) }));
+    pushFeedback("error", t("act.failed", { action: t("act.resume"), error: errorText(e) }));
   }
 }
 
@@ -67,7 +67,7 @@ export async function bulkCancel(): Promise<void> {
   try {
     await cancelAllDownloads();
   } catch (e) {
-    pushLogSafe("error", t("act.failed", { action: t("act.cancel"), error: errorText(e) }));
+    pushFeedback("error", t("act.failed", { action: t("act.cancel"), error: errorText(e) }));
   }
 }
 
@@ -95,7 +95,7 @@ export async function bulkDelete(
   }
 
   if (removed > 1) {
-    pushLogSafe("info", t("bulk.deleted", { count: removed }), null);
+    pushFeedback("info", t("bulk.deleted", { count: removed }), null);
   }
 }
 

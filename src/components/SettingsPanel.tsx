@@ -20,7 +20,7 @@ import {
   setDefaultChannels,
   updateSettings,
 } from "../lib/settings";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import { t, type Locale } from "../lib/i18n";
 
 /** Dil anahtarındaki seçenekler. */
@@ -47,7 +47,7 @@ export default function SettingsPanel() {
     try {
       await action();
     } catch (e) {
-      pushLogSafe("error", t(failKey, { error: errorText(e) }));
+      pushFeedback("error", t(failKey, { error: errorText(e) }));
     } finally {
       setSaving(false);
     }

@@ -15,7 +15,7 @@ import { bulkPause, bulkResume } from "../lib/bulk";
 import { selectedItems, totals } from "../lib/store";
 import { settings } from "../lib/settings";
 import { formatBytes, formatSpeed } from "../lib/format";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import {
   graphOpen,
   logOpen,
@@ -64,7 +64,7 @@ export default function StatusBar() {
       if (masterOn()) await bulkPause();
       else await bulkResume();
     } catch (e) {
-      pushLogSafe("error", t("act.failed", {
+      pushFeedback("error", t("act.failed", {
         action: masterOn() ? t("act.pause") : t("act.resume"),
         error: errorText(e),
       }));

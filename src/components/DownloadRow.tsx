@@ -18,7 +18,7 @@ import { Show, createMemo } from "solid-js";
 import { openPath } from "../lib/api";
 import { resumeItem } from "../lib/bulk";
 import { itemSpeed, selectRow, state } from "../lib/store";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import { setContextMenu } from "../lib/ui";
 import {
   formatBytes,
@@ -84,7 +84,7 @@ export default function DownloadRow(props: Props) {
       try {
         await openPath(props.item.filePath);
       } catch (e) {
-        pushLogSafe(
+        pushFeedback(
           "error",
           t("act.failed", { action: t("act.open"), error: errorText(e) }),
           props.item.id,
@@ -96,7 +96,7 @@ export default function DownloadRow(props: Props) {
       try {
         await resumeItem(props.item);
       } catch (e) {
-        pushLogSafe(
+        pushFeedback(
           "error",
           t("act.failed", { action: t("act.resume"), error: errorText(e) }),
           props.item.id,

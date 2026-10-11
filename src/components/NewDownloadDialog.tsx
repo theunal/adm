@@ -17,7 +17,7 @@ import {
   resolveTargetPath,
   startDownload,
 } from "../lib/api";
-import { errorText, pushLogSafe } from "../lib/useFeedback";
+import { errorText, pushFeedback } from "../lib/useFeedback";
 import { MAX_CHANNELS, MIN_CHANNELS, settings } from "../lib/settings";
 import { addDialogOpen, setAddDialogOpen } from "../lib/ui";
 import { checkDownloadUrl } from "../lib/format";
@@ -125,7 +125,7 @@ export default function NewDownloadDialog() {
       setTouched(false);
       setAddDialogOpen(false);
     } catch (e) {
-      pushLogSafe("error", t("form.err.start", { error: errorText(e) }));
+      pushFeedback("error", t("form.err.start", { error: errorText(e) }));
     } finally {
       setSubmitting(false);
     }

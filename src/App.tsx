@@ -18,7 +18,7 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { initStore, selectedItems, toggleSelectAll } from "./lib/store";
 import { initSettings, settingsReady } from "./lib/settings";
-import { errorText, pushLogSafe } from "./lib/useFeedback";
+import { errorText, pushFeedback } from "./lib/useFeedback";
 import { t } from "./lib/i18n";
 import {
   addDialogOpen,
@@ -67,7 +67,7 @@ export default function App() {
     void initSettings().then(() =>
       initStore()
         .catch((e: unknown) => {
-          pushLogSafe("error", t("app.init_failed", { error: errorText(e) }));
+          pushFeedback("error", t("app.init_failed", { error: errorText(e) }));
         })
         .finally(() => setBooted(true)),
     );

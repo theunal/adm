@@ -13,3 +13,5 @@ Thumbs.db
 
 # Not: package-lock.json bilerek yok sayılmıyor — kurulumun tekrarlanabilir
 # olması için kilit dosyası sürüm kontrolünde tutulur.
+
+.refs
