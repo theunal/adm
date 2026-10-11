@@ -94,8 +94,14 @@ fn download_url(tool: Tool) -> &'static str {
 }
 
 /// Kurulum ilerleme olayı (arayüze Tauri olayı olarak iletilir).
+///
+/// Etiket `event`'tir, `kind` **değil**: bu olay `DownloadEvent::Tool`
+/// içinde iç içe serileştirilir ve dış enum zaten `kind` etiketini yazar.
+/// İkisi de `kind` olsaydı JSON'da anahtar iki kez çıkar
+/// (`{"kind":"tool","kind":"started"}`) ve ayrıştırıcı yalnızca sonuncuyu
+/// görürdü — arayüz hiçbir zaman `kind === "tool"` göremezdi.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "event", rename_all = "camelCase")]
 pub enum ToolEvent {
     Started { tool: String },
     Progress { tool: String, fraction: f64 },

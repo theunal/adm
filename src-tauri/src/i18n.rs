@@ -657,6 +657,21 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "Site girişi çerezleri silindi",
         "Site login cookies were cleared",
     ),
+    (
+        "site_login.title",
+        "Site Girişi — ADM",
+        "Site Login — ADM",
+    ),
+    (
+        "err.site_login_open",
+        "Giriş penceresi açılamadı: {0}",
+        "Could not open the login window: {0}",
+    ),
+    (
+        "err.site_login_missing",
+        "Site girişi penceresi açık değil",
+        "The site login window is not open",
+    ),
     // -----------------------------------------------------------------
     // Tepsi simgesi menüsü
     // -----------------------------------------------------------------

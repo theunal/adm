@@ -7,9 +7,16 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DownloadEvent, DownloadItem } from "./format";
+import type {
+  BridgeStatus,
+  DownloadEvent,
+  DownloadItem,
+  DownloadKind,
+} from "./format";
 import type { Locale } from "./i18n";
 import { t } from "./i18n";
+
+export type { BridgeStatus };
 
 /** Rust `settings` tablosunun arayüz karşılığı. */
 export interface Settings {
@@ -81,6 +88,8 @@ export function startDownload(args: {
   url: string;
   filePath?: string | null;
   channelCount: number;
+  /** `"video"` ise yt-dlp ile indirilir; varsayılan `"file"`. */
+  kind?: DownloadKind;
 }): Promise<number> {
   return invoke<number>("start_download", args);
 }
@@ -275,14 +284,6 @@ export async function confirm(
 /** Kurulum sihirbazının desteklediği tarayıcılar. */
 export type BrowserId = "chrome" | "edge" | "brave" | "firefox";
 
-/** Köprünün çalışma durumu (durum çubuğu göstergesi). */
-export interface BridgeStatus {
-  running: boolean;
-  port: number;
-  /** Köprüye bağlanmış tarayıcılar (son görülme sırasıyla). */
-  browsers: string[];
-}
-
 /** Köprünün durumunu okur. */
 export function bridgeStatus(): Promise<BridgeStatus> {
   return invoke<BridgeStatus>("bridge_status");
@@ -316,8 +317,13 @@ export function openBrowserExtensionsPage(browser: BrowserId): Promise<void> {
    Harici araçlar (yt-dlp / ffmpeg / deno)
    ----------------------------------------------------------------- */
 
-/** `tools::Tool` karşılığı. */
-export type ToolId = "yt-dlp" | "ffmpeg" | "deno";
+/**
+ * Harici araç kimlikleri.
+ *
+ * `tools::Tool::as_str()` değerleriyle birebir aynıdır (`ytdlp`, `ffmpeg`,
+ * `deno`) — bu dizeler `install_tool` komutuna argüman olarak gider.
+ */
+export type ToolId = "ytdlp" | "ffmpeg" | "deno";
 
 /** Bir aracın kurulum durumu. */
 export interface ToolStatus {
@@ -361,6 +367,26 @@ export interface SiteLoginStatus {
 /** Kayıtlı site girişi çerezlerinin durumunu okur. */
 export function siteLoginStatus(): Promise<SiteLoginStatus> {
   return invoke<SiteLoginStatus>("site_login_status");
+}
+
+/**
+ * Uygulama içi giriş penceresini açar (MC `SiteLoginManager`).
+ *
+ * `url` verilmezse Google hesapları → YouTube adresi kullanılır. Pencere
+ * zaten açıksa öne getirilir ve verilen adrese yönlendirilir.
+ */
+export function openSiteLogin(url?: string): Promise<void> {
+  return invoke<void>("open_site_login", { url: url ?? null });
+}
+
+/**
+ * Giriş penceresinin çerezlerini Netscape dosyasına yazar ve pencereyi kapatır.
+ *
+ * Kullanıcı pencere içinde oturum açtıktan sonra çağrılır; dönen değer
+ * kaydedilen çerez sayısıdır.
+ */
+export function saveSiteLoginCookies(): Promise<number> {
+  return invoke<number>("save_site_login_cookies");
 }
 
 /** Giriş penceresinden toplanan çerezleri Netscape dosyasına yazar. */

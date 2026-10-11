@@ -156,4 +156,129 @@ export async function setDefaultChannels(count: number): Promise<void> {
   await updateSettings({ defaultChannelCount: count });
 }
 
+/* -----------------------------------------------------------------
+   MC portu — video biçimi ve yakalama uzantıları
+   ----------------------------------------------------------------- */
+
+/** Seçilebilir azami çözünürlükler (`settings::VIDEO_MAX_HEIGHTS`). */
+export const VIDEO_MAX_HEIGHTS = [-2, -1, 0, 360, 480, 720, 1080, 1440, 2160];
+
+/** Seçilebilir kapsayıcılar (`Settings::normalize` ile aynı küme). */
+export const VIDEO_CONTAINERS = ["mp4", "mkv", "webm", "original"] as const;
+
+/** Kapsayıcı kimliği. */
+export type VideoContainer = (typeof VIDEO_CONTAINERS)[number];
+
+/**
+ * Azami çözünürlük değerinin sözlük anahtarı.
+ *
+ * `-2`/`-1` ses modlarıdır, `0` "en iyi"dir; kalanlar `{yükseklik}p`.
+ */
+export function heightLabelKey(height: number): string {
+  if (height === -2) return "settings.height.audio_mp3";
+  if (height === -1) return "settings.height.audio_m4a";
+  if (height <= 0) return "settings.height.best";
+  return "settings.height.p";
+}
+
+/** Yükseklik etiketi için yer tutucular (yalnızca `p` biçiminde dolu). */
+export function heightParams(height: number): Record<string, string | number> {
+  return height > 0 ? { height } : {};
+}
+
+/**
+ * Etkin yt-dlp biçim argümanlarını üretir.
+ *
+ * Rust `Settings::ytdlp_format_arguments` portudur; ayarlar sekmesindeki
+ * önizleme bu listeyi **birebir** gösterir. Özel biçim doluysa yalnızca o
+ * kullanılır; ses modlarında (`-1`, `-2`) ayıklama argümanları döner.
+ */
+export function formatArguments(source: Settings): string[] {
+  const custom = source.videoFormat.trim();
+  if (custom) {
+    const container = source.videoContainer === "original" ? "mkv" : source.videoContainer;
+    return ["-f", custom, "--merge-output-format", container];
+  }
+
+  if (source.videoMaxHeight === -1 || source.videoMaxHeight === -2) {
+    const codec = source.videoMaxHeight === -1 ? "m4a" : "mp3";
+    return ["-f", "ba/b", "-x", "--audio-format", codec, "--audio-quality", "0"];
+  }
+
+  const h = source.videoMaxHeight > 0 ? `[height<=${source.videoMaxHeight}]` : "";
+  let expr: string;
+  const args: string[] = [];
+
+  switch (source.videoContainer) {
+    case "mp4":
+      // H.264 + AAC tercih edilir (QuickTime/iOS uyumlu); olmazsa
+      // birleştirilip mp4'e çevrilir.
+      expr = `bv*${h}[vcodec^=avc1]+ba[acodec^=mp4a]/bv*${h}[ext=mp4]+ba[ext=m4a]/bv*${h}+ba/b${h}/b`;
+      args.push("--merge-output-format", "mp4", "--remux-video", "mp4");
+      break;
+    case "webm":
+      expr = `bv*${h}[ext=webm]+ba[ext=webm]/bv*${h}+ba/b${h}/b`;
+      args.push("--merge-output-format", "webm");
+      break;
+    case "mkv":
+      expr = `bv*${h}+ba/b${h}/b`;
+      args.push("--merge-output-format", "mkv");
+      break;
+    default:
+      expr = `bv*${h}+ba/b${h}/b`;
+      break;
+  }
+
+  return ["-f", expr, ...args];
+}
+
+/** Yakalama için seçilebilir gruplar (`capture::GROUPS` sırasıyla). */
+export const CAPTURE_GROUPS = [
+  "image",
+  "music",
+  "video",
+  "apps",
+  "document",
+  "compressed",
+] as const;
+
+/** Yakalama grubu kimliği. */
+export type CaptureGroup = (typeof CAPTURE_GROUPS)[number];
+
+/** Grup → uzantı listesi (`capture::GROUPS` portu). */
+const GROUP_EXTENSIONS: Record<CaptureGroup, string[]> = {
+  image: ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico", "heic", "tiff"],
+  music: ["mp3", "flac", "wav", "aac", "ogg", "opus", "m4a", "wma", "aiff", "alac"],
+  video: ["mp4", "mkv", "webm", "mov", "avi", "wmv", "flv", "m4v", "3gp", "ts"],
+  apps: ["exe", "msi", "dmg", "pkg", "apk", "deb", "rpm", "appimage", "jar", "xpi"],
+  document: [
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "epub", "mobi", "csv",
+  ],
+  compressed: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "iso", "img"],
+};
+
+/**
+ * Seçili gruplar + özel listeden etkin uzantıları çıkarır.
+ *
+ * Rust `capture::extensions` portudur: küçük harfe indirir, baştaki noktayı
+ * atar, yinelenenleri eler ve sıralar.
+ */
+export function captureExtensions(source: Settings): string[] {
+  const out: string[] = [];
+
+  for (const group of CAPTURE_GROUPS) {
+    if (!source.captureGroupIds.includes(group)) continue;
+    for (const ext of GROUP_EXTENSIONS[group]) {
+      if (!out.includes(ext)) out.push(ext);
+    }
+  }
+
+  for (const part of source.customExtensions.split(/[,;\s]+/)) {
+    const ext = part.trim().replace(/^\./, "").toLowerCase();
+    if (ext && /^[a-z0-9-]+$/.test(ext) && !out.includes(ext)) out.push(ext);
+  }
+
+  return out.sort();
+}
+
 export { settings, settingsReady };

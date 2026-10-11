@@ -80,12 +80,30 @@ export const tr = {
   "side.task.failed": "Başarısız",
   "side.task.cancelled": "İptal Edilen",
   "side.task.all": "Tüm İndirmeler",
+  "side.task.unfinished": "Bitmeyen",
+  "side.nav_aria": "İndirme kategorileri",
+  "side.all": "Tüm İndirmeler",
+  "side.state": "Durum",
+  "side.completed": "Tamamlanan",
+  "side.unfinished": "Bitmeyen",
   "side.cat.video": "Video",
   "side.cat.audio": "Ses",
   "side.cat.program": "Program",
   "side.cat.archive": "Arşiv",
   "side.cat.document": "Belge",
   "side.cat.other": "Diğer Dosyalar",
+
+  // -----------------------------------------------------------------
+  // Dosya kategorileri (MC `categories::Category` — kenar çubuğu, tablo
+  // alt metni ve yakalama grupları bu adları paylaşır)
+  // -----------------------------------------------------------------
+  "cat.image": "Resim",
+  "cat.music": "Ses",
+  "cat.video": "Video",
+  "cat.apps": "Program",
+  "cat.document": "Belge",
+  "cat.compressed": "Arşiv",
+  "cat.other": "Diğer",
 
   // -----------------------------------------------------------------
   // Yeni indirme penceresi (NewDownloadDialog.tsx)
@@ -105,7 +123,6 @@ export const tr = {
   "form.url_label": "Bağlantı adresi",
   "form.url_placeholder": "https://sunucu/dosya.bin",
   "add.save_to": "Kayıt",
-  "add.channels": "Bağlantı",
 
   // -----------------------------------------------------------------
   // Tablo başlıkları (DownloadTable.tsx)
@@ -325,6 +342,231 @@ export const tr = {
   "wizard.prepared": "Eklenti dosyaları hazırlandı",
   "wizard.connected": "{browser} bağlandı",
   "wizard.close": "Kapat",
+
+  // -----------------------------------------------------------------
+  // MC portu — araç çubuğu eylemleri (Toolbar.tsx)
+  // -----------------------------------------------------------------
+  "tb.start_queue": "Kuyruğu Başlat",
+  "tb.start_queue_title": "Bekleyen ve duraklatılan tüm indirmeleri başlat",
+  "tb.stop_all": "Tümünü Durdur",
+  "tb.stop_all_title": "Çalışan tüm indirmeleri duraklat",
+  "tb.clear_done": "Bitenleri Temizle",
+  "tb.clear_done_title": "Tamamlanan, başarısız ve iptal edilen kayıtları sil",
+  "tb.settings": "Ayarlar",
+  "tb.settings_title": "Ayarları aç / kapat (Ctrl+S)",
+  "bulk.err.action": "İşlem başarısız: {error}",
+
+  // -----------------------------------------------------------------
+  // MC portu — tablo satırı ek etiketleri (DownloadRow.tsx)
+  // -----------------------------------------------------------------
+  "row.kind_video": "Video",
+  "row.kind_video_title": "yt-dlp ile indirilen video",
+  "row.completed_sub": "Tamamlandı",
+
+  // -----------------------------------------------------------------
+  // MC portu — indirme ayrıntı penceresi (DownloadDetailDialog.tsx)
+  // -----------------------------------------------------------------
+  "detail.title": "İndirme Ayrıntıları",
+  "detail.section.progress": "İlerleme",
+  "detail.section.info": "Bilgi",
+  "detail.section.connections": "Bağlantılar",
+  "detail.section.log": "yt-dlp Günlüğü",
+  "detail.eta": "Kalan:",
+  "detail.field.url": "Adres",
+  "detail.field.kind": "Tür",
+  "detail.field.ranges": "Parçalı indirme",
+  "detail.field.channels": "Bağlantı sayısı",
+  "detail.field.added": "Eklenme",
+  "detail.field.finished": "Bitiş",
+  "detail.field.headers": "Ek başlıklar",
+  "detail.kind.video": "Video (yt-dlp)",
+  "detail.kind.file": "Dosya",
+  "detail.ranges.yes": "Destekleniyor",
+  "detail.ranges.no": "Desteklenmiyor",
+  "detail.conn.no": "No.",
+  "detail.conn.downloaded": "İndirilen",
+  "detail.conn.start": "Başlangıç",
+  "detail.conn.info": "Bilgi",
+  "detail.conn.finished": "Bitti",
+  "detail.conn.percent": "%{percent}",
+  "detail.log.empty": "Henüz yt-dlp çıktısı yok.",
+  "detail.close_on_finish": "İndirme bitince bu pencereyi kapat",
+  "detail.open": "Dosyayı Aç",
+  "detail.show_in_folder": "Klasörde Göster",
+
+  // -----------------------------------------------------------------
+  // MC portu — durum çubuğu köprü göstergesi (StatusBar.tsx)
+  // -----------------------------------------------------------------
+  "sb.bridge_on": "Köprü açık",
+  "sb.bridge_off": "Köprü kapalı",
+  "sb.bridge_title": "Tarayıcı köprüsü 127.0.0.1:{port}",
+  "sb.bridge_none": "Henüz tarayıcı bağlanmadı",
+  "sb.bridge_browsers": "Bağlı: {browsers}",
+  "sb.unfinished": "Bitmeyen: {count}",
+  "sb.unfinished_title": "Tamamlanmayan indirme sayısı",
+
+  // -----------------------------------------------------------------
+  // MC portu — yeni indirme penceresi (NewDownloadDialog.tsx)
+  // -----------------------------------------------------------------
+  "add.kind": "İndirme türü",
+  "add.kind_file": "Dosya",
+  "add.kind_video": "Video (yt-dlp)",
+  "add.kind_file_hint": "Doğrudan bağlantı; çok kanallı motorla indirilir.",
+  "add.kind_video_hint":
+    "Video sayfası; yt-dlp ile indirilir. YouTube gibi siteler için gereklidir.",
+  "add.channels_field": "Bağlantı sayısı",
+  "add.channels_note": "Yalnızca dosya indirmelerinde kullanılır.",
+
+  // -----------------------------------------------------------------
+  // MC portu — pano sorması (ClipboardPromptDialog.tsx)
+  // -----------------------------------------------------------------
+  "clip.title": "Panoda bağlantı bulundu",
+  "clip.body": "Panodaki {count} bağlantı indirilsin mi?",
+  "clip.body_one": "Panodaki bağlantı indirilsin mi?",
+  "clip.url_hint": "{url}",
+  "clip.download_video": "Videoyu İndir (yt-dlp)",
+  "clip.download_file": "Dosya Olarak İndir",
+  "clip.ignore": "Yoksay",
+  "clip.remember": "Bir daha sorma (bu oturumda)",
+
+  // -----------------------------------------------------------------
+  // MC portu — harici araç kurulumu (tools.rs olayları)
+  // -----------------------------------------------------------------
+  "tool.working": "Hazırlanıyor…",
+  "tool.installed": "Kuruldu ({version})",
+  "tool.failed": "Kurulum başarısız: {error}",
+
+  // -----------------------------------------------------------------
+  // MC portu — ayarlar sekmeleri (SettingsPanel.tsx)
+  // -----------------------------------------------------------------
+  "settings.tab.general": "Genel",
+  "settings.tab.types": "Dosya Türleri",
+  "settings.tab.browsers": "Tarayıcılar",
+  "settings.tab.video": "Video",
+  "settings.tab.interface": "Arayüz",
+  "settings.section.behaviour": "Davranışlar",
+  "settings.section.tray": "Tepsi simgesi ve başlangıç",
+  "settings.section.updates": "Güncellemeler",
+  "settings.max_concurrent": "Eşzamanlı indirme",
+  "settings.max_concurrent_hint":
+    "Aynı anda çalışabilecek indirme sayısı. Kalan indirmeler kuyrukta bekler.",
+  "settings.concurrent_value": "{count} indirme",
+  "settings.auto_start": "Yeni indirmeler hemen başlasın",
+  "settings.auto_start_hint":
+    "Kapalıysa yeni indirmeler kuyrukta bekler; araç çubuğundan “Kuyruğu Başlat” ile başlatılır.",
+  "settings.notify": "Tamamlanınca bildirim göster",
+  "settings.notify_hint": "İndirme bittiğinde Windows bildirimi gösterilir.",
+  "settings.show_detail": "İndirme başlarken ayrıntı penceresini aç",
+  "settings.show_detail_hint":
+    "Video indirmelerinde yt-dlp çıktısını hemen görmek için kullanışlıdır.",
+  "settings.auto_close_detail": "Ayrıntı penceresini tamamlanınca kapat",
+  "settings.auto_close_detail_hint":
+    "Ayrıntı penceresindeki “bitince kapat” kutusunun varsayılanı budur.",
+  "settings.watch_clipboard": "Panoyu izle",
+  "settings.watch_clipboard_hint":
+    "Panoya kopyalanan uygun bağlantılar için soru sorulur.",
+  "settings.organize": "Kategori alt klasörlerine ayır",
+  "settings.organize_hint":
+    "Dosyalar genel konum yerine kategori klasörüne (video/ses/diğer) yazılır.",
+  "settings.start_in_tray": "Tepsi simgesinde başlat",
+  "settings.start_in_tray_hint":
+    "Uygulama pencere açmadan yalnızca tepsi simgesiyle başlar.",
+  "settings.close_to_tray": "Kapatınca arka planda kal",
+  "settings.close_to_tray_hint":
+    "Pencere kapatıldığında uygulama çalışmaya devam eder; çıkmak için tepsi menüsünü kullanın.",
+  "settings.autostart": "Oturum açılışında çalıştır",
+  "settings.autostart_hint": "Windows oturum açıldığında ADM kendiliğinden başlar.",
+  "settings.check_updates": "Açılışta güncelleme denetle",
+  "settings.check_updates_hint": "Yeni sürüm varsa bildirilir.",
+  "settings.check_now": "Şimdi denetle",
+  "settings.check_now_title": "Güncellemeyi hemen denetle",
+  "settings.checking": "Denetleniyor…",
+  "settings.update_current": "Sürüm {version} — güncel.",
+  "settings.update_available": "Yeni sürüm: {version}",
+  "settings.update_error": "Denetlenemedi: {error}",
+  "settings.update_last": "Son denetim: {time}",
+  "settings.update_never": "Henüz denetlenmedi",
+  "settings.update_download": "Güncellemeyi indir",
+  "settings.types_intro":
+    "Tarayıcıdan ve panodan yalnızca aşağıdaki uzantılar yakalanır. Hiçbir grup seçilmezse yakalama kapanır.",
+  "settings.types_groups": "Hazır gruplar",
+  "settings.types_custom": "Özel uzantılar",
+  "settings.types_custom_hint":
+    "Virgülle ayrılmış uzantılar (örn. torrent, parquet). Nokta gerekmez.",
+  "settings.types_custom_placeholder": "torrent, parquet",
+  "settings.types_preview": "Etkin uzantılar ({count})",
+  "settings.types_preview_empty": "Hiç uzantı seçilmedi — yakalama kapalı.",
+  "settings.browsers_intro":
+    "ADM, tarayıcıdaki indirmeleri yerel köprü üzerinden devralır. Eklenti kurulu değilse indirmeler tarayıcıda kalır.",
+  "settings.bridge_port": "Köprü portu",
+  "settings.bridge_port_hint":
+    "Değişiklikten sonra ADM yeniden başlatılmalıdır. Varsayılan: 48213.",
+  "settings.bridge_running": "127.0.0.1:{port} adresinde dinliyor",
+  "settings.bridge_stopped": "Köprü çalışmıyor",
+  "settings.bridge_browsers": "Bağlı tarayıcılar: {browsers}",
+  "settings.bridge_no_browser": "Henüz tarayıcı bağlanmadı",
+  "settings.plugin_folder": "Eklenti klasörü",
+  "settings.plugin_folder_hint":
+    "Eklenti dosyaları bu klasöre kopyalanır; tarayıcıya bu klasör gösterilir.",
+  "settings.wizard_open": "Kurulum sihirbazını aç",
+  "settings.browser_ready": "Eklenti dosyaları hazır",
+  "settings.browser_missing": "Eklenti dosyaları henüz kopyalanmadı",
+  "settings.video_intro":
+    "Video indirmeleri yt-dlp ile yapılır. Araçlar eksikse indirme başlamadan kurulabilir.",
+  "settings.site_login": "Site girişi",
+  "settings.site_login_hint":
+    "Yaş kısıtlı veya üyelere özel videolar için hesapla oturum açın; çerezler yt-dlp'ye verilir.",
+  "settings.site_login_open": "Giriş penceresini aç",
+  "settings.site_login_save": "Çerezleri kaydet ve kapat",
+  "settings.site_login_clear": "Çerezleri sil",
+  "settings.site_login_none": "Kayıtlı çerez yok.",
+  "settings.site_login_count": "{count} çerez kayıtlı",
+  "settings.site_login_domains": "Siteler: {domains}",
+  "settings.site_login_saved": "Çerezler kaydedildi ({count})",
+  "settings.tools": "Harici araçlar",
+  "settings.tools_hint":
+    "yt-dlp, ffmpeg ve deno GitHub'dan indirilip ADM klasörüne kurulur.",
+  "settings.tool_install": "Kur",
+  "settings.tool_reinstall": "Güncelle",
+  "settings.tool_installed": "Kurulu",
+  "settings.tool_missing": "Kurulu değil",
+  "settings.tool_version": "sürüm {version}",
+  "settings.ytdlp_path": "Özel yt-dlp yolu",
+  "settings.ytdlp_path_hint":
+    "Boş bırakılırsa PATH ve ADM araçlar klasörü kullanılır.",
+  "settings.ytdlp_path_placeholder": "C:\\araçlar\\yt-dlp.exe",
+  "settings.video_format": "Biçim seçici",
+  "settings.video_format_hint":
+    "Boş bırakılırsa aşağıdaki çözünürlük ve kapsayıcı kullanılır. Örn. `bv*+ba/b`.",
+  "settings.video_container": "Kapsayıcı",
+  "settings.video_max_height": "Azami çözünürlük",
+  "settings.format_preview": "Etkin argümanlar",
+  "settings.height.best": "En iyi",
+  "settings.height.audio_m4a": "Yalnızca ses (m4a)",
+  "settings.height.audio_mp3": "Yalnızca ses (mp3)",
+  "settings.height.p": "{height}p",
+  "settings.container.mp4": "MP4",
+  "settings.container.mkv": "MKV",
+  "settings.container.webm": "WebM",
+  "settings.container.original": "Özgün biçim",
+  "settings.section.dock": "Alt panel",
+  "settings.dock_graph": "Hız grafiği açık başlasın",
+  "settings.dock_graph_hint": "Durum çubuğundaki ▾ düğmesiyle de açılabilir.",
+  "settings.dock_log": "Olay günlüğü açık başlasın",
+  "settings.dock_log_hint": "Son 300 olay bellekte tutulur.",
+  "settings.section.about": "Uygulama",
+  "settings.about_version": "Sürüm {version}",
+  "settings.about_hint": "Rust + Tauri 2 + SolidJS · SQLite (WAL) · TR/EN",
+
+  // -----------------------------------------------------------------
+  // MC portu — depo günlük satırları
+  // -----------------------------------------------------------------
+  "log.bridge_connection": "Tarayıcı bağlantısı: {browser}",
+  "log.browser_files_ready": "Eklenti dosyaları hazır: {path}",
+  "log.tool_installed": "{tool} kuruldu (sürüm {version})",
+  "log.update_available": "Yeni sürüm mevcut: {version}",
+  "log.update_current": "Sürüm {version} güncel",
+  "log.update_failed": "Güncelleme denetlenemedi: {error}",
 };
 
 /**

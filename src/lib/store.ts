@@ -5,27 +5,36 @@
  * burada Rust tarafından yayınlanan gerçek zamanlı olaylar dinlenir ve
  * yalnızca değişen kayıt güncellenir.
  *
- * Görünüm IDM düzenine göre kenar çubuğundan sürülür: `view` ya bir **görev**
- * filtresi (İndiriliyor / Tamamlandı / …) ya bir **kategori** (Video / Ses /
- * …) tutar. Aynı anda ikisinden biri etkindir — IDM'de de kategori seçimi
- * görev seçiminin yerini alır.
+ * Görünüm MC düzenine göre kenar çubuğundan sürülür: `view` ya bir **görev**
+ * filtresi (İndiriliyor / Tamamlandı / Bitmeyen / …) ya bir **kategori**
+ * (Video / Ses / Resim / …) tutar. Aynı anda ikisinden biri etkindir —
+ * MC'de de kategori seçimi görev seçiminin yerini alır.
+ *
+ * Köprü durumu, araç kurulumu, güncelleme ve pano sorması da burada tutulur:
+ * hepsi `download://event` kanalından gelir ve birden fazla bileşen
+ * (durum çubuğu, ayarlar sekmeleri, sorma penceresi) tarafından okunur.
  */
 import { createStore, produce } from "solid-js/store";
 import { createSignal } from "solid-js";
 import {
+  bridgeStatus as readBridgeStatus,
   listDownloads,
   onDownloadEvent,
 } from "./api";
 import { onLocaleChange, t } from "./i18n";
 import {
+  CATEGORY_ORDER,
   categoryOf,
   statusLabel,
+  type BridgeStatus,
   type CategoryKey,
+  type ClipboardPrompt,
   type DownloadEvent,
   type DownloadItem,
   type DownloadStatus,
   type LogEntry,
   type SpeedSample,
+  type UpdateInfo,
 } from "./format";
 import { pushFeedback } from "./useFeedback";
 
@@ -33,9 +42,15 @@ import { pushFeedback } from "./useFeedback";
    Görünüm (kenar çubuğu filtreleri)
    ----------------------------------------------------------------- */
 
-/** Kenar çubuğundaki "Görevler" girdileri. */
+/**
+ * Kenar çubuğundaki görev girdileri.
+ *
+ * `unfinished` MC'nin "Unfinished" filtresidir: tamamlanmayan her şey
+ * (süren, kuyrukta, duraklatılmış, başarısız, iptal).
+ */
 export type TaskFilter =
   | "all"
+  | "unfinished"
   | "downloading"
   | "queued"
   | "paused"
@@ -48,26 +63,42 @@ export type View =
   | { kind: "task"; value: TaskFilter }
   | { kind: "category"; value: CategoryKey };
 
-/** Tüm görev filtreleri (sayaç sırasıyla). */
+/**
+ * Tüm görev filtreleri (sayaç sırasıyla).
+ *
+ * `all` ve `unfinished` kenar çubuğunda ayrı satırlardır; kalanlar
+ * ADM'nin ek durum filtreleridir.
+ */
 export const TASK_FILTERS: TaskFilter[] = [
+  "all",
+  "unfinished",
   "downloading",
   "queued",
   "paused",
   "completed",
   "failed",
   "cancelled",
-  "all",
 ];
 
-/** Tüm kategori filtreleri (sayaç sırasıyla). */
-export const CATEGORY_FILTERS: CategoryKey[] = [
-  "video",
-  "audio",
-  "program",
-  "archive",
-  "document",
-  "other",
-];
+/** Tüm kategori filtreleri (sayaç sırasıyla) — `format.CATEGORY_ORDER`. */
+export const CATEGORY_FILTERS: CategoryKey[] = CATEGORY_ORDER;
+
+/**
+ * Görev filtresi → sözlük anahtarı.
+ *
+ * Kenar çubuğu, araç çubuğu açılır listesi ve menü aynı haritayı kullanır;
+ * yeni bir filtre eklemek tek yerden yeter.
+ */
+export const TASK_LABEL_KEY: Record<TaskFilter, string> = {
+  all: "side.task.all",
+  unfinished: "side.task.unfinished",
+  downloading: "side.task.downloading",
+  queued: "side.task.queued",
+  paused: "side.task.paused",
+  completed: "side.task.completed",
+  failed: "side.task.failed",
+  cancelled: "side.task.cancelled",
+};
 
 /* -----------------------------------------------------------------
    Durum
@@ -204,6 +235,16 @@ function isRunning(item: DownloadItem): boolean {
   return item.status === "Queued" || item.status === "Downloading";
 }
 
+/**
+ * Tek bir kaydı canlı durumdan okur.
+ *
+ * Detay penceresi `propertiesItem()`'daki **kopyayı** değil, buradan gelen
+ * güncel kaydı gösterir; böylece ilerleme akarken pencere de yenilenir.
+ */
+export function itemById(id: number): DownloadItem | undefined {
+  return state.byId[id];
+}
+
 /** Anlık hız (MB/s). */
 export function itemSpeed(id: number): number {
   return state.speed[id] ?? 0;
@@ -289,6 +330,8 @@ function matchesTask(item: DownloadItem, filter: TaskFilter): boolean {
   switch (filter) {
     case "all":
       return true;
+    case "unfinished":
+      return item.status !== "Completed";
     case "downloading":
       return item.status === "Downloading";
     case "queued":
@@ -348,6 +391,7 @@ export type CountMap<T extends string> = Record<T, number>;
 export function taskCounts(): CountMap<TaskFilter> {
   const counts = {
     all: 0,
+    unfinished: 0,
     downloading: 0,
     queued: 0,
     paused: 0,
@@ -358,6 +402,7 @@ export function taskCounts(): CountMap<TaskFilter> {
 
   for (const item of allItems()) {
     counts.all += 1;
+    if (item.status !== "Completed") counts.unfinished += 1;
     switch (item.status) {
       case "Downloading":
         counts.downloading += 1;
@@ -384,14 +429,9 @@ export function taskCounts(): CountMap<TaskFilter> {
 
 /** Her kategori için kayıt sayısı. */
 export function categoryCounts(): CountMap<CategoryKey> {
-  const counts = {
-    video: 0,
-    audio: 0,
-    program: 0,
-    archive: 0,
-    document: 0,
-    other: 0,
-  } satisfies CountMap<CategoryKey>;
+  const counts = Object.fromEntries(
+    CATEGORY_ORDER.map((c) => [c, 0]),
+  ) as CountMap<CategoryKey>;
 
   for (const item of allItems()) {
     counts[categoryOf(item.fileName)] += 1;
@@ -641,6 +681,67 @@ function itemName(id: number): string {
 /** Yükleme tamamlandı mı? */
 export { ready, logs, state };
 
+/* -----------------------------------------------------------------
+   Köprü · araç kurulumu · güncelleme · pano (MC portu)
+   ----------------------------------------------------------------- */
+
+/**
+ * Tarayıcı köprüsünün son bilinen durumu.
+ *
+ * `bridge` olayı her değişimde, `initStore` açılışta bir kez günceller.
+ */
+const [bridge, setBridge] = createSignal<BridgeStatus>({
+  running: false,
+  port: 0,
+  browsers: [],
+});
+export { bridge };
+
+/** Köprünün durumu (durum çubuğu göstergesi). */
+export { bridge as bridgeStatus };
+
+/** Köprü çalışıyor mu? */
+export function bridgeRunning(): boolean {
+  return bridge().running;
+}
+
+/**
+ * Harici araç kurulum ilerlemesi (`ytdlp`/`ffmpeg`/`deno` → 0..1).
+ *
+ * `started` olayında `0`, `progress` olayında gelen kesir, `installed` ve
+ * `failed` olaylarında kayıt silinir.
+ */
+const [toolProgress, setToolProgress] = createStore<Record<string, number>>({});
+export { toolProgress };
+
+/** Araç başına son bilgi satırı (kurulum günlüğü). */
+const [toolMessage, setToolMessage] = createStore<Record<string, string>>({});
+export { toolMessage };
+
+/**
+ * Araç durumu tazeleme sayacı.
+ *
+ * Ayarlar ▸ Video sekmesi `tool_status` kaynağını bu sinyale bağlar; bir
+ * kurulum tamamlandığında sayaç artar ve tablo kendiliğinden yenilenir.
+ */
+const [toolRevision, setToolRevision] = createSignal(0);
+export { toolRevision };
+
+/** Güncelleme denetiminin sonucu (`null` = henüz denetlenmedi). */
+const [updateInfo, setUpdateInfo] = createSignal<UpdateInfo | null>(null);
+export { updateInfo };
+
+/**
+ * Panoda bulunan bağlantı sorusu (`null` = kapalı).
+ *
+ * `clipboard` olayı doldurur; `ClipboardPromptDialog` yanıt verince
+ * `answerClipboardPrompt()` çağrılır ve sinyal temizlenir.
+ */
+const [clipboardPrompt, setClipboardPrompt] = createSignal<ClipboardPrompt | null>(
+  null,
+);
+export { clipboardPrompt, setClipboardPrompt };
+
 /**
  * Depoyu başlatır: ilk veriyi yükler ve olaylara abone olur.
  *
@@ -659,6 +760,13 @@ export async function initStore(): Promise<void> {
     pushFeedback("error", t("log.records_load_failed", { error: errorText(e) }));
   }
 
+  // Köprü durumu olayla gelmeden önce bir kez okunur (durum çubuğu).
+  try {
+    setBridge(await readBridgeStatus());
+  } catch {
+    // Köprü kapalıysa da uygulama çalışır; gösterge "kapalı" kalır.
+  }
+
   await onDownloadEvent((ev) => {
     switch (ev.kind) {
       case "progress":
@@ -670,10 +778,93 @@ export async function initStore(): Promise<void> {
       case "listChanged":
         void reloadList();
         break;
+      case "log":
+        pushLog(normalizeLevel(ev.level), ev.message, ev.downloadId);
+        break;
+      case "bridge":
+        setBridge((prev) => ({
+          running: ev.running,
+          port: ev.port,
+          browsers: prev.browsers,
+        }));
+        if (ev.error) pushLog("error", ev.error, null);
+        break;
+      case "bridgeConnection":
+        setBridge((prev) =>
+          prev.browsers.includes(ev.browser)
+            ? prev
+            : { ...prev, browsers: [...prev.browsers, ev.browser] },
+        );
+        pushLog("info", t("log.bridge_connection", { browser: ev.browser }), null);
+        break;
+      case "tool":
+        applyToolEvent(ev);
+        break;
+      case "update":
+        setUpdateInfo(ev);
+        pushLog(
+          ev.error ? "error" : ev.latest ? "info" : "success",
+          ev.error
+            ? t("log.update_failed", { error: ev.error })
+            : ev.latest
+              ? t("log.update_available", { version: ev.latest })
+              : t("log.update_current", { version: ev.current }),
+          null,
+        );
+        break;
+      case "clipboard":
+        // Rust tarafı `log.clipboard_detected` satırını zaten yazıyor;
+        // burada yalnızca soru arayüze taşınır (çift log olmasın).
+        setClipboardPrompt({
+          urls: ev.urls,
+          source: ev.source,
+          preferVideo: ev.preferVideo,
+        });
+        break;
     }
   });
 
   setReady(true);
+}
+
+/** Araç kurulum olayını depoya uygular. */
+function applyToolEvent(ev: Extract<DownloadEvent, { kind: "tool" }>) {
+  switch (ev.event) {
+    case "started":
+      setToolProgress(ev.tool, 0);
+      setToolMessage(ev.tool, t("tool.working"));
+      break;
+    case "progress":
+      setToolProgress(ev.tool, ev.fraction);
+      break;
+    case "message":
+      setToolMessage(ev.tool, ev.text);
+      break;
+    case "installed":
+      setToolProgress(ev.tool, undefined as unknown as number);
+      setToolMessage(ev.tool, t("tool.installed", { version: ev.version }));
+      setToolRevision((n) => n + 1);
+      pushLog("success", t("log.tool_installed", { tool: ev.tool, version: ev.version }), null);
+      break;
+    case "failed":
+      setToolProgress(ev.tool, undefined as unknown as number);
+      setToolMessage(ev.tool, ev.error);
+      setToolRevision((n) => n + 1);
+      pushLog("error", t("tool.failed", { error: ev.error }), null);
+      break;
+  }
+}
+
+/** Log seviyesini arayüzün dört seviyesine sıkıştırır. */
+function normalizeLevel(level: string): "info" | "success" | "warn" | "error" {
+  switch (level) {
+    case "success":
+    case "warn":
+    case "error":
+      return level;
+    default:
+      return "info";
+  }
 }
 
 /** Listeyi veritabanından yeniden okur. */

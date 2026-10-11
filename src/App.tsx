@@ -1,19 +1,22 @@
 /**
- * Uygulama kabuğu — Free Download Manager düzeni.
+ * Uygulama kabuğu — MC (MC Download Manager) düzeni.
  *
  * Sütunlar (yukarıdan aşağı):
  *
  * ```text
  * TitleBar   logo · uygulama adı · pencere düğmeleri · TR/EN
- * Toolbar    filtre ▾ · sıralama ▾ ········· İndirme ekle · ara · ≡ menü
- * Tablo      # · onay · Ad · Boyut · Durum · ⋮ · İndirme · Kalan · Ekleme
- * AltDock    hız grafiği / günlük (durum çubuğundaki ▾ ile açılır)
- * StatusBar  ana anahtar · hız · kalite rozeti · boş alan · seçili ad · ▾
+ * ── app-body ────────────────────────────────────────────────
+ * Sidebar    Tümü · 7 kategori (rozetli) · Biten / Bitmeyen
+ * content    Toolbar + Tablo (+ AltDock)  |  Ayarlar paneli
+ * ────────────────────────────────────────────────────────────
+ * StatusBar  ana anahtar · hız · kalite · boş alan · bitmeyen ·
+ *            köprü göstergesi · seçili ad · ▾
  * ```
  *
- * Kenar çubuğu ve menü çubuğu satırı kaldırıldı: filtreler araç çubuğundaki
- * açılır listeye, menüler ≡ paneline taşındı. Tüm durum `src/lib/store.ts`
- * üzerinden yönetilir; klavye kısayolları da burada toplanır.
+ * Kenar çubuğu MC düzeninin sol sütunudur; görev filtrelerinin tamamı ve
+ * menüler araç çubuğundaki açılır listeye / ≡ paneline taşındı. Tüm durum
+ * `src/lib/store.ts` üzerinden yönetilir; klavye kısayolları da burada
+ * toplanır.
  */
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { initStore, selectedItems, toggleSelectAll } from "./lib/store";
@@ -37,17 +40,20 @@ import {
   settingsOpen,
 } from "./lib/ui";
 import { bulkCancel, bulkPause, bulkResume, deleteSelected } from "./lib/bulk";
-import { confirm } from "./lib/api";
+import { answerClipboardPrompt, confirm } from "./lib/api";
+import { clipboardPrompt, setClipboardPrompt } from "./lib/store";
 import TitleBar from "./components/TitleBar";
 import Toolbar from "./components/Toolbar";
 import DownloadTable from "./components/DownloadTable";
+import Sidebar from "./components/Sidebar";
 import BottomDock from "./components/BottomDock";
 import StatusBar from "./components/StatusBar";
 import SettingsPanel from "./components/SettingsPanel";
 import RowContextMenu from "./components/RowContextMenu";
 import AboutDialog from "./components/AboutDialog";
 import BrowserSetupDialog from "./components/BrowserSetupDialog";
-import PropertiesDialog from "./components/PropertiesDialog";
+import ClipboardPromptDialog from "./components/ClipboardPromptDialog";
+import DownloadDetailDialog from "./components/DownloadDetailDialog";
 import NewDownloadDialog from "./components/NewDownloadDialog";
 
 /** `mount` sonrası ayarlar hazır mı? (kabuk, o ana kadar çizilmez) */
@@ -94,7 +100,12 @@ export default function App() {
     function onKeyDown(event: KeyboardEvent) {
       // `Escape` her zaman çalışır: açık pencere / menüyü kapatır.
       if (event.key === "Escape") {
-        if (contextMenu()) setContextMenu(null);
+        if (clipboardPrompt()) {
+          // Soru kapatılırken izleyiciye "yanıtlandı" bildirilir; aksi halde
+          // Rust tarafı yeni kopyalamalar için susar.
+          setClipboardPrompt(null);
+          void answerClipboardPrompt().catch(() => undefined);
+        } else if (contextMenu()) setContextMenu(null);
         else if (addDialogOpen()) setAddDialogOpen(false);
         else if (aboutOpen()) setAboutOpen(false);
         else if (propertiesItem()) setPropertiesItem(null);
@@ -171,6 +182,9 @@ export default function App() {
         <Toolbar />
 
         <div class="app-body">
+          {/* Kenar çubuğu: Tümü · 7 kategori · Biten / Bitmeyen (MC düzeni) */}
+          <Sidebar />
+
           <main class="content">
             {/* Ayarlar menüsü tablonun yerini alır. */}
             <Show when={!settingsOpen()} fallback={<SettingsPanel />}>
@@ -190,7 +204,8 @@ export default function App() {
         <NewDownloadDialog />
         <AboutDialog />
         <BrowserSetupDialog />
-        <PropertiesDialog />
+        <ClipboardPromptDialog />
+        <DownloadDetailDialog />
       </Show>
     </div>
   );

@@ -784,6 +784,128 @@ pub fn clear_site_cookies(app: AppHandle) -> Res<()> {
     Ok(())
 }
 
+/// Uygulama içi giriş penceresinin etiketi (tek örnek).
+const SITE_LOGIN_LABEL: &str = "site-login";
+
+/// MC `SiteLoginManager.openLogin` varsayılanı: Google hesabı → YouTube.
+const SITE_LOGIN_URL: &str =
+    "https://accounts.google.com/ServiceLogin?continue=https://www.youtube.com/";
+
+/// Uygulama içi site girişi penceresini açar (MC `SiteLoginManager` portu).
+///
+/// Pencere zaten açıksa öne getirilir ve verilen adrese yönlendirilir.
+///
+/// **Neden senkron komut?** Tauri'de `async` olmayan komutlar IPC işleyicisi
+/// içinde, yani ana iş parçacığında çalışır; pencere oluşturmak da ana iş
+/// parçacığı ister. Çerezler ise burada **okunmaz** — WebView2'de ana iş
+/// parçacığından `cookies()` çağrısı kilitlenir (tauri-apps/wry#583), bu
+/// yüzden okuma ayrı bir `async` komuta (`save_site_login_cookies`) bırakıldı.
+#[tauri::command]
+pub fn open_site_login(app: AppHandle, url: Option<String>) -> Res<()> {
+    let target = url.unwrap_or_else(|| SITE_LOGIN_URL.to_string());
+    let parsed = target
+        .parse::<tauri::Url>()
+        .map_err(|e| i18n::t("err.site_login_open", &[&e.to_string()]))?;
+
+    if let Some(window) = app.get_webview_window(SITE_LOGIN_LABEL) {
+        let _ = window.navigate(parsed);
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        SITE_LOGIN_LABEL,
+        tauri::WebviewUrl::External(parsed),
+    )
+    .title(i18n::t("site_login.title", &[]))
+    .inner_size(960.0, 700.0)
+    .build()
+    .map_err(|e| i18n::t("err.site_login_open", &[&e.to_string()]))?;
+
+    Ok(())
+}
+
+/// Giriş penceresinin çerezlerini Netscape dosyasına yazar, pencereyi kapatır.
+///
+/// WebView2 çerez deposu tüm pencerelerce paylaşıldığı için çerezler giriş
+/// penceresinin kendi bağlamından okunur. Chromium alan adı çerezlerini
+/// `.youtube.com` gibi noktalı tutar, ancak `cookie` sandığının `domain()`
+/// erişicisi bu noktayı **kaldırır**; hangi çerezlerin alt alan adlarına da
+/// geçerli olduğu pencere adresiyle karşılaştırılarak geri kazanılır
+/// (bkz. `cookie_row`).
+#[tauri::command]
+pub async fn save_site_login_cookies(app: AppHandle) -> Res<usize> {
+    let window = app
+        .get_webview_window(SITE_LOGIN_LABEL)
+        .ok_or_else(|| i18n::t("err.site_login_missing", &[]))?;
+
+    // Pencerenin son adresi: "host-only" çerezleri ayırt etmek için.
+    let host = window
+        .url()
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+
+    let cookies = window
+        .cookies()
+        .map_err(|e| i18n::t("err.site_login_cookies", &[&e.to_string()]))?;
+
+    let rows: Vec<crate::site_login::CookieRow> = cookies
+        .iter()
+        .filter_map(|c| cookie_row(c, host.as_deref()))
+        .collect();
+
+    if rows.is_empty() {
+        return Err(i18n::t("err.site_cookies_empty", &[]));
+    }
+
+    let count = rows.len();
+    crate::site_login::write_cookies(&rows)
+        .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
+
+    // Çerezler yazıldıktan sonra pencere kapanır (MC'deki "Save Cookies").
+    let _ = window.close();
+
+    emit_log(
+        &app,
+        "info",
+        i18n::t("log.cookie_written", &[&count.to_string()]),
+    );
+    Ok(count)
+}
+
+/// WebView2 çerezini Netscape satırına çevirir.
+///
+/// Alan adı çerezleri alt alan adlarına da geçerli olduğu için Netscape
+/// biçiminde noktayla (`.youtube.com`) ve `TRUE` bayrağıyla yazılmalıdır.
+/// `cookie` sandığı noktayı attığı için karar pencere adresine göre verilir:
+/// alan adı pencere adresinden **farklıysa** çerez alan adı geneli içindir.
+/// Adres okunamazsa noktasız yazılır — yt-dlp yine de tam adla eşleştirir.
+fn cookie_row(
+    cookie: &tauri::webview::Cookie<'static>,
+    host: Option<&str>,
+) -> Option<crate::site_login::CookieRow> {
+    let domain = cookie.domain()?;
+    let is_domain_cookie = host.is_some_and(|h| !h.eq_ignore_ascii_case(domain));
+
+    Some(crate::site_login::CookieRow {
+        domain: if is_domain_cookie {
+            format!(".{domain}")
+        } else {
+            domain.to_string()
+        },
+        path: cookie.path().unwrap_or("/").to_string(),
+        secure: cookie.secure().unwrap_or(false),
+        expiration_date: cookie
+            .expires_datetime()
+            .map(|t| t.unix_timestamp())
+            .unwrap_or(0),
+        name: cookie.name().to_string(),
+        value: cookie.value().to_string(),
+    })
+}
+
 // ---------------------------------------------------------------------
 // Güncelleme
 // ---------------------------------------------------------------------

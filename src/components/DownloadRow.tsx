@@ -1,13 +1,13 @@
 /**
  * İndirme tablosunun tek satırı.
  *
- * FDM düzeni: `#` · onay kutusu · Ad · Boyut · Durum · `⋮` · İndirme ·
- * Kalan · Ekleme. Satır içi düğme yığını yok — tüm eylemler `⋮` menüsünde
- * (ve çift tıkta) toplanır; bu görseldeki sakin görünümü korur.
+ * MC düzeni: `#` · onay kutusu · Ad (+ kategori etiketi) · Boyut · Durum
+ * (etiket + SegmentBar + alt metin) · `⋮` · Hız · Kalan · Ekleme. Satır içi
+ * düğme yığını yok — tüm eylemler `⋮` menüsünde (ve çift tıkta) toplanır;
+ * bu görseldeki sakin görünümü korur.
  *
- * İlerleme ayrı bir sütun değil, dosya adının altında 2px'lik ince bir
- * çizgi olarak gösterilir: satır yüksekliği sabit kalır, kanal dağılımı
- * gösterilemese de yüzde her zaman okunur.
+ * İlerleme MC'nin kanal bazlı `SegmentBar`'ı ile çizilir; Durum sütununun
+ * alt metni hatayı, yt-dlp fazını ya da yüzdeyi gösterir.
  *
  * Etkileşim:
  * * Sol tık — satırı seç · Ctrl/Cmd — çevir · Shift — aralık
@@ -21,6 +21,8 @@ import { itemSpeed, selectRow, state } from "../lib/store";
 import { errorText, pushFeedback } from "../lib/useFeedback";
 import { setContextMenu } from "../lib/ui";
 import {
+  categoryLabel,
+  categoryOf,
   formatBytes,
   formatEta,
   formatNumber,
@@ -32,6 +34,7 @@ import {
 } from "../lib/format";
 import { t } from "../lib/i18n";
 import FileIcon from "./FileIcon";
+import SegmentBar from "./SegmentBar";
 
 interface Props {
   /** Görüntülenecek kayıt. */
@@ -64,12 +67,26 @@ export default function DownloadRow(props: Props) {
   const sizeUnknown = createMemo(() => props.item.totalBytes === 0);
   const selected = () => state.selected[props.item.id] === true;
 
-  /** İnce ilerleme çizgisinin dolgu sınıfı (duruma göre renk). */
-  const barClass = createMemo(() => {
-    if (done()) return "prog-inline-done";
-    if (props.item.status === "Failed") return "prog-inline-failed";
-    if (props.item.status === "Paused") return "prog-inline-paused";
-    return "";
+  /** Dosyanın kategorisi (ikon + alt metin). */
+  const category = createMemo(() => categoryOf(props.item.fileName));
+
+  /**
+   * Durum sütununun alt satırı.
+   *
+   * Öncelik sırası MC'nin `StatusCell`'iyle aynıdır: hata → faz metni
+   * (yt-dlp "Video indiriliyor…" gibi) → yüzde → kanal sayısı.
+   */
+  const subtitle = createMemo(() => {
+    const item = props.item;
+    if (item.status === "Failed" && item.errorMessage) return item.errorMessage;
+    if (item.stage) return item.stage;
+    if (item.status === "Completed") return t("row.completed_sub");
+    if (sizeUnknown()) return t("row.size_unknown");
+    const pct = `${formatNumber(percent(), 0)}%`;
+    if (item.channelCount > 1) {
+      return `${pct} · ${t("row.channels_title", { count: item.channelCount })}`;
+    }
+    return pct;
   });
 
   /** Onay kutusu işaretini çevirir (satır seçimini değiştirir). */
@@ -141,7 +158,7 @@ export default function DownloadRow(props: Props) {
         </button>
       </div>
 
-      {/* Dosya adı + ince ilerleme çizgisi */}
+      {/* Dosya adı + kategori alt metni (MC düzeni) */}
       <div class="dlg-cell">
         <div class="file-cell">
           <FileIcon name={props.item.fileName} />
@@ -149,33 +166,19 @@ export default function DownloadRow(props: Props) {
             <span class="file-name" title={props.item.filePath}>
               {props.item.fileName}
             </span>
-
-            {/* İlerleme çizgisi yalnızca süren işlerde anlamlıdır; tamamlanan
-                satırda %100 çizgi gürültüden başka bir bilgi vermez. */}
-            <Show
-              when={!done() && !sizeUnknown()}
-              fallback={
-                <Show when={props.item.errorMessage}>
-                  <span class="file-error" title={props.item.errorMessage ?? undefined}>
-                    {props.item.errorMessage}
-                  </span>
-                </Show>
-              }
-            >
-              <div
-                class={`prog-inline ${barClass()}`}
-                role="progressbar"
-                aria-valuenow={Math.round(percent())}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label={t("row.progress_aria")}
-                title={t("row.channels_title", {
-                  count: props.item.channelCount,
-                })}
-              >
-                <i style={{ width: `${percent()}%` }} />
-              </div>
-            </Show>
+            <span class="file-sub" title={props.item.filePath}>
+              <span class={`cat-tag cat-tag-${category()}`}>{categoryLabel(category())}</span>
+              <Show when={props.item.kind === "video"}>
+                <span class="kind-tag" title={t("row.kind_video_title")}>
+                  {t("row.kind_video")}
+                </span>
+              </Show>
+              <Show when={props.item.errorMessage}>
+                <span class="file-error" title={props.item.errorMessage ?? undefined}>
+                  {props.item.errorMessage}
+                </span>
+              </Show>
+            </span>
           </div>
         </div>
       </div>
@@ -188,15 +191,25 @@ export default function DownloadRow(props: Props) {
         {sizeUnknown() ? "—" : formatBytes(props.item.totalBytes)}
       </div>
 
-      {/* Durum + yüzde */}
+      {/* Durum: etiket + parça çubuğu + yüzde/faz metni (MC düzeni) */}
       <div class="dlg-cell">
         <div class="status-stack">
           <span class={`status-text status-${props.item.status.toLowerCase()}`}>
             {statusLabel(props.item.status)}
           </span>
-          <Show when={!done() && !sizeUnknown()}>
-            <span class="status-pct">{formatNumber(percent(), 0)}%</span>
-          </Show>
+          <SegmentBar
+            channels={props.item.channels}
+            totalBytes={props.item.totalBytes}
+            downloadedBytes={props.item.downloadedBytes}
+            done={done()}
+            failed={props.item.status === "Failed"}
+            paused={props.item.status === "Paused"}
+            height={4}
+            label={t("row.progress_aria")}
+          />
+          <span class="status-sub" title={subtitle()}>
+            {subtitle()}
+          </span>
         </div>
       </div>
 

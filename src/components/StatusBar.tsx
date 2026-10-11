@@ -2,17 +2,20 @@
  * Alt durum çubuğu.
  *
  * Soldan sağa: ana açık/kapalı anahtarı (tüm indirmeleri duraklatır ya da
- * sürdürür) · indirme hızı · bağlantı kalitesi rozeti · boş alan ·
- * seçili kaydın adı · alt panel açma düğmesi.
+ * sürdürür) · indirme hızı · bağlantı kalitesi rozeti · boş alan · bitmeyen
+ * sayısı · **köprü göstergesi** · seçili kaydın adı · alt panel açma düğmesi.
  *
  * "YÜKSEK" rozeti FDM'deki bağlantı kalitesi göstergesinin karşılığıdır;
  * burada **ölçülen** anlık hıza göre üç kademe belirlenir. Sahte bir değer
  * göstermektense hız gerçeğini yansıtmak daha doğrudur.
+ *
+ * Köprü göstergesi MC'nin tarayıcı bağlantı noktasıdır: yeşil nokta köprünün
+ * dinlediğini, ipucu metni bağlı tarayıcıları gösterir.
  */
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { diskFreeSpace } from "../lib/api";
 import { bulkPause, bulkResume } from "../lib/bulk";
-import { selectedItems, totals } from "../lib/store";
+import { bridge, selectedItems, taskCounts, totals } from "../lib/store";
 import { settings } from "../lib/settings";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { errorText, pushFeedback } from "../lib/useFeedback";
@@ -58,6 +61,19 @@ export default function StatusBar() {
 
   /** Anahtar: çalışan indirme varsa "ON" (duraklatılabilir), yoksa "OFF". */
   const masterOn = createMemo(() => stats().activeCount > 0);
+
+  /** Bitmeyen (tamamlanmayan) indirme sayısı — MC "Unfinished". */
+  const unfinished = createMemo(() => taskCounts().unfinished);
+
+  /** Köprü ipucu metni: bağlı tarayıcılar ya da "henüz bağlanmadı". */
+  const bridgeHint = createMemo(() => {
+    const status = bridge();
+    const browsers = status.browsers.join(", ");
+    return [
+      t("sb.bridge_title", { port: status.port }),
+      browsers ? t("sb.bridge_browsers", { browsers }) : t("sb.bridge_none"),
+    ].join(" · ");
+  });
 
   async function onToggleMaster() {
     try {
@@ -136,6 +152,20 @@ export default function StatusBar() {
           {formatBytes(freeSpace())} {t("sb.free")}
         </span>
       </Show>
+
+      {/* Bitmeyen sayısı (MC "Unfinished") */}
+      <span class="sb-speeds" title={t("sb.unfinished_title")}>
+        {t("sb.unfinished", { count: unfinished() })}
+      </span>
+
+      {/* Köprü göstergesi (MC tarayıcı bağlantısı) */}
+      <span class="sb-bridge" title={bridgeHint()}>
+        <span
+          class={`bridge-dot ${bridge().running ? "bridge-dot-on" : "bridge-dot-off"}`}
+          aria-hidden="true"
+        />
+        {bridge().running ? t("sb.bridge_on") : t("sb.bridge_off")}
+      </span>
 
       <span class="sb-spacer" />
 

@@ -1,5 +1,5 @@
 /**
- * İndirme tablosu — IDM'in ana grid listview'i.
+ * İndirme tablosu — MC `ContentView` grid portu.
  *
  * Sabit ızgaralı bir `<div>` tablosu: satır sayısı az olduğundan yarım bin
  * satırlık ölçek performansı gerekmiyor, ayrıca `<table>` ile klavye gezinme
@@ -45,7 +45,7 @@ export default function DownloadTable() {
 
   return (
     <div class="table-wrap">
-      {/* Sütun başlıkları — FDM sırası. Hücre sayısı ızgaradaki sütun
+      {/* Sütun başlıkları — MC sırası. Hücre sayısı ızgaradaki sütun
           sayısıyla (9) birebir aynı olmalıdır; bir hücre eksikse tüm
           başlıklar bir sütun sola kayar. */}
       <div class="dlg-head" role="row">

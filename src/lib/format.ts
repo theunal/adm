@@ -33,7 +33,16 @@ export interface SpeedSample {
   speedMbps: number;
 }
 
-/** Bir indirme kaydı. */
+/** Bir indirmenin türü — MC `DownloadKind` portu. */
+export type DownloadKind = "file" | "video";
+
+/**
+ * Bir indirme kaydı.
+ *
+ * `kind`, `stage`, `log`… alanları MC portuyla eklendi: `video` türündeki
+ * kayıtlar motor yerine yt-dlp ile indirilir ve detay penceresi ham günlüğü
+ * gösterir.
+ */
 export interface DownloadItem {
   id: number;
   url: string;
@@ -49,9 +58,83 @@ export interface DownloadItem {
   speedMbps: number;
   errorMessage: string | null;
   channels: ChannelState[];
+
+  /** Dosya mı, yt-dlp videosu mu? */
+  kind: DownloadKind;
+  /** Sunucu `Range` destekliyor mu (detay penceresi). */
+  supportsRanges: boolean;
+  /** Uzantıdan gelen ek başlıklar (`[ad, değer]` çiftleri). */
+  headers: [string, string][];
+  /** Uzantıdan gelen çerezlerin yazıldığı Netscape dosyası. */
+  cookieFile: string | null;
+  /** Tamamlandığında dosyanın nihai yolu (kategori klasörü dahil). */
+  finalPath: string | null;
+  /** yt-dlp faz metni ("Video indiriliyor…"). */
+  stage: string;
+  /** yt-dlp ham çıktısı (detay penceresindeki günlük). */
+  log: string;
 }
 
-/** Manager'ın arayüze yayınladığı olaylar. */
+/** Harici araç kimlikleri (`tools::Tool::as_str` ile birebir). */
+export type ToolId = "ytdlp" | "ffmpeg" | "deno";
+
+/**
+ * Harici araç kurulum olayı.
+ *
+ * Ayırt edici alan `event`'tir, `kind` **değil**: Rust tarafında bu olay
+ * `DownloadEvent::Tool` içinde iç içe serileştirilir ve dış enum zaten
+ * `kind` etiketini yazar (bkz. `tools::ToolEvent`).
+ */
+export type ToolEvent =
+  | { event: "started"; tool: string }
+  | { event: "progress"; tool: string; fraction: number }
+  | { event: "message"; tool: string; text: string }
+  | { event: "installed"; tool: string; version: string }
+  | { event: "failed"; tool: string; error: string };
+
+/**
+ * Tarayıcı köprüsünün çalışma durumu (durum çubuğu göstergesi).
+ *
+ * `bridge` olayı ve `bridge_status` komutu aynı biçimi paylaşır.
+ */
+export interface BridgeStatus {
+  running: boolean;
+  port: number;
+  /** Köprüye bağlanmış tarayıcılar (son görülme sırasıyla). */
+  browsers: string[];
+}
+
+/** Güncelleme denetiminin sonucu (`update` olayı). */
+export interface UpdateInfo {
+  /** Kurulu sürüm. */
+  current: string;
+  /** Yeni sürüm (yoksa güncel). */
+  latest: string | null;
+  /** Sürüm notları sayfası. */
+  pageUrl: string | null;
+  /** Sürüm notları (varsa). */
+  notes: string | null;
+  /** İndirme adresi (ADM kendi indirmesiyle indirir). */
+  dmgUrl: string | null;
+  /** Denetim hatası (yoksa `null`). */
+  error: string | null;
+}
+
+/** Panoda bulunan bağlantılar için sorulan soru. */
+export interface ClipboardPrompt {
+  urls: string[];
+  /** Kaynak: pano izleme mi, yapıştırma mı? */
+  source: string;
+  /** Tümü video sayfası gibi görünüyorsa önce "video" seçeneği sunulur. */
+  preferVideo: boolean;
+}
+
+/**
+ * Manager'ın arayüze yayınladığı olaylar.
+ *
+ * Her varyant Rust `DownloadEvent`'iyle birebir eşleşir (`kind` etiketi
+ * `serde(tag = "kind", rename_all = "camelCase")` ile üretilir).
+ */
 export type DownloadEvent =
   | {
       kind: "progress";
@@ -64,6 +147,8 @@ export type DownloadEvent =
       speedHistory: SpeedSample[];
       errorMessage: string | null;
       phase: string;
+      stage: string;
+      log: string | null;
     }
   | { kind: "completed"; id: number; status: DownloadStatus }
   | { kind: "listChanged" }
@@ -72,7 +157,20 @@ export type DownloadEvent =
       level: string;
       message: string;
       downloadId: number | null;
-    };
+    }
+  | { kind: "bridge"; running: boolean; port: number; error: string | null }
+  | { kind: "bridgeConnection"; browser: string }
+  | ({ kind: "tool" } & ToolEvent)
+  | {
+      kind: "update";
+      current: string;
+      latest: string | null;
+      pageUrl: string | null;
+      notes: string | null;
+      dmgUrl: string | null;
+      error: string | null;
+    }
+  | ({ kind: "clipboard" } & ClipboardPrompt);
 
 /** Log satırı. */
 export interface LogEntry {
@@ -285,47 +383,81 @@ export function checkDownloadUrl(raw: string): UrlCheck {
    Dosya sınıflandırması (kenar çubuğu kategorileri + tablo ikonu)
    ----------------------------------------------------------------- */
 
-/** Kenar çubuğundaki kategori kutuları (IDM "Categories" bölümü). */
+/**
+ * MC'nin yedi kategorisi (`categories::Category` ile birebir).
+ *
+ * Kenar çubuğu filtreleri, tablodaki kategori alt metni ve ayarlardaki
+ * yakalama grupları bu taksonomiyi paylaşır.
+ */
 export type CategoryKey =
+  | "image"
+  | "music"
   | "video"
-  | "audio"
-  | "program"
-  | "archive"
+  | "apps"
   | "document"
+  | "compressed"
   | "other";
 
+/** Kenar çubuğu ve tablo sırası (Rust `Category::all()` ile aynı). */
+export const CATEGORY_ORDER: CategoryKey[] = [
+  "image",
+  "music",
+  "video",
+  "apps",
+  "document",
+  "compressed",
+  "other",
+];
+
 /**
- * Bir indirmenin uzantısına göre arayüz kategorisi.
+ * Uzantı tablosu — Rust `categories::TABLE` portu.
  *
- * `settings.rs` yalnızca **hedef klasörü** çözer (Video / Ses / Diğer /
- * Genel); buradaki liste daha ayrıntılıdır ve yalnızca **görsel gruplama**
- * içindir. İki liste bağımsızdır: ayarlarda kategori klasörü değişse bile tablo
- * ikonu değişmez.
+ * Sıra önemlidir: ilk eşleşen kategori kazanır, `other` tabloda yoktur ve
+ * hiçbir gruba girmeyen uzantılar oraya düşer.
  */
-const VIDEO_EXT = new Set([
-  "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg",
-  "m2ts", "ts", "3gp", "rmvb", "ogv", "vob", "mts", "m2v", "divx", "mp4v",
-]);
-
-const AUDIO_EXT = new Set([
-  "mp3", "flac", "wav", "aac", "ogg", "oga", "m4a", "wma", "opus", "alac",
-  "aiff", "ape", "mid", "midi", "dsf", "dff", "amr", "mka",
-]);
-
-const PROGRAM_EXT = new Set([
-  "exe", "msi", "apk", "dmg", "deb", "rpm", "appimage", "bat", "cmd", "com",
-  "jar", "msu", "pkg", "run", "sh", "app",
-]);
-
-const ARCHIVE_EXT = new Set([
-  "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "iso", "cbz",
-  "cbr", "wim", "cab", "arj", "lzh", "z",
-]);
-
-const DOCUMENT_EXT = new Set([
-  "pdf", "epub", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf",
-  "odt", "ods", "csv", "md", "djvu", "mobi", "chm", "html", "htm",
-]);
+const CATEGORY_TABLE: [CategoryKey, Set<string>][] = [
+  [
+    "image",
+    new Set([
+      "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif",
+      "svg", "psd", "ai", "raw", "cr2", "nef", "ico",
+    ]),
+  ],
+  [
+    "music",
+    new Set([
+      "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma", "aiff", "alac",
+    ]),
+  ],
+  [
+    "video",
+    new Set([
+      "mp4", "m4v", "mkv", "webm", "mov", "avi", "flv", "wmv", "mpg", "mpeg",
+      "ts", "m3u8", "3gp",
+    ]),
+  ],
+  [
+    "apps",
+    new Set([
+      "dmg", "pkg", "app", "exe", "msi", "apk", "ipa", "deb", "rpm", "appimage",
+      "jar", "xpi", "crx",
+    ]),
+  ],
+  [
+    "document",
+    new Set([
+      "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "odt",
+      "ods", "odp", "epub", "mobi", "csv", "md", "pages", "numbers", "key",
+    ]),
+  ],
+  [
+    "compressed",
+    new Set([
+      "zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "img",
+      "cab",
+    ]),
+  ],
+];
 
 /** Dosya adındaki küçük harf uzantı (yoksa boş dize). */
 export function fileExtension(fileName: string): string {
@@ -335,7 +467,7 @@ export function fileExtension(fileName: string): string {
 }
 
 /**
- * Dosya adını arayüz kategorisine eşler.
+ * Dosya adını kategoriye eşler.
  *
  * Uzantı yoksa `other` döner; kısayol (`.bashrc`) ve uzantısız dosyalar
  * yanlışlıkla "gizli dosya uzantısı" sayılmaz.
@@ -343,13 +475,15 @@ export function fileExtension(fileName: string): string {
 export function categoryOf(fileName: string): CategoryKey {
   const ext = fileExtension(fileName);
   if (!ext) return "other";
-
-  if (VIDEO_EXT.has(ext)) return "video";
-  if (AUDIO_EXT.has(ext)) return "audio";
-  if (PROGRAM_EXT.has(ext)) return "program";
-  if (ARCHIVE_EXT.has(ext)) return "archive";
-  if (DOCUMENT_EXT.has(ext)) return "document";
+  for (const [category, extensions] of CATEGORY_TABLE) {
+    if (extensions.has(ext)) return category;
+  }
   return "other";
+}
+
+/** Kategorinin etkin dildeki adı. */
+export function categoryLabel(category: CategoryKey): string {
+  return t(`cat.${category}`);
 }
 
 /** Tablo ikonunda gösterilecek kısaltma (en fazla 3 karakter, büyük harf). */

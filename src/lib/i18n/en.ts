@@ -75,12 +75,29 @@ export const en: Dict = {
   "side.task.failed": "Failed",
   "side.task.cancelled": "Cancelled",
   "side.task.all": "All Downloads",
+  "side.task.unfinished": "Unfinished",
+  "side.nav_aria": "Download categories",
+  "side.all": "All Downloads",
+  "side.state": "Status",
+  "side.completed": "Completed",
+  "side.unfinished": "Unfinished",
   "side.cat.video": "Video",
   "side.cat.audio": "Audio",
   "side.cat.program": "Programs",
   "side.cat.archive": "Compressed",
   "side.cat.document": "Documents",
   "side.cat.other": "Other Files",
+
+  // -----------------------------------------------------------------
+  // File categories (MC `categories::Category`)
+  // -----------------------------------------------------------------
+  "cat.image": "Images",
+  "cat.music": "Music",
+  "cat.video": "Video",
+  "cat.apps": "Programs",
+  "cat.document": "Documents",
+  "cat.compressed": "Compressed",
+  "cat.other": "Other",
 
   // -----------------------------------------------------------------
   // Yeni indirme formu (NewDownloadForm.tsx)
@@ -100,7 +117,6 @@ export const en: Dict = {
   "form.url_label": "Address",
   "form.url_placeholder": "https://server/file.bin",
   "add.save_to": "Save to",
-  "add.channels": "Connections",
 
   // -----------------------------------------------------------------
   // Tablo başlıkları (DownloadTable.tsx)
@@ -320,4 +336,229 @@ export const en: Dict = {
   "wizard.prepared": "Extension files are ready",
   "wizard.connected": "{browser} connected",
   "wizard.close": "Close",
+
+  // -----------------------------------------------------------------
+  // MC port — toolbar actions (Toolbar.tsx)
+  // -----------------------------------------------------------------
+  "tb.start_queue": "Start Queue",
+  "tb.start_queue_title": "Start every queued and paused download",
+  "tb.stop_all": "Stop All",
+  "tb.stop_all_title": "Pause every running download",
+  "tb.clear_done": "Clear Finished",
+  "tb.clear_done_title": "Delete completed, failed and cancelled records",
+  "tb.settings": "Settings",
+  "tb.settings_title": "Toggle the settings panel (Ctrl+S)",
+  "bulk.err.action": "The action failed: {error}",
+
+  // -----------------------------------------------------------------
+  // MC port — extra row labels (DownloadRow.tsx)
+  // -----------------------------------------------------------------
+  "row.kind_video": "Video",
+  "row.kind_video_title": "Video downloaded with yt-dlp",
+  "row.completed_sub": "Completed",
+
+  // -----------------------------------------------------------------
+  // MC port — download detail dialog (DownloadDetailDialog.tsx)
+  // -----------------------------------------------------------------
+  "detail.title": "Download Details",
+  "detail.section.progress": "Progress",
+  "detail.section.info": "Information",
+  "detail.section.connections": "Connections",
+  "detail.section.log": "yt-dlp Log",
+  "detail.eta": "Left:",
+  "detail.field.url": "Address",
+  "detail.field.kind": "Type",
+  "detail.field.ranges": "Partial download",
+  "detail.field.channels": "Connections",
+  "detail.field.added": "Added",
+  "detail.field.finished": "Finished",
+  "detail.field.headers": "Extra headers",
+  "detail.kind.video": "Video (yt-dlp)",
+  "detail.kind.file": "File",
+  "detail.ranges.yes": "Supported",
+  "detail.ranges.no": "Not supported",
+  "detail.conn.no": "No.",
+  "detail.conn.downloaded": "Downloaded",
+  "detail.conn.start": "Start",
+  "detail.conn.info": "Info",
+  "detail.conn.finished": "Done",
+  "detail.conn.percent": "{percent}%",
+  "detail.log.empty": "No yt-dlp output yet.",
+  "detail.close_on_finish": "Close this window when the download finishes",
+  "detail.open": "Open File",
+  "detail.show_in_folder": "Show in Folder",
+
+  // -----------------------------------------------------------------
+  // MC port — status bar bridge indicator (StatusBar.tsx)
+  // -----------------------------------------------------------------
+  "sb.bridge_on": "Bridge on",
+  "sb.bridge_off": "Bridge off",
+  "sb.bridge_title": "Browser bridge on 127.0.0.1:{port}",
+  "sb.bridge_none": "No browser has connected yet",
+  "sb.bridge_browsers": "Connected: {browsers}",
+  "sb.unfinished": "Unfinished: {count}",
+  "sb.unfinished_title": "Number of downloads that are not complete",
+
+  // -----------------------------------------------------------------
+  // MC port — new download dialog (NewDownloadDialog.tsx)
+  // -----------------------------------------------------------------
+  "add.kind": "Download type",
+  "add.kind_file": "File",
+  "add.kind_video": "Video (yt-dlp)",
+  "add.kind_file_hint": "A direct link, fetched by the multi-connection engine.",
+  "add.kind_video_hint":
+    "A video page, fetched with yt-dlp. Required for sites like YouTube.",
+  "add.channels_field": "Connections",
+  "add.channels_note": "Only used for file downloads.",
+
+  // -----------------------------------------------------------------
+  // MC port — clipboard prompt (ClipboardPromptDialog.tsx)
+  // -----------------------------------------------------------------
+  "clip.title": "Link found in the clipboard",
+  "clip.body": "Download the {count} links from the clipboard?",
+  "clip.body_one": "Download the link from the clipboard?",
+  "clip.url_hint": "{url}",
+  "clip.download_video": "Download Video (yt-dlp)",
+  "clip.download_file": "Download as File",
+  "clip.ignore": "Ignore",
+  "clip.remember": "Don't ask again (this session)",
+
+  // -----------------------------------------------------------------
+  // MC port — external tool installation (tools.rs events)
+  // -----------------------------------------------------------------
+  "tool.working": "Preparing…",
+  "tool.installed": "Installed ({version})",
+  "tool.failed": "Installation failed: {error}",
+
+  // -----------------------------------------------------------------
+  // MC port — settings tabs (SettingsPanel.tsx)
+  // -----------------------------------------------------------------
+  "settings.tab.general": "General",
+  "settings.tab.types": "File Types",
+  "settings.tab.browsers": "Browsers",
+  "settings.tab.video": "Video",
+  "settings.tab.interface": "Interface",
+  "settings.section.behaviour": "Behaviour",
+  "settings.section.tray": "Tray icon and startup",
+  "settings.section.updates": "Updates",
+  "settings.max_concurrent": "Concurrent downloads",
+  "settings.max_concurrent_hint":
+    "How many downloads may run at once. The rest wait in the queue.",
+  "settings.concurrent_value": "{count} downloads",
+  "settings.auto_start": "Start new downloads immediately",
+  "settings.auto_start_hint":
+    "When off, new downloads wait in the queue and start with “Start Queue”.",
+  "settings.notify": "Notify when a download finishes",
+  "settings.notify_hint": "A Windows notification is shown when a download completes.",
+  "settings.show_detail": "Open the detail window when a download starts",
+  "settings.show_detail_hint":
+    "Useful for watching the yt-dlp output of a video download.",
+  "settings.auto_close_detail": "Close the detail window when finished",
+  "settings.auto_close_detail_hint":
+    "This is the default of the “close on finish” checkbox in the detail window.",
+  "settings.watch_clipboard": "Watch the clipboard",
+  "settings.watch_clipboard_hint":
+    "You are asked about suitable links copied to the clipboard.",
+  "settings.organize": "Sort into category subfolders",
+  "settings.organize_hint":
+    "Files are written into a category folder (video/audio/other) instead of the general location.",
+  "settings.start_in_tray": "Start in the tray",
+  "settings.start_in_tray_hint":
+    "The app starts with only a tray icon and no window.",
+  "settings.close_to_tray": "Keep running in the background when closed",
+  "settings.close_to_tray_hint":
+    "Closing the window keeps the app running; use the tray menu to quit.",
+  "settings.autostart": "Run at sign-in",
+  "settings.autostart_hint": "ADM starts automatically when you sign in to Windows.",
+  "settings.check_updates": "Check for updates on launch",
+  "settings.check_updates_hint": "You are notified when a new version exists.",
+  "settings.check_now": "Check now",
+  "settings.check_now_title": "Check for an update right away",
+  "settings.checking": "Checking…",
+  "settings.update_current": "Version {version} — up to date.",
+  "settings.update_available": "New version: {version}",
+  "settings.update_error": "Could not check: {error}",
+  "settings.update_last": "Last check: {time}",
+  "settings.update_never": "Not checked yet",
+  "settings.update_download": "Download the update",
+  "settings.types_intro":
+    "Only the extensions below are captured from the browser and the clipboard. Capture is off when no group is selected.",
+  "settings.types_groups": "Built-in groups",
+  "settings.types_custom": "Custom extensions",
+  "settings.types_custom_hint":
+    "Comma-separated extensions (e.g. torrent, parquet). The dot is optional.",
+  "settings.types_custom_placeholder": "torrent, parquet",
+  "settings.types_preview": "Active extensions ({count})",
+  "settings.types_preview_empty": "No extension selected — capture is off.",
+  "settings.browsers_intro":
+    "ADM takes over downloads from the browser through a local bridge. Without the extension, downloads stay in the browser.",
+  "settings.bridge_port": "Bridge port",
+  "settings.bridge_port_hint":
+    "ADM must be restarted after a change. Default: 48213.",
+  "settings.bridge_running": "Listening on 127.0.0.1:{port}",
+  "settings.bridge_stopped": "The bridge is not running",
+  "settings.bridge_browsers": "Connected browsers: {browsers}",
+  "settings.bridge_no_browser": "No browser has connected yet",
+  "settings.plugin_folder": "Extension folder",
+  "settings.plugin_folder_hint":
+    "The extension files are copied into this folder; point the browser at it.",
+  "settings.wizard_open": "Open the setup wizard",
+  "settings.browser_ready": "Extension files are ready",
+  "settings.browser_missing": "Extension files have not been copied yet",
+  "settings.video_intro":
+    "Video downloads use yt-dlp. Missing tools can be installed before a download starts.",
+  "settings.site_login": "Site login",
+  "settings.site_login_hint":
+    "Sign in with your account for age-restricted or members-only videos; the cookies are handed to yt-dlp.",
+  "settings.site_login_open": "Open the login window",
+  "settings.site_login_save": "Save cookies and close",
+  "settings.site_login_clear": "Delete the cookies",
+  "settings.site_login_none": "No saved cookies.",
+  "settings.site_login_count": "{count} cookies saved",
+  "settings.site_login_domains": "Sites: {domains}",
+  "settings.site_login_saved": "Cookies saved ({count})",
+  "settings.tools": "External tools",
+  "settings.tools_hint":
+    "yt-dlp, ffmpeg and deno are downloaded from GitHub into the ADM folder.",
+  "settings.tool_install": "Install",
+  "settings.tool_reinstall": "Update",
+  "settings.tool_installed": "Installed",
+  "settings.tool_missing": "Not installed",
+  "settings.tool_version": "version {version}",
+  "settings.ytdlp_path": "Custom yt-dlp path",
+  "settings.ytdlp_path_hint":
+    "When empty, PATH and the ADM tools folder are used.",
+  "settings.ytdlp_path_placeholder": "C:\\tools\\yt-dlp.exe",
+  "settings.video_format": "Format selector",
+  "settings.video_format_hint":
+    "When empty, the resolution and container below are used. E.g. `bv*+ba/b`.",
+  "settings.video_container": "Container",
+  "settings.video_max_height": "Maximum resolution",
+  "settings.format_preview": "Effective arguments",
+  "settings.height.best": "Best",
+  "settings.height.audio_m4a": "Audio only (m4a)",
+  "settings.height.audio_mp3": "Audio only (mp3)",
+  "settings.height.p": "{height}p",
+  "settings.container.mp4": "MP4",
+  "settings.container.mkv": "MKV",
+  "settings.container.webm": "WebM",
+  "settings.container.original": "Original format",
+  "settings.section.dock": "Bottom panel",
+  "settings.dock_graph": "Start with the speed graph open",
+  "settings.dock_graph_hint": "It can also be opened with the ▾ button in the status bar.",
+  "settings.dock_log": "Start with the events log open",
+  "settings.dock_log_hint": "The last 300 events are kept in memory.",
+  "settings.section.about": "Application",
+  "settings.about_version": "Version {version}",
+  "settings.about_hint": "Rust + Tauri 2 + SolidJS · SQLite (WAL) · TR/EN",
+
+  // -----------------------------------------------------------------
+  // MC port — store log lines
+  // -----------------------------------------------------------------
+  "log.bridge_connection": "Browser connection: {browser}",
+  "log.browser_files_ready": "Extension files are ready: {path}",
+  "log.tool_installed": "{tool} installed (version {version})",
+  "log.update_available": "A new version is available: {version}",
+  "log.update_current": "Version {version} is up to date",
+  "log.update_failed": "Could not check for updates: {error}",
 };

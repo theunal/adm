@@ -27,6 +27,8 @@ import {
   deleteItem,
 } from "../lib/bulk";
 import {
+  TASK_FILTERS,
+  TASK_LABEL_KEY,
   bulkTargets,
   hasSelection,
   isCategoryActive,
@@ -50,7 +52,7 @@ import {
   settingsOpen,
 } from "../lib/ui";
 import { t } from "../lib/i18n";
-import type { CategoryKey, DownloadItem } from "../lib/format";
+import { CATEGORY_ORDER, type CategoryKey, type DownloadItem } from "../lib/format";
 
 /**
  * Alt menü girdisi.
@@ -83,26 +85,19 @@ interface MenuRoot {
   entries: () => MenuEntry[];
 }
 
-/** "Görevler" menüsündeki filtre sırası (kenar çubuğuyla aynı). */
-const TASK_ITEMS: { filter: TaskFilter; key: string }[] = [
-  { filter: "downloading", key: "side.task.downloading" },
-  { filter: "queued", key: "side.task.queued" },
-  { filter: "paused", key: "side.task.paused" },
-  { filter: "completed", key: "side.task.completed" },
-  { filter: "failed", key: "side.task.failed" },
-  { filter: "cancelled", key: "side.task.cancelled" },
-  { filter: "all", key: "side.task.all" },
-];
+/**
+ * "Görevler" menüsündeki filtre sırası (kenar çubuğuyla aynı).
+ *
+ * `TASK_FILTERS` tek kaynaktır; etiketler `TASK_LABEL_KEY` üzerinden gelir.
+ */
+const TASK_ITEMS: { filter: TaskFilter; key: string }[] = TASK_FILTERS.map(
+  (filter) => ({ filter, key: TASK_LABEL_KEY[filter] }),
+);
 
 /** Kategori menüsü sırası (kenar çubuğuyla aynı). */
-const CATEGORY_ITEMS: { cat: CategoryKey; key: string }[] = [
-  { cat: "video", key: "side.cat.video" },
-  { cat: "audio", key: "side.cat.audio" },
-  { cat: "program", key: "side.cat.program" },
-  { cat: "archive", key: "side.cat.archive" },
-  { cat: "document", key: "side.cat.document" },
-  { cat: "other", key: "side.cat.other" },
-];
+const CATEGORY_ITEMS: { cat: CategoryKey; key: string }[] = CATEGORY_ORDER.map(
+  (cat) => ({ cat, key: `cat.${cat}` }),
+);
 
 /** Seçili ya da görünür ilk kayıt (menü eylemlerinin konusu). */
 function primaryItem(): DownloadItem | null {

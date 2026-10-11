@@ -139,6 +139,8 @@ pub fn run() {
             commands::tool_status,
             commands::install_tool,
             commands::site_login_status,
+            commands::open_site_login,
+            commands::save_site_login_cookies,
             commands::save_site_cookies,
             commands::clear_site_cookies,
             commands::check_for_update,

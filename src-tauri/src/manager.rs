@@ -1626,6 +1626,25 @@ pub async fn ensure_parent_dir(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tool_olayi_etiket_cakismasi_yok() {
+        // `DownloadEvent::Tool` iç içe serileştirilir; dış etiket `kind`,
+        // iç etiket `event` olmalıdır. İkisi de `kind` olsaydı JSON'da
+        // anahtar iki kez çıkar ve arayüz olayı tanıyamazdı.
+        let ev = crate::manager::DownloadEvent::Tool(crate::tools::ToolEvent::Started {
+            tool: "ytdlp".into(),
+        });
+        let json = serde_json::to_string(&ev).expect("araç olayı serileştirilemedi");
+        assert_eq!(json, r#"{"kind":"tool","event":"started","tool":"ytdlp"}"#);
+
+        let ev = crate::manager::DownloadEvent::Tool(crate::tools::ToolEvent::Progress {
+            tool: "ffmpeg".into(),
+            fraction: 0.5,
+        });
+        let json = serde_json::to_string(&ev).expect("araç olayı serileştirilemedi");
+        assert_eq!(json, r#"{"kind":"tool","event":"progress","tool":"ffmpeg","fraction":0.5}"#);
+    }
+
     use super::*;
 
     #[test]
