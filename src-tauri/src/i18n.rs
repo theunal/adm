@@ -629,6 +629,42 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("log.deno_missing", "deno kurulu değil; YouTube videoları için gerekli", "deno is not installed; it is required for YouTube videos"),
     ("log.tool_installed", "{0} kuruldu (sürüm {1})", "{0} installed (version {1})"),
     ("log.update_available", "Yeni sürüm mevcut: {0}", "A new version is available: {0}"),
+    // -----------------------------------------------------------------
+    // MC portu: tarayıcı eklentisi ve site girişi
+    // -----------------------------------------------------------------
+    (
+        "err.browser_plugin_missing",
+        "Tarayıcı eklenti dosyaları bulunamadı",
+        "The browser extension files were not found",
+    ),
+    (
+        "log.browser_files_ready",
+        "Tarayıcı eklenti dosyaları hazırlandı: {0}",
+        "Browser extension files are ready: {0}",
+    ),
+    (
+        "browser.readme",
+        "ADM tarayıcı eklentisi ({0})\n\n1. Tarayıcıda uzantı sayfasını açın ve geliştirici modunu etkinleştirin.\n2. \"Paketlenmemiş öğe yükle\" ile bu klasörü seçin.\n3. ADM açıkken indirmeler otomatik olarak yakalanır.\n",
+        "ADM browser extension ({0})\n\n1. Open the extensions page in the browser and enable developer mode.\n2. Choose \"Load unpacked\" and select this folder.\n3. Downloads are captured automatically while ADM is running.\n",
+    ),
+    (
+        "err.site_cookies_empty",
+        "Kaydedilecek çerez bulunamadı",
+        "No cookies were provided",
+    ),
+    (
+        "log.cookie_cleared",
+        "Site girişi çerezleri silindi",
+        "Site login cookies were cleared",
+    ),
+    // -----------------------------------------------------------------
+    // Tepsi simgesi menüsü
+    // -----------------------------------------------------------------
+    ("tray.show", "Göster", "Show"),
+    ("tray.hide", "Gizle", "Hide"),
+    ("tray.pause_all", "Tümünü duraklat", "Pause all"),
+    ("tray.resume_all", "Tümünü sürdür", "Resume all"),
+    ("tray.quit", "Çık", "Quit"),
 ];
 
 /// Anahtarı tabloda arar.

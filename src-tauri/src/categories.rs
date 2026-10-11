@@ -109,8 +109,8 @@ const TABLE: &[(Category, &[&str])] = &[
     (
         Category::Image,
         &[
-            "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif", "svg", "psd",
-            "ai", "raw", "cr2", "nef", "ico",
+            "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif", "svg",
+            "psd", "ai", "raw", "cr2", "nef", "ico",
         ],
     ),
     (
@@ -129,8 +129,8 @@ const TABLE: &[(Category, &[&str])] = &[
     (
         Category::Apps,
         &[
-            "dmg", "pkg", "app", "exe", "msi", "apk", "ipa", "deb", "rpm", "appimage", "jar", "xpi",
-            "crx",
+            "dmg", "pkg", "app", "exe", "msi", "apk", "ipa", "deb", "rpm", "appimage", "jar",
+            "xpi", "crx",
         ],
     ),
     (

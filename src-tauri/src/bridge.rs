@@ -42,7 +42,10 @@ pub struct HttpResponse {
 
 impl HttpResponse {
     pub fn json(value: Value, status: u16) -> Self {
-        Self { status, json: value }
+        Self {
+            status,
+            json: value,
+        }
     }
 
     pub fn ok(value: Value) -> Self {
@@ -67,7 +70,9 @@ impl HttpResponse {
         };
         let mut head = format!(
             "HTTP/1.1 {} {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n",
-            self.status, reason, body.len()
+            self.status,
+            reason,
+            body.len()
         );
         if let Some(origin) = origin
             && allowed
@@ -190,10 +195,7 @@ pub fn parse_http(data: &[u8]) -> Option<HttpRequest> {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
-        headers.insert(
-            name.trim().to_ascii_lowercase(),
-            value.trim().to_string(),
-        );
+        headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
     }
 
     let length: usize = headers
@@ -216,15 +218,12 @@ pub fn parse_http(data: &[u8]) -> Option<HttpRequest> {
 
 /// Bayt dizisinde alt dizi arar.
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Uygulama tarafı işleyici türü.
-pub type RouteHandler = Box<
-    dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync,
->;
+pub type RouteHandler =
+    Box<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 /// Köprü sunucusu.
 pub struct Bridge {
@@ -390,7 +389,10 @@ mod tests {
         let req = parse_http(raw).expect("istek ayrıştırılamadı");
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/download");
-        assert_eq!(req.headers.get("host").map(String::as_str), Some("127.0.0.1:48213"));
+        assert_eq!(
+            req.headers.get("host").map(String::as_str),
+            Some("127.0.0.1:48213")
+        );
         assert_eq!(req.body, "{\"url\":\"x\"}");
     }
 

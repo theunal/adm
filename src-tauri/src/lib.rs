@@ -45,25 +45,52 @@ pub fn run() {
                 .map_err(|e| i18n::t("err.db_open", &[&format!("{e:#}")]))?;
             let manager = manager::DownloadManager::new(database);
 
-            // 2) Kayıtlı dili uygula: ayarlar tek kaynaktan okunur, webview
+            // 2) Kayıtlı dil uygulanır: ayarlar tek kaynaktan okunur, webview
             //    ilk boyamadan önce Rust tarafında hazır olsun.
-            match tauri::async_runtime::block_on(manager.settings()) {
-                Ok(settings) => i18n::set_lang(settings.lang),
+            let settings = match tauri::async_runtime::block_on(manager.settings()) {
+                Ok(settings) => {
+                    i18n::set_lang(settings.lang);
+                    settings
+                }
                 // Ayar okunamazsa varsayılan (TR) kalır; uygulama açılır.
-                Err(_) => i18n::set_lang(i18n::Lang::Tr),
-            }
+                Err(_) => {
+                    i18n::set_lang(i18n::Lang::Tr);
+                    settings::Settings::default()
+                }
+            };
 
             // 3) Olay yayıncısı: manager olaylarını arayüze aktar.
             commands::forward_events(app.handle().clone(), manager.subscribe());
 
-            // 4) Manager'ı Tauri durumuna ekle (komutlar buradan erişir).
-            app.manage(manager);
+            // 4) Paylaşılan durumlar (köprü + pano) ve manager kaydı.
+            app.manage(commands::BridgeState::default());
+            let clipboard = std::sync::Arc::new(commands::RuntimeState::default());
+            clipboard.apply(&settings);
+            app.manage(clipboard.clone());
+            app.manage(manager.clone());
+
+            // 5) Tarayıcı köprüsü (MC `ServerController`).
+            commands::start_bridge(app.handle().clone(), manager.clone(), settings.server_port);
+
+            // 6) Pano izleyici (MC `ClipboardWatcher`).
+            commands::start_clipboard(app.handle().clone(), clipboard);
+
+            // 7) Tepki simgesi + kapatınca arka planda kalma (MC `AppPresence`).
+            commands::install_tray(app.handle())?;
+
+            // 8) Açılışta güncelleme denetimi (ayar açıksa, sessizce).
+            if settings.check_for_updates {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = commands::check_for_update(handle).await;
+                });
+            }
 
             Ok(())
         })
-        .on_window_event(|window, event| {
+        .on_window_event(|window, event| match event {
             // Pencere kapatılırken aktif indirmeleri nazikçe iptal et.
-            if let tauri::WindowEvent::Destroyed = event {
+            tauri::WindowEvent::Destroyed => {
                 let app = window.app_handle();
                 if let Some(manager) = app.try_state::<manager::DownloadManager>() {
                     let manager = manager.inner().clone_for_shutdown();
@@ -72,6 +99,14 @@ pub fn run() {
                     });
                 }
             }
+            // "Kapatınca tepsiye küçült" açıksa pencere gizlenir.
+            tauri::WindowEvent::CloseRequested { api, .. }
+                if commands::close_to_tray(window.app_handle()) =>
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_download,
@@ -100,6 +135,19 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::resolve_target_path,
+            commands::bridge_status,
+            commands::tool_status,
+            commands::install_tool,
+            commands::site_login_status,
+            commands::save_site_cookies,
+            commands::clear_site_cookies,
+            commands::check_for_update,
+            commands::browser_list,
+            commands::prepare_browser_files,
+            commands::open_plugin_folder,
+            commands::open_browser_extensions_page,
+            commands::answer_clipboard_prompt,
+            commands::tray_show,
         ])
         .run(tauri::generate_context!())
         .expect("ADM başlatılırken hata oluştu");

@@ -5,8 +5,8 @@
 //! kullanıcıya sorar. Sorma kararı ve indirme ekleme uygulama katmanındadır:
 //! buradan `ClipboardPrompt` olayı çıkar.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -29,10 +29,15 @@ pub struct ClipboardPrompt {
 ///
 /// `settings_watch` kapalıysa yoklama durur. `tx` kanalına panoya kopyalanan
 /// uygun bağlantılar gönderilir.
+///
+/// `prompting` çağıran tarafından tutulur: kullanıcı soruyu yanıtlayınca
+/// (indir / yoksay) sıfırlanır, böylece sonraki kopyalamalar da sorulur.
+/// Aksi halde izleyici ilk sorudan sonra sessiz kalırdı.
 pub fn spawn_watcher(
     tx: mpsc::UnboundedSender<ClipboardPrompt>,
     is_enabled: Arc<dyn Fn() -> bool + Send + Sync>,
     capture_extensions: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    prompting: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
         let mut clipboard = match arboard::Clipboard::new() {
@@ -40,7 +45,6 @@ pub fn spawn_watcher(
             Err(_) => return, // Pano erişimi yoksa (uzak masaüstü vb.) sessiz kal.
         };
         let mut asked: Vec<String> = Vec::new();
-        let prompting = AtomicBool::new(false);
 
         loop {
             std::thread::sleep(Duration::from_secs(1));
@@ -77,9 +81,7 @@ pub fn spawn_watcher(
             let prompt = ClipboardPrompt {
                 urls: matching,
                 source: "clipboard".to_string(),
-                prefer_video: urls
-                    .iter()
-                    .all(|u| capture::looks_like_video_page(u)),
+                prefer_video: urls.iter().all(|u| capture::looks_like_video_page(u)),
             };
             let _ = tx.send(prompt);
         }

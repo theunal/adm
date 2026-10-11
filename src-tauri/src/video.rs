@@ -93,10 +93,11 @@ fn environment() -> Vec<(String, String)> {
 
 /// Uzantıdan gelen çerez dosyası ile site girişi çerez dosyasını birleştirir
 /// (MC `mergedCookieFile`). Host eşleşmiyorsa site çerezleri eklenmez.
-pub fn merged_cookie_file(item_cookie_file: Option<&str>, target_host: Option<&str>) -> Option<PathBuf> {
-    let item = item_cookie_file
-        .map(PathBuf::from)
-        .filter(|p| p.is_file());
+pub fn merged_cookie_file(
+    item_cookie_file: Option<&str>,
+    target_host: Option<&str>,
+) -> Option<PathBuf> {
+    let item = item_cookie_file.map(PathBuf::from).filter(|p| p.is_file());
 
     let host = target_host.unwrap_or("").to_ascii_lowercase();
     let site_matches = site_login_domains()
@@ -115,10 +116,7 @@ pub fn merged_cookie_file(item_cookie_file: Option<&str>, target_host: Option<&s
         (Some(a), Some(b)) => {
             let body_a = std::fs::read_to_string(&a).unwrap_or_default();
             let body_b = std::fs::read_to_string(&b).unwrap_or_default();
-            let tmp = std::env::temp_dir().join(format!(
-                "adm-cookies-{}.txt",
-                std::process::id()
-            ));
+            let tmp = std::env::temp_dir().join(format!("adm-cookies-{}.txt", std::process::id()));
             if std::fs::write(&tmp, format!("{body_b}\n{body_a}\n")).is_ok() {
                 Some(tmp)
             } else {
@@ -191,8 +189,9 @@ static AUDIO_INTERMEDIATE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLo
 static VIDEO_INTERMEDIATE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
 fn audio_intermediate() -> &'static regex::Regex {
-    AUDIO_INTERMEDIATE
-        .get_or_init(|| regex::Regex::new(r"\.f[0-9]+[-a-z0-9]*\.(m4a|webm|opus|mp3|aac|ogg)$").unwrap())
+    AUDIO_INTERMEDIATE.get_or_init(|| {
+        regex::Regex::new(r"\.f[0-9]+[-a-z0-9]*\.(m4a|webm|opus|mp3|aac|ogg)$").unwrap()
+    })
 }
 
 fn video_intermediate() -> &'static regex::Regex {
@@ -232,7 +231,10 @@ pub struct VideoRequest {
 ///
 /// Alt süreç "drop" ile birlikte sonlandırılır (`kill_on_drop`); duraklatma
 /// ve iptal bu mekanizmayla çalışır (MC `terminate`).
-pub async fn run(req: VideoRequest, events: mpsc::UnboundedSender<VideoEvent>) -> anyhow::Result<()> {
+pub async fn run(
+    req: VideoRequest,
+    events: mpsc::UnboundedSender<VideoEvent>,
+) -> anyhow::Result<()> {
     let Some(exe) = tools::locate(tools::Tool::YtDlp, &req.custom_ytdlp_path) else {
         anyhow::bail!(i18n::t("err.ytdlp_missing", &[]));
     };
@@ -315,8 +317,7 @@ pub async fn run(req: VideoRequest, events: mpsc::UnboundedSender<VideoEvent>) -
     let stderr = child.stderr.take();
 
     // Son hata satırı: süreç başarısız çıkınca raporlanır (MC davranışı).
-    let last_error: Arc<std::sync::Mutex<Option<String>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let last_error: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
 
     // Satırları iki ayrı görevde oku (MC'nin çift boru drenajı).
     let out_events = events.clone();
@@ -349,10 +350,7 @@ pub async fn run(req: VideoRequest, events: mpsc::UnboundedSender<VideoEvent>) -
 
     // MC davranışı: hata yalnızca süreç başarısız çıkınca raporlanır
     // (yt-dlp bazı `ERROR:` satırlarından sonra kendiliğinden devam eder).
-    let last_error_text = last_error
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take();
+    let last_error_text = last_error.lock().unwrap_or_else(|e| e.into_inner()).take();
 
     match status {
         Ok(s) if s.success() => {
@@ -377,7 +375,10 @@ pub async fn run(req: VideoRequest, events: mpsc::UnboundedSender<VideoEvent>) -
 
     // Kullanılan geçici çerez dosyasını temizle.
     if let Some(cf) = &cookie_file
-        && cf.parent().map(|p| p == std::env::temp_dir()).unwrap_or(false)
+        && cf
+            .parent()
+            .map(|p| p == std::env::temp_dir())
+            .unwrap_or(false)
     {
         let _ = tokio::fs::remove_file(cf).await;
     }
@@ -494,7 +495,9 @@ mod tests {
 
     #[test]
     fn oturumlu_istemci_reddi() {
-        assert!(is_signed_in_client_failure("ERROR: The page needs to be reloaded"));
+        assert!(is_signed_in_client_failure(
+            "ERROR: The page needs to be reloaded"
+        ));
         assert!(!is_signed_in_client_failure("ERROR: Video unavailable"));
     }
 

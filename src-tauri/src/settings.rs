@@ -224,11 +224,8 @@ impl Settings {
         }
 
         // Yalnızca bilinen gruplar tutulur.
-        self.capture_group_ids.retain(|g| {
-            crate::capture::GROUPS
-                .iter()
-                .any(|(name, _)| name == g)
-        });
+        self.capture_group_ids
+            .retain(|g| crate::capture::GROUPS.iter().any(|(name, _)| name == g));
 
         for dir in [
             &mut self.video_dir,

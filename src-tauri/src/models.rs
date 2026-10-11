@@ -757,12 +757,20 @@ mod tests {
         );
         // Tırnaklı.
         assert_eq!(
-            file_name_from_headers(Some("attachment; filename=\"rapor.pdf\""), None, "https://x.tld/d"),
+            file_name_from_headers(
+                Some("attachment; filename=\"rapor.pdf\""),
+                None,
+                "https://x.tld/d"
+            ),
             "rapor.pdf"
         );
         // Düz.
         assert_eq!(
-            file_name_from_headers(Some("attachment; filename=resim.png"), None, "https://x.tld/d"),
+            file_name_from_headers(
+                Some("attachment; filename=resim.png"),
+                None,
+                "https://x.tld/d"
+            ),
             "resim.png"
         );
     }
@@ -796,6 +804,9 @@ mod tests {
             split_extension("a.zip"),
             ("a".to_string(), Some("zip".to_string()))
         );
-        assert_eq!(split_extension("uzantisiz"), ("uzantisiz".to_string(), None));
+        assert_eq!(
+            split_extension("uzantisiz"),
+            ("uzantisiz".to_string(), None)
+        );
     }
 }

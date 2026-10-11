@@ -29,7 +29,9 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "apps",
-        &["exe", "msi", "dmg", "pkg", "apk", "deb", "rpm", "appimage", "jar", "xpi"],
+        &[
+            "exe", "msi", "dmg", "pkg", "apk", "deb", "rpm", "appimage", "jar", "xpi",
+        ],
     ),
     (
         "document",
@@ -39,7 +41,9 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "compressed",
-        &["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "iso", "img"],
+        &[
+            "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "iso", "img",
+        ],
     ),
 ];
 

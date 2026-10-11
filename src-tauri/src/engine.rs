@@ -655,9 +655,7 @@ impl DownloadEngine {
         let handles = Arc::new(Semaphore::new(MAX_OPEN_FILE_HANDLES));
         // Tüm kanalların paylaştığı sınırlama durumu.
         let throttle = Arc::new(Throttle::default());
-        throttle
-            .active_limit
-            .store(count as u32, Ordering::SeqCst);
+        throttle.active_limit.store(count as u32, Ordering::SeqCst);
 
         let mut tasks = Vec::with_capacity(count);
 

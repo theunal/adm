@@ -119,7 +119,10 @@ pub async fn version_of(path: &Path) -> Option<String> {
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     // deno üç satır basar (deno, v8, typescript); ilk satır yeterli.
-    text.lines().next().map(|l| l.trim().to_string()).filter(|l| !l.is_empty())
+    text.lines()
+        .next()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
 }
 
 /// Aracı indirir (gerekiyorsa arşivi açar) ve kurar.
@@ -229,8 +232,7 @@ async fn download_to_file(
     let mut last_report = std::time::Instant::now();
 
     while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.with_context(|| i18n::t("err.tool_download_failed", &[url]))?;
+        let chunk = chunk.with_context(|| i18n::t("err.tool_download_failed", &[url]))?;
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
             .with_context(|| i18n::t("err.tool_write_failed", &[&dest.display().to_string()]))?;
@@ -292,8 +294,8 @@ async fn unpack_zip(
 
     let file = std::fs::File::open(zip_path)
         .with_context(|| i18n::t("err.tool_zip_open", &[&zip_path.display().to_string()]))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .with_context(|| i18n::t("err.tool_zip_read", &[]))?;
+    let mut archive =
+        zip::ZipArchive::new(file).with_context(|| i18n::t("err.tool_zip_read", &[]))?;
 
     let wanted = exe_name(tool);
     let mut index = None;

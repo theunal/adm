@@ -41,17 +41,20 @@ fn tr(e: anyhow::Error) -> String {
 /// * `url` — indirilecek adres
 /// * `file_path` — hedef dosya (boşse İndirilenler klasörüne yazılır)
 /// * `channel_count` — eşzamanlı kanal sayısı (1..=32)
+/// * `kind` — `"file"` (varsayılan) veya `"video"` (yt-dlp ile indirilir)
 #[tauri::command]
 pub async fn start_download(
     manager: State<'_, DownloadManager>,
     url: String,
     file_path: Option<String>,
     channel_count: u32,
+    kind: Option<String>,
 ) -> Res<i64> {
-    manager
-        .start(StartRequest::simple(url, file_path, channel_count))
-        .await
-        .map_err(tr)
+    let mut req = StartRequest::simple(url, file_path, channel_count);
+    if let Some(kind) = kind {
+        req.kind = crate::models::DownloadKind::from_db(&kind);
+    }
+    manager.start(req).await.map_err(tr)
 }
 
 #[tauri::command]
@@ -123,7 +126,10 @@ pub fn disk_free_space(path: String) -> Res<u64> {
         }
     }
 
-    let dir_key = dir.to_string_lossy().trim_end_matches(['\\', '/']).to_ascii_uppercase();
+    let dir_key = dir
+        .to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_ascii_uppercase();
 
     // Uzunluğu en büyük eşleşme kazanır: iç içe bağlı noktalarda en derin
     // bağlantı noktası doğru olan olur.
@@ -136,9 +142,8 @@ pub fn disk_free_space(path: String) -> Res<u64> {
                 .to_string_lossy()
                 .trim_end_matches(['\\', '/'])
                 .to_ascii_uppercase();
-            (dir_key == mount || dir_key.starts_with(&format!("{mount}\\"))).then_some(
-                (mount.len(), d.available_space()),
-            )
+            (dir_key == mount || dir_key.starts_with(&format!("{mount}\\")))
+                .then_some((mount.len(), d.available_space()))
         })
         .max_by_key(|(len, _)| *len);
 
@@ -303,8 +308,16 @@ pub async fn get_settings(manager: State<'_, DownloadManager>) -> Res<Settings> 
 /// Kaydedilen dil hemen etkinleşir; arayüzün ayrıca `set_language`
 /// çağırmasına gerek yoktur.
 #[tauri::command]
-pub async fn save_settings(manager: State<'_, DownloadManager>, settings: Settings) -> Res<()> {
-    manager.save_settings(&settings).await.map_err(tr)
+pub async fn save_settings(
+    manager: State<'_, DownloadManager>,
+    state: State<'_, RuntimeState>,
+    settings: Settings,
+) -> Res<()> {
+    manager.save_settings(&settings).await.map_err(tr)?;
+    // Arka plan görevleri (pano izleyici, pencere davranışları) yeni
+    // değerleri bir sonraki turda görsün.
+    state.apply(&settings);
+    Ok(())
 }
 
 /// Bir URL için ayarlara göre çözümlenen tam hedef yol.
@@ -352,4 +365,718 @@ pub fn forward_events(
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------
+// Tarayıcı köprüsü
+// ---------------------------------------------------------------------
+
+/// Köprünün çalışma durumu (durum çubuğu göstergesi).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeStatus {
+    pub running: bool,
+    pub port: u16,
+    /// Köprüye bağlanmış tarayıcılar (son görülme sırasıyla).
+    pub browsers: Vec<String>,
+}
+
+/// Köprü durumunu komutlar ve köprü döngüsü arasında paylaşan kutu.
+#[derive(Default)]
+pub struct BridgeState(std::sync::Mutex<BridgeStatus>);
+
+impl BridgeState {
+    fn set(&self, status: BridgeStatus) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = status;
+        }
+    }
+
+    fn snapshot(&self) -> BridgeStatus {
+        self.0.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Tarayıcı bağlantısını kaydeder ve arayüze bildirir.
+    fn note_browser(&self, app: &AppHandle, browser: &str) {
+        if let Ok(mut slot) = self.0.lock()
+            && !slot.browsers.iter().any(|b| b == browser)
+        {
+            slot.browsers.push(browser.to_string());
+        }
+        let _ = app.emit(
+            "download://event",
+            &crate::manager::DownloadEvent::BridgeConnection {
+                browser: browser.to_string(),
+            },
+        );
+    }
+}
+
+/// Köprünün durumunu döner (arayüz açılışta bir kez sorar).
+#[tauri::command]
+pub fn bridge_status(state: State<'_, BridgeState>) -> Res<BridgeStatus> {
+    Ok(state.snapshot())
+}
+
+/// Olayı hem `download://event` kanalına hem de kayıt günlüğüne yazar.
+fn emit_log(app: &AppHandle, level: &str, message: String) {
+    let _ = app.emit(
+        "download://event",
+        &crate::manager::DownloadEvent::Log {
+            level: level.to_string(),
+            message,
+            download_id: None,
+        },
+    );
+}
+
+/// Köprü sunucusunu başlatır (MC `ServerController`).
+///
+/// Yönlendirme ve güvenlik kuralları uygulama katmanında kurulur; köprü
+/// modülü yalnızca HTTP ayrıştırma ve soket döngüsünü üstlenir.
+pub fn start_bridge(app: AppHandle, manager: DownloadManager, port: u16) {
+    let handler: std::sync::Arc<crate::bridge::RouteHandler> = std::sync::Arc::new(Box::new({
+        let app = app.clone();
+        move |req: crate::bridge::HttpRequest| {
+            let app = app.clone();
+            let manager = manager.clone();
+            let fut: std::pin::Pin<
+                Box<dyn std::future::Future<Output = crate::bridge::HttpResponse> + Send>,
+            > = Box::pin(async move { route(&app, &manager, req).await });
+            fut
+        }
+    }));
+
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<BridgeState>();
+        match crate::bridge::start(port, handler).await {
+            Ok(bridge) => {
+                state.set(BridgeStatus {
+                    running: true,
+                    port,
+                    browsers: Vec::new(),
+                });
+                let _ = app.emit(
+                    "download://event",
+                    &crate::manager::DownloadEvent::Bridge {
+                        running: true,
+                        port,
+                        error: None,
+                    },
+                );
+                emit_log(
+                    &app,
+                    "info",
+                    i18n::t("log.bridge_started", &[&port.to_string()]),
+                );
+                bridge.serve().await;
+                state.set(BridgeStatus {
+                    running: false,
+                    port,
+                    browsers: Vec::new(),
+                });
+                emit_log(&app, "info", i18n::t("log.bridge_stopped", &[]));
+            }
+            Err(e) => {
+                state.set(BridgeStatus {
+                    running: false,
+                    port,
+                    browsers: Vec::new(),
+                });
+                let _ = app.emit(
+                    "download://event",
+                    &crate::manager::DownloadEvent::Bridge {
+                        running: false,
+                        port,
+                        error: Some(e.to_string()),
+                    },
+                );
+                emit_log(
+                    &app,
+                    "error",
+                    i18n::t("log.bridge_failed", &[&e.to_string()]),
+                );
+            }
+        }
+    });
+}
+
+/// Köprüden gelen indirme isteği gövdesi (uzantı bu biçimde gönderir).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct BridgeDownloadBody {
+    url: String,
+    kind: Option<String>,
+    headers: std::collections::HashMap<String, String>,
+    cookie: Option<String>,
+    channel_count: Option<u32>,
+}
+
+/// Köprüden gelen eylem isteği gövdesi.
+#[derive(Debug, serde::Deserialize)]
+struct BridgeActionBody {
+    id: i64,
+    action: String,
+}
+
+/// Köprü yönlendirmesi (MC `LocalServer.route`).
+async fn route(
+    app: &AppHandle,
+    manager: &DownloadManager,
+    req: crate::bridge::HttpRequest,
+) -> crate::bridge::HttpResponse {
+    use crate::bridge::HttpResponse;
+    use serde_json::json;
+
+    let forbidden =
+        |key: &str| HttpResponse::json(json!({ "ok": false, "error": i18n::t(key, &[]) }), 403);
+    let bad_request =
+        |message: String| HttpResponse::json(json!({ "ok": false, "error": message }), 400);
+
+    // Yalnızca tarayıcı uzantısı kaynaklı istekler kabul edilir.
+    if !crate::bridge::extension_request(&req) {
+        return forbidden("err.bridge_origin");
+    }
+
+    // Bağlantı kurmuş tarayıcıyı durum çubuğunda göster.
+    app.state::<BridgeState>()
+        .note_browser(app, &crate::bridge::browser_of(&req));
+
+    // CORS ön kontrolü.
+    if req.method == "OPTIONS" {
+        return HttpResponse::ok(json!({ "ok": true }));
+    }
+
+    let path = req.path.split('?').next().unwrap_or("/");
+    match (req.method.as_str(), path) {
+        ("GET", "/ping") => HttpResponse::ok(json!({
+            "ok": true,
+            "app": "ADM",
+            "version": crate::update::current_version(),
+        })),
+        ("GET", "/downloads") => {
+            let downloads = manager.bridge_downloads().await;
+            HttpResponse::ok(json!({ "ok": true, "downloads": downloads }))
+        }
+        ("POST", "/download") => {
+            let Ok(body) = serde_json::from_str::<BridgeDownloadBody>(&req.body) else {
+                return bad_request(i18n::t("err.bridge_bad_json", &[]));
+            };
+            if body.url.trim().is_empty() {
+                return bad_request(i18n::t("err.bridge_empty_url", &[]));
+            }
+
+            let kind = body
+                .kind
+                .as_deref()
+                .map(crate::models::DownloadKind::from_db)
+                .unwrap_or(crate::models::DownloadKind::File);
+            let headers: Vec<(String, String)> = body.headers.into_iter().collect();
+            let channels = match body.channel_count {
+                Some(n) if n > 0 => n,
+                _ => manager
+                    .settings()
+                    .await
+                    .map(|s| s.default_channel_count)
+                    .unwrap_or(8),
+            };
+
+            match manager
+                .bridge_add(body.url, headers, body.cookie, kind, channels)
+                .await
+            {
+                Ok(id) => HttpResponse::ok(json!({ "ok": true, "id": id })),
+                Err(e) => bad_request(tr(e)),
+            }
+        }
+        ("POST", "/action") => {
+            let Ok(body) = serde_json::from_str::<BridgeActionBody>(&req.body) else {
+                return bad_request(i18n::t("err.bridge_bad_json", &[]));
+            };
+            match manager.bridge_action(body.id, &body.action).await {
+                Ok(()) => HttpResponse::ok(json!({ "ok": true })),
+                Err(e) => bad_request(tr(e)),
+            }
+        }
+        _ => HttpResponse::json(json!({ "ok": false, "error": "not found" }), 404),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Harici araçlar (yt-dlp / ffmpeg / deno)
+// ---------------------------------------------------------------------
+
+/// Bir aracın kurulum durumu.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStatus {
+    pub tool: String,
+    pub installed: bool,
+    pub path: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Kurulu araçların durumu (Ayarlar > Video sekmesi).
+#[tauri::command]
+pub async fn tool_status(manager: State<'_, DownloadManager>) -> Res<Vec<ToolStatus>> {
+    let settings = manager.settings().await.map_err(tr)?;
+    let mut out = Vec::new();
+    for tool in [
+        crate::tools::Tool::YtDlp,
+        crate::tools::Tool::Ffmpeg,
+        crate::tools::Tool::Deno,
+    ] {
+        let path = crate::tools::locate(tool, &settings.ytdlp_path);
+        let version = match &path {
+            Some(p) => crate::tools::version_of(p).await,
+            None => None,
+        };
+        out.push(ToolStatus {
+            tool: tool.as_str().to_string(),
+            installed: path.is_some(),
+            path: path.map(|p| p.to_string_lossy().to_string()),
+            version,
+        });
+    }
+    Ok(out)
+}
+
+/// Aracı indirip kurar; ilerleme `download://event` olayıyla yayınlanır.
+#[tauri::command]
+pub async fn install_tool(
+    app: AppHandle,
+    manager: State<'_, DownloadManager>,
+    tool: String,
+) -> Res<String> {
+    let Some(tool) = crate::tools::Tool::parse(&tool) else {
+        return Err(i18n::t("err.unknown", &[]));
+    };
+    let settings = manager.settings().await.map_err(tr)?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let events = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            let _ = events.emit("download://event", &crate::manager::DownloadEvent::Tool(ev));
+        }
+    });
+
+    crate::tools::install(tool, &settings.ytdlp_path, tx)
+        .await
+        .map_err(tr)
+}
+
+// ---------------------------------------------------------------------
+// Site girişi (çerezler)
+// ---------------------------------------------------------------------
+
+/// Arayüzden gelen çerez satırı (WebView2 `cookies()` çıktısı).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteCookie {
+    pub domain: String,
+    #[serde(default = "default_cookie_path")]
+    pub path: String,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub expires: i64,
+    pub name: String,
+    pub value: String,
+}
+
+fn default_cookie_path() -> String {
+    "/".to_string()
+}
+
+/// Kayıtlı site girişi çerezlerinin durumu.
+#[tauri::command]
+pub fn site_login_status() -> Res<crate::site_login::LoginStatus> {
+    Ok(crate::site_login::status())
+}
+
+/// Giriş penceresinden toplanan çerezleri Netscape dosyasına yazar.
+#[tauri::command]
+pub fn save_site_cookies(app: AppHandle, cookies: Vec<SiteCookie>) -> Res<usize> {
+    if cookies.is_empty() {
+        return Err(i18n::t("err.site_cookies_empty", &[]));
+    }
+
+    let rows: Vec<crate::site_login::CookieRow> = cookies
+        .into_iter()
+        .map(|c| crate::site_login::CookieRow {
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            expires: c.expires,
+            name: c.name,
+            value: c.value,
+        })
+        .collect();
+
+    let count = rows.len();
+    crate::site_login::write_cookies(&rows)
+        .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
+
+    emit_log(
+        &app,
+        "info",
+        i18n::t("log.cookie_written", &[&count.to_string()]),
+    );
+    Ok(count)
+}
+
+/// Kayıtlı site girişi çerezlerini siler.
+#[tauri::command]
+pub fn clear_site_cookies(app: AppHandle) -> Res<()> {
+    crate::site_login::clear();
+    emit_log(&app, "info", i18n::t("log.cookie_cleared", &[]));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Güncelleme
+// ---------------------------------------------------------------------
+
+/// Güncellemeyi denetler ve sonucu `download://event` ile yayınlar.
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Res<()> {
+    let current = crate::update::current_version();
+    let outcome = crate::update::check_latest().await;
+
+    let event = match outcome {
+        Ok(info) => {
+            // Yeni sürüm varsa kullanıcıya gösterilir; atlama kararı
+            // ayarlarda saklanır (`skippedUpdateVersion`).
+            let newer = crate::update::is_newer(&info.version, &current);
+            crate::manager::DownloadEvent::Update {
+                current: current.clone(),
+                latest: newer.then(|| info.version.clone()),
+                page_url: newer.then(|| info.page_url.clone()),
+                notes: newer.then(|| info.notes.clone()),
+                dmg_url: newer.then(|| info.dmg_url.clone()).flatten(),
+                error: None,
+            }
+        }
+        Err(e) => crate::manager::DownloadEvent::Update {
+            current: current.clone(),
+            latest: None,
+            page_url: None,
+            notes: None,
+            dmg_url: None,
+            error: Some(e.to_string()),
+        },
+    };
+
+    let _ = app.emit("download://event", &event);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Tarayıcı eklenti dosyaları
+// ---------------------------------------------------------------------
+
+/// Desteklenen tarayıcılar ve uzantı sayfası adresleri.
+const BROWSERS: &[(&str, &str)] = &[
+    ("chrome", "chrome://extensions"),
+    ("edge", "edge://extensions"),
+    ("brave", "brave://extensions"),
+    ("firefox", "about:debugging#/runtime/this-firefox"),
+];
+
+/// Eklenti dosyalarının kopyalandığı klasör: `%LOCALAPPDATA%\ADM\Browser Plugins`.
+fn browser_plugins_dir() -> PathBuf {
+    crate::db::db_dir().join("Browser Plugins")
+}
+
+/// Tarayıcı adı → klasör adı (marka yazımıyla).
+fn browser_label(browser: &str) -> Option<&'static str> {
+    match browser {
+        "chrome" => Some("Chrome"),
+        "edge" => Some("Edge"),
+        "brave" => Some("Brave"),
+        "firefox" => Some("Firefox"),
+        _ => None,
+    }
+}
+
+/// Kaynak eklenti klasörü (paketlenmiş kaynaklar).
+fn extension_source(app: &AppHandle) -> Option<PathBuf> {
+    let dir = app.path().resource_dir().ok()?.join("extension");
+    dir.is_dir().then_some(dir)
+}
+
+/// Desteklenen tarayıcıların listesi (sihirbaz için).
+#[tauri::command]
+pub fn browser_list() -> Res<Vec<String>> {
+    Ok(BROWSERS
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect())
+}
+
+/// Eklenti dosyalarını tarayıcı klasörüne kopyalar ve `README.txt` yazar.
+///
+/// Arayüzdeki kurulum sihirbazı bu klasörü "paketlenmemiş öğe" olarak
+/// yükletir.
+#[tauri::command]
+pub fn prepare_browser_files(app: AppHandle, browser: String) -> Res<String> {
+    let Some(label) = browser_label(&browser) else {
+        return Err(i18n::t("err.unknown", &[]));
+    };
+    let Some(source) = extension_source(&app) else {
+        return Err(i18n::t("err.browser_plugin_missing", &[]));
+    };
+
+    let target = browser_plugins_dir().join(label);
+    copy_dir(&source, &target).map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
+
+    let readme = i18n::t("browser.readme", &[label]);
+    std::fs::write(target.join("README.txt"), readme)
+        .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
+
+    let path = target.to_string_lossy().to_string();
+    emit_log(&app, "info", i18n::t("log.browser_files_ready", &[&path]));
+    Ok(path)
+}
+
+/// Eklenti klasörünü dosya yöneticisinde açar.
+#[tauri::command]
+pub fn open_plugin_folder(browser: String) -> Res<()> {
+    let label = browser_label(&browser).unwrap_or("Chrome");
+    let path = browser_plugins_dir().join(label);
+    std::fs::create_dir_all(&path).map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
+    open_path_internal(&path.to_string_lossy()).map_err(tr)
+}
+
+/// Tarayıcının uzantı yönetimi sayfasını açar.
+///
+/// Tarayıcı adı bilinmiyorsa varsayılan tarayıcıda açılır.
+#[tauri::command]
+pub fn open_browser_extensions_page(browser: String) -> Res<()> {
+    let url = BROWSERS
+        .iter()
+        .find(|(name, _)| *name == browser)
+        .map(|(_, url)| *url)
+        .unwrap_or("chrome://extensions");
+    open_path_internal(url).map_err(tr)
+}
+
+/// Klasörü (alt klasörleriyle) hedefe kopyalar; hedef varsa üzerine yazar.
+fn copy_dir(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = target.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Çalışma zamanı durumu (pano izleyici + pencere davranışları)
+// ---------------------------------------------------------------------
+
+/// Ayarlardan türetilen paylaşılan durum.
+///
+/// Arka plan görevleri (pano izleyici, pencere olayları) her seferinde
+/// veritabanına gitmesin diye güncel ayarlar burada tutulur; ayar
+/// kaydedildiğinde `apply` ile yenilenir.
+pub struct RuntimeState {
+    watch_clipboard: std::sync::atomic::AtomicBool,
+    close_to_tray: std::sync::atomic::AtomicBool,
+    start_in_tray: std::sync::atomic::AtomicBool,
+    capture_extensions: std::sync::Mutex<Vec<String>>,
+    /// Panoda sorulan bağlantı yanıtlanmayı bekliyor mu?
+    prompting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Default for RuntimeState {
+    fn default() -> Self {
+        use std::sync::atomic::AtomicBool;
+        Self {
+            watch_clipboard: AtomicBool::new(true),
+            close_to_tray: AtomicBool::new(true),
+            start_in_tray: AtomicBool::new(false),
+            capture_extensions: std::sync::Mutex::new(Vec::new()),
+            prompting: std::sync::Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl RuntimeState {
+    /// Ayarları çalışma zamanı durumuna yansıtır.
+    pub fn apply(&self, settings: &Settings) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.watch_clipboard.store(settings.watch_clipboard, SeqCst);
+        self.close_to_tray.store(settings.close_to_tray, SeqCst);
+        self.start_in_tray.store(settings.start_in_tray, SeqCst);
+        if let Ok(mut slot) = self.capture_extensions.lock() {
+            *slot = crate::capture::extensions(
+                &settings.capture_group_ids,
+                &settings.custom_extensions,
+            );
+        }
+    }
+
+    fn watch_enabled(&self) -> bool {
+        self.watch_clipboard.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn extensions(&self) -> Vec<String> {
+        self.capture_extensions
+            .lock()
+            .map(|e| e.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Pano izleyiciyi başlatır (MC `ClipboardWatcher`).
+///
+/// Bulunan bağlantılar `download://event` üzerinden `clipboard` olayıyla
+/// arayüze gider; arayüz yanıtlayınca `answer_clipboard_prompt` çağrılır.
+pub fn start_clipboard(app: AppHandle, state: std::sync::Arc<RuntimeState>) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let enabled = state.clone();
+    let extensions = state.clone();
+    crate::clipboard::spawn_watcher(
+        tx,
+        std::sync::Arc::new(move || enabled.watch_enabled()),
+        std::sync::Arc::new(move || extensions.extensions()),
+        state.prompting.clone(),
+    );
+
+    tauri::async_runtime::spawn(async move {
+        while let Some(prompt) = rx.recv().await {
+            emit_log(
+                &app,
+                "info",
+                i18n::t("log.clipboard_detected", &[&prompt.urls.len().to_string()]),
+            );
+            let _ = app.emit(
+                "download://event",
+                &crate::manager::DownloadEvent::Clipboard(prompt),
+            );
+        }
+    });
+}
+
+/// Arayüz panodaki bağlantı sorusunu yanıtladı (indir / yoksay).
+#[tauri::command]
+pub fn answer_clipboard_prompt(state: State<'_, RuntimeState>) {
+    state
+        .prompting
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+// ---------------------------------------------------------------------
+// Tepsi simgesi ve pencere davranışları
+// ---------------------------------------------------------------------
+
+/// Kapatma isteği "tepsiye gizle"ye mi dönüşecek?
+pub fn close_to_tray(app: &AppHandle) -> bool {
+    app.try_state::<RuntimeState>()
+        .map(|s| s.close_to_tray.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+/// Uygulama tepsi simgesinde (pencere açılmadan) mı başlamalı?
+pub fn starts_in_tray(app: &AppHandle) -> bool {
+    app.try_state::<RuntimeState>()
+        .map(|s| s.start_in_tray.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+/// Ana pencereyi gösterir, simge durumundan çıkarır ve öne getirir.
+fn show_main_window(app: &AppHandle) -> Res<()> {
+    let window = main_window(app)?;
+    let _ = window.show();
+    let _ = window.unminimize();
+    window
+        .set_focus()
+        .map_err(|e| i18n::t("err.win_state", &[&e.to_string()]))
+}
+
+/// Ana pencereyi gösterir (tepsi menüsü ve arayüz kullanır).
+#[tauri::command]
+pub fn tray_show(app: AppHandle) -> Res<()> {
+    show_main_window(&app)
+}
+
+/// Tepsi simgesini kurar: Göster/Gizle, Tümünü Duraklat, Tümünü Sürdür, Çık.
+pub fn install_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let show = MenuItem::with_id(app, "show", i18n::t("tray.show", &[]), true, None::<&str>)?;
+    let hide = MenuItem::with_id(app, "hide", i18n::t("tray.hide", &[]), true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let pause = MenuItem::with_id(
+        app,
+        "pause_all",
+        i18n::t("tray.pause_all", &[]),
+        true,
+        None::<&str>,
+    )?;
+    let resume = MenuItem::with_id(
+        app,
+        "resume_all",
+        i18n::t("tray.resume_all", &[]),
+        true,
+        None::<&str>,
+    )?;
+    let separator2 = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", i18n::t("tray.quit", &[]), true, None::<&str>)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[&show, &hide, &separator, &pause, &resume, &separator2, &quit],
+    )?;
+
+    let mut builder = TrayIconBuilder::with_id("adm-tray")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .tooltip("ADM")
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                let _ = show_main_window(app);
+            }
+            "hide" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            "pause_all" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(manager) = app.try_state::<DownloadManager>() {
+                        let _ = manager.pause_all().await;
+                    }
+                });
+            }
+            "resume_all" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(manager) = app.try_state::<DownloadManager>() {
+                        let _ = manager.resume_all().await;
+                    }
+                });
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        });
+
+    // Simge: uygulamanın pencere simgesi kullanılır.
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+
+    builder.build(app)?;
+    Ok(())
 }

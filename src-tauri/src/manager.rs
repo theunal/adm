@@ -579,7 +579,8 @@ impl DownloadManager {
             .ids_where(|s| matches!(s, DownloadStatus::Queued | DownloadStatus::Downloading))
             .await?;
         let count = ids.len();
-        self.bulk_each(&ids, |id| async move { self.pause(id).await }).await;
+        self.bulk_each(&ids, |id| async move { self.pause(id).await })
+            .await;
         self.log_bulk("log.bulk_paused", count);
         Ok(count)
     }
@@ -589,11 +590,10 @@ impl DownloadManager {
     /// `resume` görevi yeniden başlattığı için geçmiş kayıtlarda
     /// tamamlanmış olanlar atlanır (durumları `is_resumable` değil).
     pub async fn resume_all(&self) -> Result<usize> {
-        let ids = self
-            .ids_where(|s| s.is_resumable())
-            .await?;
+        let ids = self.ids_where(|s| s.is_resumable()).await?;
         let count = ids.len();
-        self.bulk_each(&ids, |id| async move { self.resume(id).await }).await;
+        self.bulk_each(&ids, |id| async move { self.resume(id).await })
+            .await;
         self.log_bulk("log.bulk_resumed", count);
         Ok(count)
     }
@@ -604,7 +604,8 @@ impl DownloadManager {
             .ids_where(|s| matches!(s, DownloadStatus::Queued | DownloadStatus::Downloading))
             .await?;
         let count = ids.len();
-        self.bulk_each(&ids, |id| async move { self.cancel(id).await }).await;
+        self.bulk_each(&ids, |id| async move { self.cancel(id).await })
+            .await;
         self.log_bulk("log.bulk_cancelled", count);
         Ok(count)
     }
@@ -1109,9 +1110,7 @@ impl DownloadManager {
         let size_path: &Path = final_path
             .as_deref()
             .unwrap_or_else(|| Path::new(&item.file_path));
-        let downloaded = std::fs::metadata(size_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let downloaded = std::fs::metadata(size_path).map(|m| m.len()).unwrap_or(0);
 
         let mut final_item = item.clone();
         final_item.status = status;
@@ -1141,7 +1140,12 @@ impl DownloadManager {
             );
         }
         self.db
-            .update_status(id, status, final_item.completed_at, error_message.as_deref())
+            .update_status(
+                id,
+                status,
+                final_item.completed_at,
+                error_message.as_deref(),
+            )
             .await
             .ok();
 
@@ -1162,11 +1166,7 @@ impl DownloadManager {
         }
         // Ayar açıksa kullanıcıya kurulum yapılacağı bildirilir; sessizce
         // indirilebilir olması için `install_tool` komutu ayrıca sunulur.
-        self.log(
-            "info",
-            t("log.deno_missing", &[]),
-            None,
-        );
+        self.log("info", t("log.deno_missing", &[]), None);
     }
 
     /// İlerleme yazarı görevini başlatır.
