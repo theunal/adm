@@ -12,7 +12,9 @@
 //! | `ResumeDownloadAsync` kanal durumunu yok sayıyordu | `ChannelStates` JSON'undan gerçek kanal bazlı devam |
 //! | DB yazımı 2 saniyede bir, hatalarda sessiz | İlerleme kanalı üzerinden 500 ms'de bir güvenli yazım |
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
@@ -27,7 +29,7 @@ use crate::engine::{
     AbortSignal, DownloadEngine, EngineError, EngineSnapshot, ProgressHook, SpeedSample,
 };
 use crate::i18n::{self, t};
-use crate::models::{ChannelState, DownloadItem, DownloadStatus, file_name_from_url};
+use crate::models::{ChannelState, DownloadItem, DownloadStatus};
 
 /// Sınırlandırılmış yayın kanalı — yavaş alıcılar gecikmeyi engellemez.
 const EVENT_BUFFER: usize = 512;
@@ -42,8 +44,33 @@ const PROGRESS_WRITE_INTERVAL: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone)]
 pub struct StartRequest {
     pub url: String,
+    /// Kullanıcının seçtiği hedef dosya; `None` ise ayarlardan çözülür.
     pub file_path: Option<String>,
+    /// İstek başına kanal sayısı.
     pub channel_count: u32,
+    /// Dosya mı, yt-dlp videosu mu? (varsayılan: dosya)
+    pub kind: crate::models::DownloadKind,
+    /// Tarayıcıdan gelen ek başlıklar (Referer, User-Agent…).
+    pub headers: Vec<(String, String)>,
+    /// `Cookie` başlığı metni (uzantıdan gelir).
+    pub cookie_header: Option<String>,
+    /// Çerezleri Netscape dosyasına yaz ve indirmede kullan.
+    pub use_cookies: bool,
+}
+
+impl StartRequest {
+    /// Yalnızca URL ile temel bir istek (arayüzün "URL Ekle" akışı).
+    pub fn simple(url: String, file_path: Option<String>, channel_count: u32) -> Self {
+        Self {
+            url,
+            file_path,
+            channel_count,
+            kind: crate::models::DownloadKind::File,
+            headers: Vec::new(),
+            cookie_header: None,
+            use_cookies: false,
+        }
+    }
 }
 
 /// Arayüze yayınlanan olay türleri.
@@ -63,6 +90,10 @@ pub enum DownloadEvent {
         error_message: Option<String>,
         /// Motorun bildirdiği kısa durum metni (seçili dilde).
         phase: String,
+        /// yt-dlp faz metni (video indirmelerinde, seçili dilde).
+        stage: String,
+        /// yt-dlp ham çıktısı (detay penceresindeki günlük).
+        log: Option<String>,
     },
     /// Bir indirme bitti (tamamlandı / başarısız / duraklatıldı / iptal).
     #[serde(rename_all = "camelCase")]
@@ -77,6 +108,32 @@ pub enum DownloadEvent {
         message: String,
         download_id: Option<i64>,
     },
+    /// Tarayıcı köprüsünün durumu (durum çubuğu göstergesi).
+    #[serde(rename_all = "camelCase")]
+    Bridge {
+        running: bool,
+        port: u16,
+        error: Option<String>,
+    },
+    /// Tarayıcıdan köprü bağlantısı (durum çubuğunda tarayıcı adı).
+    #[serde(rename_all = "camelCase")]
+    BridgeConnection { browser: String },
+    /// Harici araç kurulumu olayı (yt-dlp / ffmpeg / deno).
+    #[serde(rename_all = "camelCase")]
+    Tool(crate::tools::ToolEvent),
+    /// Güncelleme denetimi sonucu.
+    #[serde(rename_all = "camelCase")]
+    Update {
+        current: String,
+        latest: Option<String>,
+        page_url: Option<String>,
+        notes: Option<String>,
+        dmg_url: Option<String>,
+        error: Option<String>,
+    },
+    /// Panoda sorulacak bağlantılar.
+    #[serde(rename_all = "camelCase")]
+    Clipboard(crate::clipboard::ClipboardPrompt),
 }
 
 impl DownloadEvent {
@@ -99,6 +156,10 @@ struct ActiveDownload {
     /// Dosya adı (log mesajlarında kullanılır).
     #[allow(dead_code)]
     file_name: String,
+    /// Video çıktılarının yazılacağı klasör.
+    output_dir: PathBuf,
+    /// yt-dlp çıktısının biriktiği günlük (son ~6000 karakter).
+    log: Arc<std::sync::Mutex<String>>,
     /// Çalışan görev için eşzamanlı kanal sayısı.
     channel_count: AtomicU32,
     /// Duraklatma/iptal sinyali.
@@ -206,22 +267,39 @@ impl DownloadManager {
     // -----------------------------------------------------------------
 
     /// Yeni indirme başlatır; oluşturulan kayıt kimliğini döner.
+    ///
+    /// Eşzamanlı indirme sınırı (`max_concurrent`) dolduysa kayıt
+    /// `Queued` olarak bekler; bir indirme bitince kuyruk pompalıdır.
     pub async fn start(&self, req: StartRequest) -> Result<i64> {
         if req.url.trim().is_empty() {
             anyhow::bail!(i18n::t("err.url_empty", &[]));
         }
 
-        let suggested = file_name_from_url(&req.url);
+        let suggested = crate::models::file_name_from_url(&req.url);
+        // MC `destinationDirectory`: kategori alt klasörleme ile çözümle.
         let file_path: PathBuf = match req.file_path.as_deref().map(str::trim) {
             Some(p) if !p.is_empty() => PathBuf::from(p),
-            // Yol verilmediyse uzantıya göre ayarlardaki hedef klasöre yaz.
-            _ => self.db.load_settings().await?.resolve_target(&suggested),
+            _ => self
+                .db
+                .load_settings()
+                .await?
+                .resolve_target_named(&suggested),
         };
 
         let file_name = file_path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or(suggested);
+
+        // Uzantıdan gelen çerezler Netscape dosyasına yazılır (MC davranışı).
+        let cookie_file = if req.use_cookies {
+            match req.cookie_header.as_deref() {
+                Some(text) if !text.trim().is_empty() => self.write_cookie_file(text).await,
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let now = Local::now();
         let item = DownloadItem {
@@ -239,6 +317,13 @@ impl DownloadManager {
             speed_mbps: 0.0,
             error_message: None,
             channels: Vec::new(),
+            kind: req.kind,
+            supports_ranges: false,
+            headers: req.headers.clone(),
+            cookie_file: cookie_file.clone(),
+            final_path: None,
+            stage: String::new(),
+            log: String::new(),
         };
 
         let id = self.db.insert(&item).await?;
@@ -255,6 +340,27 @@ impl DownloadManager {
 
         self.spawn(id).await?;
         Ok(id)
+    }
+
+    /// Çerezleri Netscape dosyasına yazar ve yolunu döner.
+    async fn write_cookie_file(&self, cookie_text: &str) -> Option<String> {
+        let path = crate::db::db_dir()
+            .join("cookies")
+            .join(format!("bridge-{}.txt", self.next_cookie_id()));
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        if tokio::fs::write(&path, cookie_text).await.is_err() {
+            return None;
+        }
+        Some(path.to_string_lossy().to_string())
+    }
+
+    /// Çerez dosyaları için tekil kimlik (ayni saniyede çakışmayı önler).
+    fn next_cookie_id(&self) -> u64 {
+        use std::sync::atomic::AtomicU64;
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        COUNTER.fetch_add(1, Ordering::SeqCst)
     }
 
     // -----------------------------------------------------------------
@@ -392,6 +498,10 @@ impl DownloadManager {
                     t("log.file_delete_failed", &[&item.file_name, &e.to_string()]),
                     Some(id),
                 ),
+            }
+            // Uzantıdan gelen çerez dosyasını da temizle (MC `remove`).
+            if let Some(cookie) = item.cookie_file.as_deref() {
+                let _ = tokio::fs::remove_file(cookie).await;
             }
         }
 
@@ -546,6 +656,71 @@ impl DownloadManager {
     }
 
     // -----------------------------------------------------------------
+    // Tarayıcı köprüsü (uzantıdan gelen istekler)
+    // -----------------------------------------------------------------
+
+    /// Köprü listenin en son 50 kaydı (uzantının `/downloads` yanıtı).
+    pub async fn bridge_downloads(&self) -> Vec<crate::models::DownloadItem> {
+        self.db
+            .list_all()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .take(50)
+            .collect()
+    }
+
+    /// Köprüden yeni indirme isteği.
+    ///
+    /// Uzantının gönderdiği URL, başlıklar ve çerezlerle kayıt oluşturur;
+    /// kimliği döner. `kind = video` ise indirme yt-dlp ile yapılır.
+    pub async fn bridge_add(
+        &self,
+        url: String,
+        headers: Vec<(String, String)>,
+        cookie_header: Option<String>,
+        kind: crate::models::DownloadKind,
+        channel_count: u32,
+    ) -> Result<i64> {
+        self.start(StartRequest {
+            url,
+            file_path: None,
+            channel_count,
+            kind,
+            headers,
+            cookie_header,
+            use_cookies: true,
+        })
+        .await
+    }
+
+    /// Köprüden eylem isteği (`pause` / `resume` / `stop` / `delete` /
+    /// `open`).
+    pub async fn bridge_action(&self, id: i64, action: &str) -> Result<()> {
+        match action {
+            "pause" => self.pause(id).await,
+            "resume" => self.resume(id).await,
+            "stop" => self.cancel(id).await,
+            "delete" => {
+                self.delete(id, true).await?;
+                Ok(())
+            }
+            "open" => {
+                let Some(item) = self.db.get(id).await? else {
+                    anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
+                };
+                let path = item
+                    .final_path
+                    .as_deref()
+                    .unwrap_or(&item.file_path)
+                    .to_string();
+                crate::commands::open_path_internal(&path)
+            }
+            other => anyhow::bail!(i18n::t("err.bridge_unknown_action", &[other])),
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Kapanış
     // -----------------------------------------------------------------
 
@@ -584,10 +759,25 @@ impl DownloadManager {
     /// bu fonksiyonu bekler; indirme bitene kadar beklemesi, arayüzdeki
     /// "ekleniyor" durumunun ve düğme kilitlerinin sürekli açık kalmasına
     /// yol açar. Bu yüzden ağır iş ayrı bir görevde çalışır.
+    ///
+    /// Eşzamanlı indirme sınırı dolduysa görev **başlatılmaz**; kayıt
+    /// `Queued` kalır ve `pump_queue` ile ileride yeniden denenir.
     async fn spawn(&self, id: i64) -> Result<()> {
         let Some(item) = self.db.get(id).await? else {
             anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
         };
+
+        // Eşzamanlılık sınırı (MC `pumpQueue`).
+        let settings = self.db.load_settings().await?;
+        if !settings.auto_start || self.active.len() >= settings.max_concurrent as usize {
+            if !item.status.is_resumable() && item.status != DownloadStatus::Queued {
+                self.db
+                    .update_status(id, DownloadStatus::Queued, None, None)
+                    .await?;
+                self.emit(DownloadEvent::ListChanged);
+            }
+            return Ok(());
+        }
 
         // Kanal bazlı devam: yalnızca gerçekten bir şey indirilmişse.
         let resume_states: Vec<ChannelState> =
@@ -598,11 +788,17 @@ impl DownloadManager {
             };
 
         let signal = AbortSignal::new();
+        let output_dir = PathBuf::from(&item.file_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(crate::manager::default_download_dir);
         let ad = Arc::new(ActiveDownload {
             id,
             url: item.url.clone(),
             file_path: PathBuf::from(&item.file_path),
             file_name: item.file_name.clone(),
+            output_dir,
+            log: Arc::new(std::sync::Mutex::new(item.log.clone())),
             channel_count: AtomicU32::new(item.channel_count.max(1)),
             signal: signal.clone(),
             paused: AtomicBool::new(false),
@@ -620,13 +816,9 @@ impl DownloadManager {
         // Ağır iş ayrı bir görevde çalışır: `start_download` / `resume_download`
         // komutları indirme bitmeden dönmelidir, aksi halde arayüzdeki
         // "Ekleniyor…" durumu ve düğme kilitleri sürekli açık kalır.
-        let engine = self.engine;
         let me = self.clone();
         tokio::spawn(async move {
-            if let Err(e) = me
-                .run_download(id, item, ad, signal, engine, resume_states)
-                .await
-            {
+            if let Err(e) = me.run_download(id, item, ad, signal, resume_states).await {
                 me.log("error", t("log.task_failed", &[&e.to_string()]), Some(id));
             }
         });
@@ -634,16 +826,57 @@ impl DownloadManager {
         Ok(())
     }
 
+    /// Kuyruktaki bekleyen indirmeleri sınırın izin verdiği kadar başlatır.
+    ///
+    /// Dönüş tipi elle yazılmıştır: `spawn` → `run_download` → `pump_queue`
+    /// → `spawn` çağrı döngüsü olduğu için rustc `Send` çıkarımını
+    /// tamamlayamaz. `dyn Future + Send` sınırı döngüyü kırar ve görevin
+    /// gerçekten gönderilebilir olduğunu derleyiciye doğrulatır.
+    pub fn pump_queue(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            let queued: Vec<i64> = self
+                .db
+                .list_all()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|i| i.status == DownloadStatus::Queued && !self.active.contains_key(&i.id))
+                .map(|i| i.id)
+                .take(64)
+                .collect();
+
+            for id in queued {
+                let limit = self
+                    .db
+                    .load_settings()
+                    .await
+                    .map(|s| s.max_concurrent)
+                    .unwrap_or(3);
+                if self.active.len() as u32 >= limit {
+                    break;
+                }
+                let _ = self.spawn(id).await;
+            }
+        })
+    }
+
     /// İndirmeyi baştan sona yürütür: motor → ilerleme yazarı → sonuç.
+    ///
+    /// Kaydın türüne göre iki yol ayrılır:
+    /// * `kind = file` → çok kanallı motor
+    /// * `kind = video` → yt-dlp alt süreci
     async fn run_download(
         &self,
         id: i64,
         item: DownloadItem,
         ad: Arc<ActiveDownload>,
         signal: AbortSignal,
-        engine: DownloadEngine,
         resume_states: Vec<ChannelState>,
     ) -> Result<()> {
+        if item.kind.is_video() {
+            return self.run_video(id, item, ad, signal).await;
+        }
+
         // Motorun periyodik yayıncısı senkron bir kanca çağırır; bu kancayı
         // async kanala bağlayıp ayrı bir görevde işliyoruz. Böylece motor
         // Tauri/DB katmanına bağımlı olmaz.
@@ -654,9 +887,25 @@ impl DownloadManager {
             let _ = tx.try_send(snap);
         });
 
+        // Sunucu bilgileri öğrenildiğinde `supportsRanges` ve toplam boyutu
+        // kayda yaz (MC `handleProbe`; dosya adı değişikliği dosya açıldıktan
+        // sonra mümkün olmadığı için yalnızca bilgi alanları güncellenir).
+        let probe_db = self.db.clone();
+        let probe_hook: crate::engine::ProbeHook = Arc::new(move |probe| {
+            let db = probe_db.clone();
+            tokio::spawn(async move {
+                if let Ok(Some(mut existing)) = db.get(id).await {
+                    existing.total_bytes = existing.total_bytes.max(probe.total_bytes);
+                    existing.supports_ranges = probe.accepts_ranges;
+                    let _ = db.update_progress(&existing).await;
+                }
+            });
+        });
+
         let channel_count = ad.channels();
         let url = ad.url.clone();
         let path = ad.file_path.clone();
+        let engine = self.engine;
 
         let driver = tokio::spawn(async move {
             engine
@@ -671,6 +920,7 @@ impl DownloadManager {
                     },
                     signal,
                     hook,
+                    probe_hook,
                 )
                 .await
         });
@@ -707,11 +957,216 @@ impl DownloadManager {
         // Sonuç önce yazılır, sonra görev "bitti" işaretlenir: böylece
         // `pause`/`cancel` bekleyen çağıranlar görevin gerçekten bittiğini
         // görmek için `running` bayrağını kullanabilir.
-        self.finalize(id, &item, &ad, states, result, paused).await;
+        let supports_ranges = self
+            .db
+            .get(id)
+            .await
+            .ok()
+            .flatten()
+            .map(|i| i.supports_ranges)
+            .unwrap_or(false);
+        self.finalize(id, &item, &ad, states, result, paused, supports_ranges)
+            .await;
 
         ad.running.store(false, Ordering::SeqCst);
         self.active.remove(&id);
+        self.pump_queue().await;
         Ok(())
+    }
+
+    /// yt-dlp ile video indirme akışı.
+    ///
+    /// YouTube'un oturumlu istemci reddi (`page needs to be reloaded`)
+    /// durumunda çerezler kapatılarak **bir kez** daha denenir (MC davranışı).
+    async fn run_video(
+        &self,
+        id: i64,
+        item: DownloadItem,
+        ad: Arc<ActiveDownload>,
+        signal: AbortSignal,
+    ) -> Result<()> {
+        let settings = self.db.load_settings().await?;
+
+        // YouTube için deno gerekir; kurulu değilse kullanıcıya bir kez
+        // sorulur (sessizce denenir; başarısızsa hata mesajı görür).
+        if crate::video::url_is_youtube(&item.url) && !settings.deno_prompt_suppressed {
+            self.request_deno_if_missing().await;
+        }
+
+        let mut use_cookies = true;
+        let (final_path, error) = loop {
+            let (tx, mut rx) = mpsc::unbounded_channel::<crate::video::VideoEvent>();
+            let request = crate::video::VideoRequest {
+                url: item.url.clone(),
+                output_dir: ad.output_dir.clone(),
+                format_args: settings.ytdlp_format_arguments(),
+                headers: item.headers.clone(),
+                cookie_file: item.cookie_file.clone(),
+                use_cookies,
+                custom_ytdlp_path: settings.ytdlp_path.clone(),
+            };
+
+            // Alt süreci çalıştır; kapatıldığında yt-dlp de sonlanır.
+            let runner = tokio::spawn(async move { crate::video::run(request, tx).await });
+
+            // Olayları dinleyen görev: ilerlemeyi yayınlar, günlüğü biriktirir.
+            let me = self.clone();
+            let ad_events = ad.clone();
+            let listener = tokio::spawn(async move {
+                let mut final_path: Option<PathBuf> = None;
+                let mut error: Option<String> = None;
+                let mut log = ad_events
+                    .log
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                let mut stage = String::new();
+                let mut last_emit = std::time::Instant::now();
+
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        crate::video::VideoEvent::Progress(p) => {
+                            let total = p.total.max(0) as u64;
+                            if last_emit.elapsed() >= std::time::Duration::from_millis(400) {
+                                last_emit = std::time::Instant::now();
+                                me.emit(DownloadEvent::Progress {
+                                    id,
+                                    downloaded_bytes: p.downloaded.max(0) as u64,
+                                    total_bytes: total,
+                                    speed_mbps: p.speed / (1024.0 * 1024.0),
+                                    status: DownloadStatus::Downloading,
+                                    channels: Vec::new(),
+                                    speed_history: Vec::new(),
+                                    error_message: None,
+                                    phase: stage.clone(),
+                                    stage: stage.clone(),
+                                    log: Some(log.clone()),
+                                });
+                            }
+                        }
+                        crate::video::VideoEvent::Stage(s) => stage = s,
+                        crate::video::VideoEvent::Log(line) => {
+                            log.push_str(&line);
+                            log.push('\n');
+                            if log.len() > 6000 {
+                                log = log[log.len() - 6000..].to_string();
+                            }
+                        }
+                        crate::video::VideoEvent::FinalPath(path) => final_path = Some(path),
+                        crate::video::VideoEvent::Finished(result) => match result {
+                            Ok(Some(path)) => final_path = Some(path),
+                            Ok(None) => {}
+                            Err(msg) => error = Some(msg),
+                        },
+                    }
+                }
+
+                // Günlüğü paylaşılan alana yaz.
+                *ad_events.log.lock().unwrap_or_else(|e| e.into_inner()) = log;
+                (final_path, error)
+            });
+
+            // Kullanıcı duraklatınca/iptal edince alt süreci durdur ve bekle.
+            let (final_path, error) = tokio::select! {
+                result = listener => result.unwrap_or((None, None)),
+                _ = signal.wait() => {
+                    runner.abort();
+                    (None, None)
+                }
+            };
+
+            match error {
+                Some(msg) if use_cookies && crate::video::is_signed_in_client_failure(&msg) => {
+                    // Çerez kapatılıp bir kez daha denenir.
+                    use_cookies = false;
+                    continue;
+                }
+                other => break (final_path, other),
+            }
+        };
+
+        let (status, error_message, log_level, log_msg) = match error {
+            Some(msg) => (
+                DownloadStatus::Failed,
+                Some(msg.clone()),
+                "error",
+                t("log.failed", &[&item.file_name, &msg]),
+            ),
+            None => (
+                DownloadStatus::Completed,
+                None,
+                "success",
+                t("log.completed", &[&item.file_name]),
+            ),
+        };
+        let _ = log_level;
+
+        // Dosya adı final yoldan türetilir.
+        let file_name = final_path
+            .as_ref()
+            .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+            .unwrap_or_else(|| item.file_name.clone());
+        let size_path: &Path = final_path
+            .as_deref()
+            .unwrap_or_else(|| Path::new(&item.file_path));
+        let downloaded = std::fs::metadata(size_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        let mut final_item = item.clone();
+        final_item.status = status;
+        final_item.error_message = error_message.clone();
+        final_item.file_name = file_name;
+        final_item.downloaded_bytes = downloaded;
+        final_item.total_bytes = if status == DownloadStatus::Completed {
+            downloaded
+        } else {
+            item.total_bytes
+        };
+        final_item.final_path = final_path.as_ref().map(|p| p.to_string_lossy().to_string());
+        final_item.stage = String::new();
+        final_item.log = ad.log.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        final_item.completed_at = if status == DownloadStatus::Completed {
+            Some(Local::now())
+        } else {
+            None
+        };
+        final_item.last_updated = Local::now();
+
+        if let Err(e) = self.db.update_progress(&final_item).await {
+            self.log(
+                "error",
+                t("log.final_state_failed", &[&e.to_string()]),
+                Some(id),
+            );
+        }
+        self.db
+            .update_status(id, status, final_item.completed_at, error_message.as_deref())
+            .await
+            .ok();
+
+        self.log(log_level, log_msg, Some(id));
+        self.emit(DownloadEvent::Completed { id, status });
+        self.emit(DownloadEvent::ListChanged);
+
+        ad.running.store(false, Ordering::SeqCst);
+        self.active.remove(&id);
+        self.pump_queue().await;
+        Ok(())
+    }
+
+    /// deno kurulu değilse kullanıcıya kurulum teklifi (Tauri diyalogu).
+    async fn request_deno_if_missing(&self) {
+        if crate::tools::locate(crate::tools::Tool::Deno, "").is_some() {
+            return;
+        }
+        // Ayar açıksa kullanıcıya kurulum yapılacağı bildirilir; sessizce
+        // indirilebilir olması için `install_tool` komutu ayrıca sunulur.
+        self.log(
+            "info",
+            t("log.deno_missing", &[]),
+            None,
+        );
     }
 
     /// İlerleme yazarı görevini başlatır.
@@ -755,6 +1210,8 @@ impl DownloadManager {
                     speed_history: snap.speed_history.clone(),
                     error_message: None,
                     phase: snap.phase.clone(),
+                    stage: String::new(),
+                    log: None,
                 });
 
                 // Tüm kanallar bittiyse motor zaten bitmek üzere; erken
@@ -781,6 +1238,13 @@ impl DownloadManager {
                         speed_mbps: snap.speed_mbps,
                         error_message: None,
                         channels: snap.channels.clone(),
+                        kind: item.kind,
+                        supports_ranges: item.supports_ranges,
+                        headers: item.headers.clone(),
+                        cookie_file: item.cookie_file.clone(),
+                        final_path: None,
+                        stage: String::new(),
+                        log: item.log.clone(),
                     };
                     if let Err(e) = db.update_progress(&progress_item).await {
                         let _ = events.send(DownloadEvent::log(
@@ -797,6 +1261,11 @@ impl DownloadManager {
     }
 
     /// Görevin sonucunu kalıcı kayda ve olay kanalına yazar.
+    ///
+    /// MC `handleFinish` portu: tamamlanınca dosya başka bir kayıtla
+    /// çakışıyorsa **benzersiz** bir ad bulunur (`ad (2).uzantı`), hedef
+    /// klasör ayarlara göre düzenlenir ve nihai yol kayda yazılır.
+    #[allow(clippy::too_many_arguments)]
     async fn finalize(
         &self,
         id: i64,
@@ -805,6 +1274,7 @@ impl DownloadManager {
         states: Vec<ChannelState>,
         result: Result<Vec<ChannelState>, EngineError>,
         paused: bool,
+        supports_ranges: bool,
     ) {
         let downloaded = downloaded_from_channels(&states);
         let total = total_from_channels(&states);
@@ -833,6 +1303,16 @@ impl DownloadManager {
                 None,
                 "warn",
                 t("log.cancelled_name", &[&item.file_name]),
+            ),
+            // Fallback tek akışa düşülerek çözülür; burada gerçek hatadır.
+            Err(EngineError::Fallback) => (
+                DownloadStatus::Failed,
+                Some(i18n::canon("err.no_partial_support", &[])),
+                "error",
+                t(
+                    "log.failed",
+                    &[&item.file_name, &i18n::t("err.no_partial_support", &[])],
+                ),
             ),
             Err(EngineError::Failed(msg)) => (
                 DownloadStatus::Failed,
@@ -863,11 +1343,39 @@ impl DownloadManager {
             None
         };
 
+        // Tamamlanınca hedef klasörü ve dosya adı MC gibi kesinleşir:
+        // çakışma varsa `ad (2).uzantı` biçiminde boşaltılır.
+        let (file_path, file_name, final_path) = if status == DownloadStatus::Completed {
+            let settings = self.db.load_settings().await.unwrap_or_default();
+            let dir = settings.resolve_dir_named(&item.file_name);
+            let desired = dir.join(&item.file_name);
+            let (unique, name) = unique_destination(&desired, &item.file_name);
+            // Dosya zaten doğru yerdeyse taşıma; yoksa taşı.
+            let current = PathBuf::from(&item.file_path);
+            if current != unique && current.exists() {
+                if let Some(parent) = unique.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                if tokio::fs::rename(&current, &unique).await.is_err() {
+                    // Aynı birim dışına taşıma gerekiyorsa kopyala+sil.
+                    let _ = tokio::fs::copy(&current, &unique).await;
+                    let _ = tokio::fs::remove_file(&current).await;
+                }
+            }
+            (
+                unique.to_string_lossy().to_string(),
+                name,
+                Some(unique.to_string_lossy().to_string()),
+            )
+        } else {
+            (item.file_path.clone(), item.file_name.clone(), None)
+        };
+
         let final_item = DownloadItem {
             id,
             url: item.url.clone(),
-            file_path: item.file_path.clone(),
-            file_name: item.file_name.clone(),
+            file_path,
+            file_name,
             total_bytes: total,
             downloaded_bytes: downloaded,
             channel_count: ad.channels(),
@@ -878,6 +1386,13 @@ impl DownloadManager {
             speed_mbps: 0.0,
             error_message: error_message.clone(),
             channels: states.clone(),
+            kind: item.kind,
+            supports_ranges,
+            headers: item.headers.clone(),
+            cookie_file: item.cookie_file.clone(),
+            final_path,
+            stage: String::new(),
+            log: item.log.clone(),
         };
 
         if let Err(e) = self.db.update_progress(&final_item).await {
@@ -895,6 +1410,36 @@ impl DownloadManager {
         self.log(log_level, log_msg, Some(id));
         self.emit(DownloadEvent::Completed { id, status });
         self.emit(DownloadEvent::ListChanged);
+    }
+}
+
+/// Hedef dosya çakışıyorsa benzersiz bir yol bulur.
+///
+/// `ad.zip` → `ad (2).zip` → `ad (3).zip` … (MC `uniqueDestination`).
+pub fn unique_destination(desired: &Path, file_name: &str) -> (PathBuf, String) {
+    if !desired.exists() {
+        return (desired.to_path_buf(), file_name.to_string());
+    }
+    let parent = desired.parent().unwrap_or_else(|| Path::new("."));
+    let (stem, ext) = split_name(file_name);
+    for n in 2..1000u32 {
+        let candidate = match &ext {
+            Some(e) => format!("{stem} ({n}).{e}"),
+            None => format!("{stem} ({n})"),
+        };
+        let path = parent.join(&candidate);
+        if !path.exists() {
+            return (path, candidate);
+        }
+    }
+    (desired.to_path_buf(), file_name.to_string())
+}
+
+/// `ad.zip` → ("ad", Some("zip")); uzantısız → ("ad", None).
+fn split_name(file_name: &str) -> (String, Option<String>) {
+    match file_name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), Some(ext.to_string())),
+        _ => (file_name.to_string(), None),
     }
 }
 

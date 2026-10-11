@@ -49,11 +49,7 @@ pub async fn start_download(
     channel_count: u32,
 ) -> Res<i64> {
     manager
-        .start(StartRequest {
-            url,
-            file_path,
-            channel_count,
-        })
+        .start(StartRequest::simple(url, file_path, channel_count))
         .await
         .map_err(tr)
 }
@@ -212,6 +208,30 @@ pub fn open_path(app: AppHandle, path: String) -> Res<()> {
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))
+}
+
+/// Dosyayı sistemde açar — `AppHandle` olmadan.
+///
+/// Köprü (`bridge.rs`) katmanından çağrılır; orada Tauri durumu yoktur, bu
+/// yüzden platform kabuğu üzerinden açılır.
+pub fn open_path_internal(path: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    let (program, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", path]);
+    #[cfg(target_os = "macos")]
+    let (program, args): (&str, Vec<&str>) = ("open", vec![path]);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![path]);
+
+    let status = std::process::Command::new(program)
+        .args(&args)
+        .status()
+        .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(i18n::t("err.open_file", &[path]));
+    }
 }
 
 /// Dosyanın bulunduğu klasörü açar (dosya adı verilmeden de çalışır).

@@ -503,6 +503,132 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "{0} olay kaçırıldı, arayüz yeniden senkronlanıyor",
         "{0} events were dropped, resynchronizing the interface",
     ),
+    // -----------------------------------------------------------------
+    // MC portu: araçlar (yt-dlp / ffmpeg / deno)
+    // -----------------------------------------------------------------
+    ("err.tool_busy", "Başka bir araç kurulumu sürüyor", "Another tool installation is in progress"),
+    (
+        "err.tool_dir_failed",
+        "Araç klasörü oluşturulamadı: {0}",
+        "Could not create the tools folder: {0}",
+    ),
+    (
+        "err.tool_download_failed",
+        "İndirilemedi: {0}",
+        "Could not download: {0}",
+    ),
+    ("err.tool_http", "İndirme başarısız (HTTP {0}): {1}", "Download failed (HTTP {0}): {1}"),
+    (
+        "err.tool_write_failed",
+        "Dosya yazılamadı: {0}",
+        "Could not write the file: {0}",
+    ),
+    (
+        "err.tool_read_failed",
+        "Dosya okunamadı: {0}",
+        "Could not read the file: {0}",
+    ),
+    (
+        "err.tool_not_runnable",
+        "{0} çalıştırılamadı (indirme bozuk olabilir)",
+        "{0} could not be run (the download may be corrupt)",
+    ),
+    (
+        "err.tool_install_failed",
+        "{0} kurulamadı",
+        "{0} could not be installed",
+    ),
+    (
+        "err.tool_zip_open",
+        "Arşiv açılamadı: {0}",
+        "Could not open the archive: {0}",
+    ),
+    ("err.tool_zip_read", "Arşiv bozuk", "The archive is corrupt"),
+    (
+        "err.tool_zip_missing",
+        "Arşivde {0} bulunamadı",
+        "{0} was not found in the archive",
+    ),
+    (
+        "err.tool_checksum",
+        "Sağlama toplamı uyuşmuyor, dosya silindi",
+        "The checksum did not match; the file was deleted",
+    ),
+    ("tool.downloading", "İndiriliyor: {0}", "Downloading: {0}"),
+    ("tool.verifying", "Doğrulanıyor…", "Verifying…"),
+    // -----------------------------------------------------------------
+    // MC portu: video (yt-dlp)
+    // -----------------------------------------------------------------
+    ("err.ytdlp_missing", "yt-dlp kurulu değil", "yt-dlp is not installed"),
+    (
+        "err.ytdlp_spawn_failed",
+        "yt-dlp başlatılamadı: {0}",
+        "Could not start yt-dlp: {0}",
+    ),
+    ("err.ytdlp_exit_code", "yt-dlp {0} koduyla çıktı", "yt-dlp exited with code {0}"),
+    (
+        "err.ytdlp_wait_failed",
+        "yt-dlp beklenemedi: {0}",
+        "Could not wait for yt-dlp: {0}",
+    ),
+    ("stage.downloading_audio", "Ses indiriliyor…", "Downloading audio…"),
+    ("stage.downloading_video", "Video indiriliyor…", "Downloading video…"),
+    ("stage.downloading", "İndiriliyor…", "Downloading…"),
+    ("stage.merging", "Video ve ses birleştiriliyor (ffmpeg)…", "Merging video and audio (ffmpeg)…"),
+    ("stage.converting", "Kapsayıcı dönüştürülüyor (ffmpeg)…", "Converting container (ffmpeg)…"),
+    ("stage.extracting_audio", "Ses çıkarılıyor (ffmpeg)…", "Extracting audio (ffmpeg)…"),
+    ("stage.selected", "Seçilen: {0}", "Selected: {0}"),
+    ("stage.already_downloaded", "Dosya zaten indirilmiş", "The file has already been downloaded"),
+    // -----------------------------------------------------------------
+    // MC portu: sınırlama ve güncelleme
+    // -----------------------------------------------------------------
+    (
+        "err.throttled",
+        "Sunucu istekleri sınırlandırıyor ({0}); {1} deneme başarısız oldu",
+        "The server is throttling requests ({0}); {1} attempts failed",
+    ),
+    (
+        "err.update_check_failed",
+        "Güncelleme denetlenemedi: {0}",
+        "Could not check for updates: {0}",
+    ),
+    ("err.update_http", "Güncelleme denetlenemedi (HTTP {0})", "Could not check for updates (HTTP {0})"),
+    (
+        "err.update_parse_failed",
+        "Sürüm bilgisi okunamadı: {0}",
+        "Could not read the release info: {0}",
+    ),
+    // -----------------------------------------------------------------
+    // MC portu: tarayıcı köprüsü ve site girişi
+    // -----------------------------------------------------------------
+    (
+        "err.bridge_origin",
+        "Köprü isteği uzantı kaynaklı değil",
+        "The bridge request did not come from the extension",
+    ),
+    ("err.bridge_host", "Köprü isteği yerel adrese gitmiyor", "The bridge request did not target a local address"),
+    ("err.bridge_empty_url", "İndirme adresi boş", "The download URL is empty"),
+    ("err.bridge_bad_json", "Gönderilen veri okunamadı", "The submitted data could not be read"),
+    ("err.bridge_unknown_action", "Bilinmeyen eylem: {0}", "Unknown action: {0}"),
+    ("err.bridge_download_not_found", "İndirme bulunamadı (#{0})", "The download was not found (#{0})"),
+    (
+        "err.site_login_cookies",
+        "Çerezler okunamadı: {0}",
+        "Could not read the cookies: {0}",
+    ),
+    ("log.cookie_written", "Site girişi çerezleri kaydedildi ({0} çerez)", "Site login cookies saved ({0} cookies)"),
+    ("log.bridge_started", "Tarayıcı köprüsü 127.0.0.1:{0} adresinde başladı", "The browser bridge started on 127.0.0.1:{0}"),
+    ("log.bridge_stopped", "Tarayıcı köprüsü durduruldu", "The browser bridge stopped"),
+    ("log.bridge_failed", "Tarayıcı köprüsü başlatılamadı: {0}", "The browser bridge could not start: {0}"),
+    (
+        "log.bridge_connection",
+        "Tarayıcı bağlantısı: {0}",
+        "Browser connection: {0}",
+    ),
+    ("log.clipboard_detected", "Panoda {0} bağlantı bulundu", "Found {0} links in the clipboard"),
+    ("log.deno_missing", "deno kurulu değil; YouTube videoları için gerekli", "deno is not installed; it is required for YouTube videos"),
+    ("log.tool_installed", "{0} kuruldu (sürüm {1})", "{0} installed (version {1})"),
+    ("log.update_available", "Yeni sürüm mevcut: {0}", "A new version is available: {0}"),
 ];
 
 /// Anahtarı tabloda arar.

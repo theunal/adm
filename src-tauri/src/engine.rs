@@ -46,6 +46,8 @@ fn cerr2(key: &str, a: &str, b: &str) -> EngineError {
 fn emsg(e: &EngineError) -> String {
     match e {
         EngineError::Aborted => t("status.aborted", &[]),
+        // Fallback içseldir; kullanıcıya düşerse "aralık desteklenmiyor" der.
+        EngineError::Fallback => t("err.no_partial_support", &[]),
         EngineError::Failed(msg) => i18n::render(msg),
     }
 }
@@ -54,14 +56,17 @@ fn emsg(e: &EngineError) -> String {
 /// sistem çağrısıyla diske yazılır.
 const CHUNK_SIZE: usize = 256 * 1024;
 
-/// Bir kanal için azami yeniden deneme sayısı (WPF sürümünde sınırsızdı).
-const MAX_RETRIES_PER_CHANNEL: u32 = 3;
+/// Bir kanal için azami yeniden deneme sayısı (MC: 12).
+const MAX_RETRIES_PER_CHANNEL: u32 = 12;
 
-/// Yeniden denemeler arası temel bekleme (üstel olarak artar).
-const RETRY_BASE_DELAY: Duration = Duration::from_millis(800);
+/// Sunucu sınırlamasında beklenen temel süre (MC: 1.5 sn × deneme).
+const THROTTLE_BASE_DELAY: Duration = Duration::from_millis(1500);
 
-/// Geri çekilmenin üst sınırı.
-const RETRY_MAX_DELAY: Duration = Duration::from_secs(8);
+/// Geri çekilmenin üst sınırı (MC: 15 sn).
+const THROTTLE_MAX_DELAY: Duration = Duration::from_secs(15);
+
+/// Sunucunun sınırlandırdığını bildirdiği durum kodları (MC `throttle`).
+const THROTTLE_STATUSES: [u16; 6] = [408, 425, 429, 500, 502, 503];
 
 /// İlerleme olaylarının yayınlanma aralığı.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
@@ -89,6 +94,10 @@ const SPEED_HISTORY_LEN: usize = 60;
 pub enum EngineError {
     /// Kullanıcı duraklattı veya iptal etti.
     Aborted,
+    /// Sunucu `Range` isteğine `200` döndürdü: tek akışa düşülmeli.
+    ///
+    /// Dahili sinyaldir; kullanıcıya gösterilmez.
+    Fallback,
     /// Gerçek bir hata (kanonik mesaj taşır).
     Failed(String),
 }
@@ -130,6 +139,12 @@ impl AbortSignal {
 
     pub fn is_aborted(&self) -> bool {
         self.flag.load(Ordering::SeqCst)
+    }
+
+    /// İptal bayrağını temizler — tek akışa düşme (fallback) sonrası aynı
+    /// indirmenin yeniden başlatılabilmesi için kullanılır.
+    pub fn resume(&self) {
+        self.flag.store(false, Ordering::SeqCst);
     }
 
     /// İptal edilene kadar bekle; `true` dönerse iptal edildi.
@@ -230,15 +245,25 @@ fn header_string(
 }
 
 /// Sunucudan alınan dosya bilgileri.
+///
+/// Probe sonrası manager'a bildirilir (MC `handleProbe`): dosya adı ve
+/// uzantı bu bilgiye göre düzeltilir.
 #[derive(Debug, Clone, Default)]
-struct ProbeInfo {
-    total_bytes: u64,
-    accepts_ranges: bool,
+pub struct ProbeInfo {
+    pub total_bytes: u64,
+    pub accepts_ranges: bool,
     #[allow(dead_code)]
-    etag: Option<String>,
+    pub etag: Option<String>,
     #[allow(dead_code)]
-    last_modified: Option<String>,
+    pub last_modified: Option<String>,
+    /// `Content-Disposition` başlığı (dosya adı önerisi için).
+    pub content_disposition: Option<String>,
+    /// `Content-Type` başlığı (uzantı önerisi için).
+    pub content_type: Option<String>,
 }
+
+/// Probe sonuç kancası — manager dosya adını düzeltmek için kullanır.
+pub type ProbeHook = Arc<dyn Fn(ProbeInfo) + Send + Sync>;
 
 fn net_error_message(e: &reqwest::Error) -> String {
     let key = if e.is_timeout() {
@@ -309,6 +334,9 @@ async fn resolve_url(
 
         let etag = header_string(resp.headers(), reqwest::header::ETAG);
         let last_modified = header_string(resp.headers(), reqwest::header::LAST_MODIFIED);
+        let content_disposition =
+            header_string(resp.headers(), reqwest::header::CONTENT_DISPOSITION);
+        let content_type = header_string(resp.headers(), reqwest::header::CONTENT_TYPE);
 
         // 206 -> boyut kesin, Range desteği var.
         if status == reqwest::StatusCode::PARTIAL_CONTENT {
@@ -325,6 +353,8 @@ async fn resolve_url(
                     accepts_ranges: total > 0,
                     etag,
                     last_modified,
+                    content_disposition,
+                    content_type,
                 },
             ));
         }
@@ -338,6 +368,8 @@ async fn resolve_url(
                     accepts_ranges: false,
                     etag,
                     last_modified,
+                    content_disposition,
+                    content_type,
                 },
             ));
         }
@@ -437,6 +469,8 @@ impl DownloadEngine {
     /// * `resume_states` — kanal bazlı devam için önceki kanal durumları
     /// * `signal` — duraklatma/iptal sinyali
     /// * `on_progress` — periyodik ilerleme bildirimi
+    /// * `on_probe` — sunucu bilgileri öğrenildiğinde bir kez çağrılır
+    #[allow(clippy::too_many_arguments)]
     pub async fn download(
         &self,
         url: &str,
@@ -445,71 +479,93 @@ impl DownloadEngine {
         resume_states: Option<&[ChannelState]>,
         signal: AbortSignal,
         on_progress: ProgressHook,
+        on_probe: ProbeHook,
     ) -> Result<Vec<ChannelState>, EngineError> {
         // 1) Yönlendirmeleri çöz ve dosya boyutunu öğren.
         let (final_url, probe) = resolve_url(url, &signal, true).await?;
+        on_probe(probe.clone());
 
         let total_bytes = probe.total_bytes;
-        let supports_ranges = probe.accepts_ranges && total_bytes > 0;
 
         // 2) Dosyayı hazırla ve kanal planını kur (resume varsa geri yükle).
-        let planned = self.prepare_file(
-            dest,
-            total_bytes,
-            channel_count,
-            resume_states,
-            supports_ranges,
-        )?;
-
-        let channels: Vec<Arc<SharedChannel>> = planned
-            .into_iter()
-            .map(|c| Arc::new(SharedChannel::new(c)))
-            .collect();
-
-        // Zaten tamamlanmış bir indirme (dosya dolu ama kayıt güncel değil).
-        if total_bytes > 0 && all_finished(&channels) {
-            on_progress(EngineSnapshot {
-                total_bytes,
-                downloaded_bytes: total_bytes,
-                speed_mbps: 0.0,
-                channels: snapshot_all(&channels),
-                speed_history: Vec::new(),
-                phase: t("phase.completed", &[]),
-                done: true,
-            });
-            return Ok(snapshot_all(&channels));
-        }
-
-        // 3) İlerleme yayıncısı (hız hesabı + kanal anlık görüntüsü).
-        // Kancanın kopyasını yayıncıya ver; son durum bildirimi için
-        // asıl kanca bu fonksiyonda kalır.
-        let publisher = tokio::spawn(progress_publisher(
-            Arc::new(channels.clone()),
-            total_bytes,
-            signal.clone(),
-            on_progress.clone(),
-        ));
-
-        // 4) Kanalları eşzamanlı çalıştır.
-        let outcome = self
-            .run_channels(
-                &final_url,
+        //
+        // Sunucu probe'a 206 ile yanıt verip kanal isteğinde `200` döndürürse
+        // (MC'nin `fallbackToSingle` davranışı) indirme bir kez tek akışa
+        // düşürülerek yeniden başlatılır.
+        let mut single_stream = false;
+        // Döngü, son kanal kurulumunu da dışarı taşır: tek akışa düşüldüğünde
+        // kanallar yeniden kurulur ve tamamlanma doğrulaması son kurulumu
+        // okumak zorundadır.
+        let (outcome, channels) = loop {
+            let planned = self.prepare_file(
                 dest,
-                channels.clone(),
+                total_bytes,
+                channel_count,
+                if single_stream { None } else { resume_states },
+                !single_stream,
+            )?;
+
+            let channels: Vec<Arc<SharedChannel>> = planned
+                .into_iter()
+                .map(|c| Arc::new(SharedChannel::new(c)))
+                .collect();
+
+            // Zaten tamamlanmış bir indirme (dosya dolu ama kayıt güncel değil).
+            if total_bytes > 0 && all_finished(&channels) {
+                on_progress(EngineSnapshot {
+                    total_bytes,
+                    downloaded_bytes: total_bytes,
+                    speed_mbps: 0.0,
+                    channels: snapshot_all(&channels),
+                    speed_history: Vec::new(),
+                    phase: t("phase.completed", &[]),
+                    done: true,
+                });
+                return Ok(snapshot_all(&channels));
+            }
+
+            // 3) İlerleme yayıncısı (hız hesabı + kanal anlık görüntüsü).
+            let publisher = tokio::spawn(progress_publisher(
+                Arc::new(channels.clone()),
                 total_bytes,
                 signal.clone(),
-                supports_ranges,
-            )
-            .await;
+                on_progress.clone(),
+            ));
 
-        // 5) Yayıncıyı durdur.
-        publisher.abort();
-        let _ = publisher.await;
+            // 4) Kanalları eşzamanlı çalıştır.
+            let attempt = self
+                .run_channels(
+                    &final_url,
+                    dest,
+                    channels.clone(),
+                    total_bytes,
+                    signal.clone(),
+                    !single_stream,
+                )
+                .await;
 
-        let states = snapshot_all(&channels);
+            // 5) Yayıncıyı durdur.
+            publisher.abort();
+            let _ = publisher.await;
+
+            if matches!(attempt, Err(EngineError::Fallback)) && !single_stream {
+                // Sunucu aralığı yok saydı: tek akışa düş ve baştan başlat.
+                single_stream = true;
+                signal.resume();
+                continue;
+            }
+            // Tek akışa düşüldükten sonra tekrar `200` geldiyse gerçek hata.
+            let attempt = match attempt {
+                Err(EngineError::Fallback) => Err(cerr("err.no_partial_support")),
+                other => other,
+            };
+            break (attempt, channels);
+        };
+
         outcome?;
 
         // 6) Tamamlanma doğrulaması: her bayt yazıldı mı?
+        let states = snapshot_all(&channels);
         let done = downloaded_total(&channels);
         let complete = states.iter().all(|c| c.finished);
 
@@ -597,6 +653,11 @@ impl DownloadEngine {
 
         // Aynı anda açık dosya tutamağı / bağlantı sayısını sınırla.
         let handles = Arc::new(Semaphore::new(MAX_OPEN_FILE_HANDLES));
+        // Tüm kanalların paylaştığı sınırlama durumu.
+        let throttle = Arc::new(Throttle::default());
+        throttle
+            .active_limit
+            .store(count as u32, Ordering::SeqCst);
 
         let mut tasks = Vec::with_capacity(count);
 
@@ -607,6 +668,7 @@ impl DownloadEngine {
             let dest = dest.to_path_buf();
             let signal = signal.clone();
             let handles = Arc::clone(&handles);
+            let throttle = Arc::clone(&throttle);
 
             tasks.push(tokio::spawn(async move {
                 run_channel(
@@ -615,6 +677,7 @@ impl DownloadEngine {
                     peers,
                     me,
                     handles,
+                    throttle,
                     signal,
                     total_bytes,
                     supports_ranges,
@@ -641,8 +704,12 @@ impl DownloadEngine {
             }
         }
 
-        // Gerçek bir hata varsa kalan kanalları da durdur.
-        if let Some(EngineError::Failed(_)) = first_error {
+        // Gerçek bir hata (veya tek akışa düşme gereksinimi) varsa kalan
+        // kanalları da durdur.
+        if matches!(
+            first_error,
+            Some(EngineError::Failed(_)) | Some(EngineError::Fallback)
+        ) {
             signal.abort();
         }
 
@@ -760,6 +827,7 @@ async fn run_channel(
     peers: Vec<Arc<SharedChannel>>,
     me: Arc<SharedChannel>,
     handles: Arc<Semaphore>,
+    throttle: Arc<Throttle>,
     signal: AbortSignal,
     total_bytes: u64,
     supports_ranges: bool,
@@ -773,6 +841,8 @@ async fn run_channel(
     let ranged = supports_ranges && total_bytes > 0;
     let mut file = open_target(&dest, ranged)?;
 
+    // Sınırlama yanıtlarına tepki olarak pencerenin daraldığını izle; bu
+    // kanal da sınırlandığında sırasını bekler.
     let mut attempts: u32 = 0;
 
     loop {
@@ -798,6 +868,8 @@ async fn run_channel(
             Ok(ChannelOutcome::Done) => {
                 me.mark_finished();
                 attempts = 0;
+                // Başarılı istek: paylaşılan sınırı geri aç.
+                throttle.widen(peers.len() as u32);
                 if !steal_work(&peers, &me) {
                     return Ok(());
                 }
@@ -808,6 +880,25 @@ async fn run_channel(
                 if attempts > MAX_RETRIES_PER_CHANNEL {
                     return Err(cerr1(
                         "err.stream_cut",
+                        &MAX_RETRIES_PER_CHANNEL.to_string(),
+                    ));
+                }
+                sleep_backoff(&signal, attempts).await;
+            }
+            Ok(ChannelOutcome::Fallback) => {
+                // Sunucu `Range`'i yok sayıp 200 döndürdü (MC fallbackToSingle).
+                return Err(EngineError::Fallback);
+            }
+            Ok(ChannelOutcome::Throttled(status)) => {
+                // Sunucu sınırlandırma yanıtı verdi: pencereyi daralt ve bekle.
+                // Yanıt kodu hata mesajına taşınır (429/503 ayrımı kullanıcı
+                // için anlamlıdır).
+                throttle.narrow();
+                attempts += 1;
+                if attempts > MAX_RETRIES_PER_CHANNEL {
+                    return Err(cerr2(
+                        "err.throttled",
+                        &status.to_string(),
                         &MAX_RETRIES_PER_CHANNEL.to_string(),
                     ));
                 }
@@ -830,6 +921,10 @@ enum ChannelOutcome {
     Done,
     /// Akış beklenenden erken bitti; kaldığı yerden tekrar denenecek.
     Interrupted,
+    /// Sunucu aralığı yok sayıp `200` döndürdü: tek akışa düşülmeli.
+    Fallback,
+    /// Sunucu sınırlandırma yanıtı verdi (durum kodu).
+    Throttled(u16),
 }
 
 /// Hedef dosyayı yazma modunda açar.
@@ -876,13 +971,20 @@ async fn fetch_range(
     if ranged {
         // DÜZELTME (eski bug): Range istendi ama 206 gelmediyse hata ver.
         if status != reqwest::StatusCode::PARTIAL_CONTENT {
+            // Sınırlandırma: pencere daraltılır, kısa beklenip denenir.
+            if THROTTLE_STATUSES.contains(&status.as_u16()) {
+                return Ok(ChannelOutcome::Throttled(status.as_u16()));
+            }
+            // Sunucu aralığı yok sayıp 200 döndürdü: tek akışa düş (MC).
+            if status.is_success() {
+                return Ok(ChannelOutcome::Fallback);
+            }
             return Err(match status {
                 s if s == reqwest::StatusCode::RANGE_NOT_SATISFIABLE => cerr2(
                     "err.range_not_satisfiable",
                     &start_byte.to_string(),
                     &end_byte.to_string(),
                 ),
-                s if s.is_success() => cerr("err.no_partial_support"),
                 s => cerr2(
                     "err.server_error",
                     &s.as_u16().to_string(),
@@ -1083,15 +1185,48 @@ fn steal_work(peers: &[Arc<SharedChannel>], me: &Arc<SharedChannel>) -> bool {
 
     true
 }
-
-/// Üstel geri çekilme ile bekle (iptatılabilir).
+/// Üstel geri çekilme ile bekle (iptal edilebilir).
+///
+/// MC'nin throttle eğrisi: `min(15, 1.5 × deneme)` saniye.
 async fn sleep_backoff(signal: &AbortSignal, attempt: u32) {
-    let exp = u32::saturating_pow(2, attempt.saturating_sub(1));
-    let delay = RETRY_BASE_DELAY.saturating_mul(exp).min(RETRY_MAX_DELAY);
+    let delay = THROTTLE_BASE_DELAY
+        .saturating_mul(attempt.min(10))
+        .min(THROTTLE_MAX_DELAY);
 
     tokio::select! {
         _ = tokio::time::sleep(delay) => {}
         _ = signal.wait() => {}
+    }
+}
+
+/// Tüm kanalların paylaştığı sınırlama durumu (MC `throttledUntil`).
+///
+/// Bir kanal sınırlama yanıtı aldığında buraya bekleme süresi yazılır; diğer
+/// kanallar bir sonraki istekten önce bu süre kadar bekler. Sınır bir seferde
+/// azalır, başarılı bir istek sonrası geri artar (MC `activeLimit`).
+#[derive(Debug, Default)]
+struct Throttle {
+    /// Kaç kanalın aynı anda istek atabileceği.
+    active_limit: std::sync::atomic::AtomicU32,
+}
+
+impl Throttle {
+    /// Sınırlandırmaya tepki: sınırı bir azalt (en az 1).
+    fn narrow(&self) {
+        let _ = self
+            .active_limit
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                Some(v.saturating_sub(1).max(1))
+            });
+    }
+
+    /// Sınırı geri artır (`max` üst sınır).
+    fn widen(&self, max: u32) {
+        let _ = self
+            .active_limit
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                Some((v + 1).min(max.max(1)))
+            });
     }
 }
 

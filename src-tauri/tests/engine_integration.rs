@@ -451,6 +451,12 @@ fn recorder() -> (ProgressLog, adm_lib::engine::ProgressHook) {
     (seen, hook)
 }
 
+/// Probe sonucunu yok sayan kanca (testlerde yalnızca motorun ilerlemesi
+/// sınanır; dosya adı düzeltmesi manager katmanındadır).
+fn noop_probe() -> adm_lib::engine::ProbeHook {
+    Arc::new(|_| {})
+}
+
 // ---------------------------------------------------------------------------
 // Testler
 // ---------------------------------------------------------------------------
@@ -465,7 +471,7 @@ async fn çok_kanallı_indirme_dosyayı_birebir_üretir() {
     let (_, hook) = recorder();
 
     let states = engine
-        .download(&server.file_url(), &path, 8, None, signal, hook)
+        .download(&server.file_url(), &path, 8, None, signal, hook, noop_probe())
         .await
         .expect("indirme başarısız");
 
@@ -503,7 +509,7 @@ async fn tek_kanal_çok_kanallı_dosyayı_bozmaz() {
     let (_, hook) = recorder();
 
     engine
-        .download(&server.file_url(), &path, 1, None, signal, hook)
+        .download(&server.file_url(), &path, 1, None, signal, hook, noop_probe())
         .await
         .expect("indirme başarısız");
 
@@ -524,7 +530,7 @@ async fn range_desteklemeyen_sunucuda_tek_kanala_duser() {
 
     // 16 kanal iste, ama sunucu desteklemiyor: dosya yine de tam olmalı.
     engine
-        .download(&server.file_url(), &path, 16, None, signal, hook)
+        .download(&server.file_url(), &path, 16, None, signal, hook, noop_probe())
         .await
         .expect("indirme başarısız");
 
@@ -548,7 +554,7 @@ async fn range_ignoren_sunucuda_tek_kanal_duser_ve_dosya_bozulmaz() {
     let (_, hook) = recorder();
 
     engine
-        .download(&server.file_url(), &path, 8, None, signal, hook)
+        .download(&server.file_url(), &path, 8, None, signal, hook, noop_probe())
         .await
         .expect("tek kanala düşerek indirmeliydi");
 
@@ -559,11 +565,17 @@ async fn range_ignoren_sunucuda_tek_kanal_duser_ve_dosya_bozulmaz() {
 }
 
 #[tokio::test]
-async fn yoklamada_206_veri_isteginde_200_gelen_sunucu_hata_verir() {
+async fn yoklamada_206_veri_isteginde_200_gelen_sunucu_dosyayi_bozmaz() {
     // Bu, WPF sürümündeki en tehlikeli hatalardan biriydi: sunucu yoklamada
     // `206` döndürür (Range desteği var gibi görünür), sonra asıl veri
     // isteğinde `200 OK` ve TÜM dosyayı gönderir. Eski kod aralık başlığındaki
-    // konuma yazar ve dosya sessizce bozulurdu. Motor bunu hata vermeli.
+    // konuma yazar ve dosya sessizce bozulurdu.
+    //
+    // Motorun sözleşmesi (bkz. `engine::download` adım 2): bu durumda kanal
+    // `Fallback` verir ve indirme **bir kez** tek akışa düşürülüp baştan
+    // yapılır. Yani iki sonuç kabul edilebilir: ya açık bir hata, ya da tek
+    // akışla baştan indirilip **birebir doğru** dosya. Kabul edilemez olan
+    // tek şey sessizce bozuk bir dosyadır.
     let server = TestServer::start(RangeSupport::Flaky, None);
     let path = temp_path("ok200.bin");
 
@@ -572,12 +584,21 @@ async fn yoklamada_206_veri_isteginde_200_gelen_sunucu_hata_verir() {
     let (_, hook) = recorder();
 
     let result = engine
-        .download(&server.file_url(), &path, 4, None, signal, hook)
+        .download(&server.file_url(), &path, 4, None, signal, hook, noop_probe())
         .await;
 
     match result {
-        // `Failed` kanonik metin taşır; kullanıcının gördüğü hali `Display`
-        // üretir. Doğrulama da gösterilen metin üzerinden yapılır.
+        // Tek akışa düşülüp baştan indirildi: içerik birebir olmalı.
+        Ok(_) => {
+            let written = std::fs::read(&path).expect("dosya okunamadı");
+            assert_eq!(
+                written,
+                test_payload(),
+                "tek akışa düşerken dosya bozuldu (sessiz bozulma hatası geri geldi)"
+            );
+        }
+        // Hata verilecekse bu, kullanıcıya aralık desteğinin olmadığını
+        // söyleyen kanonik mesaj olmalı.
         Err(e @ EngineError::Failed(_)) => {
             let msg = e.to_string();
             assert!(
@@ -585,8 +606,10 @@ async fn yoklamada_206_veri_isteginde_200_gelen_sunucu_hata_verir() {
                 "hata mesajı 206 beklentisini belirtmeli, alınan: {msg}"
             );
         }
-        Ok(_) => panic!("200 OK dönen sunucuda indirme başarı sayılmamalı"),
         Err(EngineError::Aborted) => panic!("beklenmedik iptal"),
+        Err(EngineError::Fallback) => {
+            panic!("iç `Fallback` durumu çağırana sızmamalı")
+        }
     }
 
     let _ = std::fs::remove_file(&path);
@@ -608,7 +631,7 @@ async fn kanal_bazlı_devam_indirmeyi_tamamlar() {
     let p = path.clone();
 
     let first =
-        tokio::spawn(async move { engine.download(&url, &p, 4, None, signal2, hook).await });
+        tokio::spawn(async move { engine.download(&url, &p, 4, None, signal2, hook, noop_probe()).await });
 
     // Bir miktar veri indikten sonra duraklat.
     tokio::time::sleep(Duration::from_millis(320)).await;
@@ -634,7 +657,7 @@ async fn kanal_bazlı_devam_indirmeyi_tamamlar() {
     let engine2 = DownloadEngine::new();
     let p2 = path.clone();
     let resume = engine2
-        .download(&resume_url, &p2, 4, None, signal2, hook2)
+        .download(&resume_url, &p2, 4, None, signal2, hook2, noop_probe())
         .await;
 
     assert!(
@@ -689,7 +712,7 @@ async fn devam_kanal_durumlarindan_devam_eder() {
     let (_, hook) = recorder();
 
     engine
-        .download(&server.file_url(), &path, 2, Some(&states), signal, hook)
+        .download(&server.file_url(), &path, 2, Some(&states), signal, hook, noop_probe())
         .await
         .expect("devam ettirme başarısız");
 
@@ -720,7 +743,7 @@ async fn iptal_kismi_dosyayi_korur() {
     let url = server.file_url();
     let p = path.clone();
 
-    let task = tokio::spawn(async move { engine.download(&url, &p, 4, None, signal2, hook).await });
+    let task = tokio::spawn(async move { engine.download(&url, &p, 4, None, signal2, hook, noop_probe()).await });
 
     tokio::time::sleep(Duration::from_millis(300)).await;
     signal.abort();
@@ -759,7 +782,7 @@ async fn is_hirsizligi_toplam_miktari_sismaz() {
     // gerekir; 3 MB küçük olduğu için eşiği test içinde düşüremeyiz.
     // Bunun yerine indirilen miktarın tekdüze arttığını doğrularız.
     let states = engine
-        .download(&server.file_url(), &path, 2, None, signal, hook)
+        .download(&server.file_url(), &path, 2, None, signal, hook, noop_probe())
         .await
         .expect("indirme başarısız");
 
@@ -795,7 +818,7 @@ async fn yonlendirme_elle_izlenir() {
     let (_, hook) = recorder();
 
     engine
-        .download(&server.redirect_url(), &path, 4, None, signal, hook)
+        .download(&server.redirect_url(), &path, 4, None, signal, hook, noop_probe())
         .await
         .expect("yönlendirme sonrası indirme başarısız");
 
@@ -815,7 +838,7 @@ async fn bulunamayan_dosya_turkce_hata_verir() {
     let (_, hook) = recorder();
 
     let result = engine
-        .download(&server.missing_url(), &path, 4, None, signal, hook)
+        .download(&server.missing_url(), &path, 4, None, signal, hook, noop_probe())
         .await;
 
     match result {
@@ -835,6 +858,9 @@ async fn bulunamayan_dosya_turkce_hata_verir() {
         }
         Ok(_) => panic!("404 yanıtında indirme başarılı sayılmamalı"),
         Err(EngineError::Aborted) => panic!("beklenmedik iptal"),
+        Err(EngineError::Fallback) => {
+            panic!("iç `Fallback` durumu çağırana sızmamalı")
+        }
     }
 }
 
@@ -846,7 +872,7 @@ async fn bos_url_hata_verir() {
     let (_, hook) = recorder();
 
     let result = engine
-        .download("http://127.0.0.1:1/yok", &path, 4, None, signal, hook)
+        .download("http://127.0.0.1:1/yok", &path, 4, None, signal, hook, noop_probe())
         .await;
 
     assert!(result.is_err(), "erişilemeyen adres hata vermeli");
@@ -872,7 +898,7 @@ async fn baska_hosta_yonlendirir_ve_cok_kanalli_indirir() {
     let (_, hook) = recorder();
 
     engine
-        .download(&kaynak.redirect_url(), &path, 8, None, signal, hook)
+        .download(&kaynak.redirect_url(), &path, 8, None, signal, hook, noop_probe())
         .await
         .expect("yönlendirme sonrası indirme başarısız");
 
@@ -918,7 +944,7 @@ async fn tek_kanalda_yarim_akis_tekrar_deneyip_tamamlar() {
     });
 
     engine
-        .download(&server.file_url(), &path, 8, None, signal, hook)
+        .download(&server.file_url(), &path, 8, None, signal, hook, noop_probe())
         .await
         .expect("yarım akıştan sonra tekrar deneyip tamamlamalıydı");
 
@@ -966,7 +992,7 @@ async fn cok_kanalli_indirmeler_birbirini_etkilemez() {
         let signal = AbortSignal::new();
         let (_, hook) = recorder();
         engine
-            .download(&url_a, &temp_path("paralel_a.bin"), 4, None, signal, hook)
+            .download(&url_a, &temp_path("paralel_a.bin"), 4, None, signal, hook, noop_probe())
             .await
     });
 
@@ -975,7 +1001,7 @@ async fn cok_kanalli_indirmeler_birbirini_etkilemez() {
         let signal = AbortSignal::new();
         let (_, hook) = recorder();
         engine
-            .download(&url_b, &temp_path("paralel_b.bin"), 6, None, signal, hook)
+            .download(&url_b, &temp_path("paralel_b.bin"), 6, None, signal, hook, noop_probe())
             .await
     });
 

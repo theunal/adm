@@ -44,12 +44,7 @@ async fn indirme_baslatip_durum_temizlenir() {
     let _manager = manager.clone();
 
     let Ok(id) = manager
-        .start(StartRequest {
-            // Erişilemeyen adres: indirme hemen başarısız olur.
-            url: "http://127.0.0.1:1/erisilemez.bin".to_string(),
-            file_path: None,
-            channel_count: 4,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/erisilemez.bin".to_string(), None, 4))
         .await
     else {
         // Başlatma komutu ağ hatasında da kayıt oluşturup görevi
@@ -104,11 +99,7 @@ async fn bos_url_reddedilir() {
     let manager = DownloadManager::new(db);
 
     let result = manager
-        .start(StartRequest {
-            url: "   ".to_string(),
-            file_path: None,
-            channel_count: 4,
-        })
+        .start(StartRequest::simple("   ".to_string(), None, 4))
         .await;
 
     assert!(result.is_err(), "boş URL reddedilmeli");
@@ -124,11 +115,7 @@ async fn kanal_sayisi_sinirlanir() {
 
     // 0 kanal isteyen durum 1'e, 100 kanal isteyen durum 32'ye çekilir.
     let Ok(id) = manager
-        .start(StartRequest {
-            url: "http://127.0.0.1:1/a.bin".to_string(),
-            file_path: None,
-            channel_count: 0,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/a.bin".to_string(), None, 0))
         .await
     else {
         return;
@@ -153,11 +140,7 @@ async fn olay_yayini_calisir() {
     let mut rx = manager.subscribe();
 
     let Ok(id) = manager
-        .start(StartRequest {
-            url: "http://127.0.0.1:1/olay.bin".to_string(),
-            file_path: None,
-            channel_count: 2,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/olay.bin".to_string(), None, 2))
         .await
     else {
         return;
@@ -193,11 +176,7 @@ async fn silme_kaydi_siler() {
     let _guard = manager.clone();
 
     let Ok(id) = manager
-        .start(StartRequest {
-            url: "http://127.0.0.1:1/sil.bin".to_string(),
-            file_path: None,
-            channel_count: 1,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/sil.bin".to_string(), None, 1))
         .await
     else {
         return;
@@ -233,11 +212,7 @@ async fn duraklatma_kanal_durumlarini_kalici_yazar() {
     let _guard = manager.clone();
 
     let Ok(id) = manager
-        .start(StartRequest {
-            url: "http://127.0.0.1:1/duraklat.bin".to_string(),
-            file_path: None,
-            channel_count: 4,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/duraklat.bin".to_string(), None, 4))
         .await
     else {
         return;
@@ -272,11 +247,7 @@ async fn listeler_dogru_ayrilir() {
     let mut created: Vec<i64> = Vec::new();
     for i in 0..3 {
         if let Ok(id) = manager
-            .start(StartRequest {
-                url: format!("http://127.0.0.1:1/{i}.bin"),
-                file_path: None,
-                channel_count: 1,
-            })
+            .start(StartRequest::simple(format!("http://127.0.0.1:1/{i}.bin"), None, 1))
             .await
         {
             created.push(id);
@@ -313,11 +284,7 @@ async fn gecmisi_temizle_yalnizca_bitmisleri_siler() {
     let _guard = manager.clone();
 
     let Ok(id) = manager
-        .start(StartRequest {
-            url: "http://127.0.0.1:1/temizle.bin".to_string(),
-            file_path: None,
-            channel_count: 1,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/temizle.bin".to_string(), None, 1))
         .await
     else {
         return;
@@ -347,11 +314,7 @@ async fn kapanis_aktif_indirmeleri_iptal_eder() {
     let mut ids = Vec::new();
     for i in 0..2 {
         if let Ok(id) = manager
-            .start(StartRequest {
-                url: format!("http://127.0.0.1:1/kapanis_{i}.bin"),
-                file_path: None,
-                channel_count: 2,
-            })
+            .start(StartRequest::simple(format!("http://127.0.0.1:1/kapanis_{i}.bin"), None, 2))
             .await
         {
             ids.push(id);
@@ -379,11 +342,7 @@ async fn olay_alicisi_kapatilinca_kanal_dusmez() {
     drop(rx);
     // Kanallar açıkken gönderim yapılabilmeli (hata sessizce yutulur).
     let Ok(id) = manager
-        .start(StartRequest {
-            url: "http://127.0.0.1:1/alici.bin".to_string(),
-            file_path: None,
-            channel_count: 1,
-        })
+        .start(StartRequest::simple("http://127.0.0.1:1/alici.bin".to_string(), None, 1))
         .await
     else {
         return;
@@ -408,11 +367,7 @@ async fn toplu_icin_kayitlar(manager: &DownloadManager, ad: &str, n: usize) -> V
     let mut ids = Vec::new();
     for i in 0..n {
         if let Ok(id) = manager
-            .start(StartRequest {
-                url: format!("http://127.0.0.1:1/{ad}_{i}.bin"),
-                file_path: None,
-                channel_count: 2,
-            })
+            .start(StartRequest::simple(format!("http://127.0.0.1:1/{ad}_{i}.bin"), None, 2))
             .await
         {
             ids.push(id);

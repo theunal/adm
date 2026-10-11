@@ -9,6 +9,43 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Bir indirmenin türü — MC `DownloadKind` portu.
+///
+/// `video` türündeki kayıtlar motor yerine yt-dlp ile indirilir.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadKind {
+    File,
+    Video,
+}
+
+impl DownloadKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DownloadKind::File => "file",
+            DownloadKind::Video => "video",
+        }
+    }
+
+    /// Veritabanından okunan metni çevirir.
+    pub fn from_db(raw: &str) -> Self {
+        match raw {
+            "video" => DownloadKind::Video,
+            _ => DownloadKind::File,
+        }
+    }
+
+    pub fn is_video(self) -> bool {
+        matches!(self, DownloadKind::Video)
+    }
+}
+
+impl std::fmt::Display for DownloadKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Bir indirmenin yaşam döngüsü durumu.
 ///
 /// WPF sürümündeki `DownloadStatus` enum'ının birebir karşılığıdır;
@@ -234,7 +271,63 @@ pub struct DownloadItem {
     pub error_message: Option<String>,
     /// Kanal başına indirilen bayt miktarları — ilerleme arayüzü için.
     pub channels: Vec<ChannelState>,
+    // -----------------------------------------------------------------
+    // MC portu (video / tarayıcı köprüsü) alanları
+    // -----------------------------------------------------------------
+    /// Dosya mı, yt-dlp videosu mu?
+    pub kind: DownloadKind,
+    /// Sunucu `Range` destekliyor mu? (detay penceresi "Resume capability")
+    pub supports_ranges: bool,
+    /// Uzantıdan gelen ek başlıklar (Referer, User-Agent, Cookie…).
+    pub headers: Vec<(String, String)>,
+    /// Çerez dosyası (uzantıdan gelen çerezler Netscape dosyasına yazılır).
+    pub cookie_file: Option<String>,
+    /// Tamamlandığında dosyanın nihai yolu.
+    pub final_path: Option<String>,
+    /// yt-dlp faz metni ("Video indiriliyor…").
+    pub stage: String,
+    /// yt-dlp ham çıktısı (son ~6000 karakter, detay penceresinde).
+    pub log: String,
 }
+
+/// Varsayılan kayıt (yeni alanlar için boş değerler).
+///
+/// Kurulum noktalarında tüm alanları elle yazmak yerine
+/// `..DownloadItem::default()` ile tamamlanır.
+impl Default for DownloadItem {
+    fn default() -> Self {
+        let now = Local::now();
+        Self {
+            id: 0,
+            url: String::new(),
+            file_path: String::new(),
+            file_name: String::new(),
+            total_bytes: 0,
+            downloaded_bytes: 0,
+            channel_count: 1,
+            status: DownloadStatus::Queued,
+            created_at: now,
+            completed_at: None,
+            last_updated: now,
+            speed_mbps: 0.0,
+            error_message: None,
+            channels: Vec::new(),
+            kind: DownloadKind::File,
+            supports_ranges: false,
+            headers: Vec::new(),
+            cookie_file: None,
+            final_path: None,
+            stage: String::new(),
+            log: String::new(),
+        }
+    }
+}
+
+/// Raf ömrü boyunca tutulan çerez verisi (uzantıdan gelen).
+///
+/// `DownloadItem.headers` ile aynı biçimdedir; köprüden gelen istekleri
+/// kayda dönüştürürken kullanılır.
+pub type HeaderMap = Vec<(String, String)>;
 
 /// Varsayılan dosya adı.
 pub const DEFAULT_FILE_NAME: &str = "indirme.bin";
@@ -280,6 +373,157 @@ pub fn file_name_from_url(url: &str) -> String {
         DEFAULT_FILE_NAME.to_string()
     } else {
         cleaned.to_string()
+    }
+}
+
+/// Dosya adını defensif biçimde temizler (Windows yasak karakterleri, vb.).
+pub fn sanitize_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if (c as u32) < 32 => '_',
+            c => c,
+        })
+        .collect();
+
+    let trimmed = cleaned.trim().trim_end_matches('.').trim();
+    // Windows aygıt adlarına dokunma (CON, PRN…).
+    if trimmed.is_empty() {
+        "download".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// `Content-Disposition` / `Content-Type` başlıklarından dosya adı çıkarır.
+///
+/// Sıra: `filename*` (RFC 5987) → `filename` (tırnaklı) → düz `filename`
+/// → URL'den türetilen ad (uzantısı varsa) → `Content-Type` uzantısıyla.
+/// MC'nin `fileName(contentDisposition:url:)` portudur.
+pub fn file_name_from_headers(
+    content_disposition: Option<&str>,
+    content_type: Option<&str>,
+    url: &str,
+) -> String {
+    if let Some(cd) = content_disposition {
+        // filename*=UTF-8''%41%42.zip  → AB.zip
+        if let Some((_, value)) = cd.split_once("filename*=") {
+            let value = value.split(';').next().unwrap_or(value).trim();
+            // RFC 5987 biçimi: `charset'lang'<yüzde-kodlu ad>`. Ad, **ikinci**
+            // tırnaktan sonrasıdır; yalnızca ilk tırnaktan sonrasını almak
+            // adın başına kesme işareti bırakırdı.
+            let encoded = value.rsplit_once('\'').map(|(_, v)| v).unwrap_or(value);
+            let decoded = percent_decode(encoded);
+            if !decoded.is_empty() {
+                return sanitize_file_name(&decoded);
+            }
+        }
+        // filename="..." veya filename=...
+        if let Some((_, value)) = cd.split_once("filename=") {
+            let value = value.split(';').next().unwrap_or(value).trim();
+            let unquoted = value.trim_matches('"');
+            if !unquoted.is_empty() {
+                return sanitize_file_name(unquoted);
+            }
+        }
+    }
+
+    // URL'den türetilen ad: uzantı taşıyorsa kullan.
+    let from_url = file_name_from_url(url);
+    if from_url.contains('.') {
+        return sanitize_file_name(&from_url);
+    }
+
+    // Content-Type'tan uzantı türet.
+    if let Some(ct) = content_type {
+        let ext = ext_for_content_type(ct);
+        if !ext.is_empty() {
+            return sanitize_file_name(&format!("{from_url}.{ext}"));
+        }
+    }
+
+    sanitize_file_name(&from_url)
+}
+
+/// `Content-Type` değerine karşılık gelen dosya uzantısı.
+fn ext_for_content_type(content_type: &str) -> &'static str {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "application/zip" | "application/x-zip-compressed" => "zip",
+        "application/x-7z-compressed" | "application/7z" => "7z",
+        "application/x-rar-compressed" | "application/vnd.rar" => "rar",
+        "application/gzip" => "gz",
+        "application/x-tar" => "tar",
+        "application/pdf" => "pdf",
+        "application/msword" => "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "docx",
+        "application/vnd.ms-excel" => "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "xlsx",
+        "application/vnd.ms-powerpoint" => "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => "pptx",
+        "application/octet-stream" | "application/wasm" => "bin",
+        "application/json" => "json",
+        "application/xml" | "text/xml" => "xml",
+        "application/javascript" | "text/javascript" => "js",
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/heic" => "heic",
+        "image/avif" => "avif",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/x-m4a" => "m4a",
+        "audio/aac" => "aac",
+        "audio/ogg" => "ogg",
+        "audio/opus" => "opus",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/flac" => "flac",
+        "video/mp4" => "mp4",
+        "video/x-matroska" => "mkv",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        "video/x-msvideo" => "avi",
+        "video/mpeg" => "mpeg",
+        "text/plain" => "txt",
+        "text/html" => "html",
+        "text/css" => "css",
+        _ => "",
+    }
+}
+
+/// Yüzde kodlamalı metni çözer (`%41` → `A`, `+` boşluk değildir).
+pub fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// Dosya geçmişi için yardımcı: dosya adını ve parça adını ayırır.
+pub fn split_extension(file_name: &str) -> (String, Option<String>) {
+    match file_name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), Some(ext.to_string())),
+        _ => (file_name.to_string(), None),
     }
 }
 
@@ -494,5 +738,64 @@ mod tests {
         ch.recalibrate(500);
         assert_eq!(ch.downloaded(), 0);
         assert_eq!(ch.snapshot().start_byte, 500);
+    }
+
+    // -----------------------------------------------------------------
+    // Başlıklardan dosya adı (MC `fileName` portu)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn content_disposition_dosya_adi() {
+        // RFC 5987 `filename*` öncelikli.
+        assert_eq!(
+            file_name_from_headers(
+                Some("attachment; filename=\"bilinmeyen.bin\"; filename*=UTF-8''%C3%96rnek.zip"),
+                None,
+                "https://x.tld/download"
+            ),
+            "Örnek.zip"
+        );
+        // Tırnaklı.
+        assert_eq!(
+            file_name_from_headers(Some("attachment; filename=\"rapor.pdf\""), None, "https://x.tld/d"),
+            "rapor.pdf"
+        );
+        // Düz.
+        assert_eq!(
+            file_name_from_headers(Some("attachment; filename=resim.png"), None, "https://x.tld/d"),
+            "resim.png"
+        );
+    }
+
+    #[test]
+    fn uzanti_url_veya_icerik_turunden() {
+        assert_eq!(
+            file_name_from_headers(None, None, "https://x.tld/dosya/film.mp4"),
+            "film.mp4"
+        );
+        assert_eq!(
+            file_name_from_headers(None, Some("application/zip"), "https://x.tld/indir"),
+            "indir.zip"
+        );
+        assert_eq!(
+            file_name_from_headers(None, Some("image/jpeg"), "https://x.tld/indir"),
+            "indir.jpg"
+        );
+    }
+
+    #[test]
+    fn dosya_adi_temizlenir() {
+        assert_eq!(sanitize_file_name("a<b>c:d.zip"), "a_b_c_d.zip");
+        assert_eq!(sanitize_file_name(""), "download");
+        assert_eq!(sanitize_file_name("son."), "son");
+    }
+
+    #[test]
+    fn uzanti_ayirma() {
+        assert_eq!(
+            split_extension("a.zip"),
+            ("a".to_string(), Some("zip".to_string()))
+        );
+        assert_eq!(split_extension("uzantisiz"), ("uzantisiz".to_string(), None));
     }
 }

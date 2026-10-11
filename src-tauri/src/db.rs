@@ -25,7 +25,10 @@ use crate::models::{ChannelState, DownloadItem, DownloadStatus};
 use crate::settings::Settings;
 
 /// Veritabanı dosyasının bulunduğu dizin: `%LocalAppData%\ADM`
-fn db_dir() -> PathBuf {
+///
+/// Araç kurulumu (`tools`), site çerezleri (`cookies`) ve günlükler de bu
+/// dizin altında yaşar; bu yüzden kutu dışından erişilebilir.
+pub fn db_dir() -> PathBuf {
     let local_app_data = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join("AppData").join("Local"));
@@ -77,7 +80,14 @@ const SCHEMA: &[&str] = &[
         last_updated     TEXT    NOT NULL,
         speed_mbps       REAL    NOT NULL DEFAULT 0,
         error_message    TEXT,
-        channel_states   TEXT
+        channel_states   TEXT,
+        kind             TEXT    NOT NULL DEFAULT 'file',
+        supports_ranges  INTEGER NOT NULL DEFAULT 0,
+        headers          TEXT,
+        cookie_file      TEXT,
+        final_path       TEXT,
+        stage            TEXT    NOT NULL DEFAULT '',
+        log              TEXT    NOT NULL DEFAULT ''
     )
     "#,
     "CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads (status)",
@@ -90,9 +100,75 @@ const SCHEMA: &[&str] = &[
         video_dir             TEXT,
         audio_dir             TEXT,
         other_dir             TEXT,
-        default_dir           TEXT    NOT NULL
+        default_dir           TEXT    NOT NULL,
+        server_port           INTEGER NOT NULL DEFAULT 48213,
+        max_concurrent        INTEGER NOT NULL DEFAULT 3,
+        auto_start            INTEGER NOT NULL DEFAULT 1,
+        notify_on_complete    INTEGER NOT NULL DEFAULT 1,
+        show_detail_on_start  INTEGER NOT NULL DEFAULT 1,
+        auto_close_detail     INTEGER NOT NULL DEFAULT 0,
+        watch_clipboard       INTEGER NOT NULL DEFAULT 1,
+        capture_group_ids     TEXT,
+        custom_extensions     TEXT    NOT NULL DEFAULT '',
+        organize_by_category  INTEGER NOT NULL DEFAULT 1,
+        ytdlp_path            TEXT    NOT NULL DEFAULT '',
+        video_format          TEXT    NOT NULL DEFAULT '',
+        video_container       TEXT    NOT NULL DEFAULT 'mp4',
+        video_max_height      INTEGER NOT NULL DEFAULT 1080,
+        check_for_updates     INTEGER NOT NULL DEFAULT 1,
+        start_in_tray         INTEGER NOT NULL DEFAULT 0,
+        close_to_tray         INTEGER NOT NULL DEFAULT 1,
+        autostart             INTEGER NOT NULL DEFAULT 0,
+        deno_prompt_suppressed INTEGER NOT NULL DEFAULT 0,
+        last_update_check     TEXT,
+        skipped_update_version TEXT
     )
     "#,
+];
+
+/// Var olan veritabanlarına eklenen kolonlar (MC portu).
+///
+/// `ALTER TABLE ... ADD COLUMN` yalnızca kolon yoksa çalıştırılır; SQLite
+/// `ADD COLUMN` için varsayılan değer ister, bu yüzden eski kayıtlar
+/// `kind = 'file'` ile doldurulur.
+const ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("downloads", "kind TEXT NOT NULL DEFAULT 'file'"),
+    ("downloads", "supports_ranges INTEGER NOT NULL DEFAULT 0"),
+    ("downloads", "headers TEXT"),
+    ("downloads", "cookie_file TEXT"),
+    ("downloads", "final_path TEXT"),
+    ("downloads", "stage TEXT NOT NULL DEFAULT ''"),
+    ("downloads", "log TEXT NOT NULL DEFAULT ''"),
+    ("settings", "server_port INTEGER NOT NULL DEFAULT 48213"),
+    ("settings", "max_concurrent INTEGER NOT NULL DEFAULT 3"),
+    ("settings", "auto_start INTEGER NOT NULL DEFAULT 1"),
+    ("settings", "notify_on_complete INTEGER NOT NULL DEFAULT 1"),
+    (
+        "settings",
+        "show_detail_on_start INTEGER NOT NULL DEFAULT 1",
+    ),
+    ("settings", "auto_close_detail INTEGER NOT NULL DEFAULT 0"),
+    ("settings", "watch_clipboard INTEGER NOT NULL DEFAULT 1"),
+    ("settings", "capture_group_ids TEXT"),
+    ("settings", "custom_extensions TEXT NOT NULL DEFAULT ''"),
+    (
+        "settings",
+        "organize_by_category INTEGER NOT NULL DEFAULT 1",
+    ),
+    ("settings", "ytdlp_path TEXT NOT NULL DEFAULT ''"),
+    ("settings", "video_format TEXT NOT NULL DEFAULT ''"),
+    ("settings", "video_container TEXT NOT NULL DEFAULT 'mp4'"),
+    ("settings", "video_max_height INTEGER NOT NULL DEFAULT 1080"),
+    ("settings", "check_for_updates INTEGER NOT NULL DEFAULT 1"),
+    ("settings", "start_in_tray INTEGER NOT NULL DEFAULT 0"),
+    ("settings", "close_to_tray INTEGER NOT NULL DEFAULT 1"),
+    ("settings", "autostart INTEGER NOT NULL DEFAULT 0"),
+    (
+        "settings",
+        "deno_prompt_suppressed INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("settings", "last_update_check TEXT"),
+    ("settings", "skipped_update_version TEXT"),
 ];
 
 /// Uygulamanın veritabanı erişimi.
@@ -154,8 +230,9 @@ impl Database {
             INSERT INTO downloads
                 (url, file_path, file_name, total_bytes, downloaded_bytes,
                  channel_count, status, created_at, completed_at, last_updated,
-                 speed_mbps, error_message, channel_states)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 speed_mbps, error_message, channel_states, kind, supports_ranges,
+                 headers, cookie_file, final_path, stage, log)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&item.url)
@@ -171,6 +248,13 @@ impl Database {
         .bind(item.speed_mbps)
         .bind(item.error_message.as_deref())
         .bind(crate::models::channel_states_to_json(&item.channels))
+        .bind(item.kind.as_str())
+        .bind(item.supports_ranges as i64)
+        .bind(headers_to_json(&item.headers))
+        .bind(item.cookie_file.as_deref())
+        .bind(item.final_path.as_deref())
+        .bind(&item.stage)
+        .bind(&item.log)
         .execute(&self.pool)
         .await
         .context(err("err.db_insert"))?;
@@ -190,7 +274,14 @@ impl Database {
                 last_updated     = ?,
                 speed_mbps       = ?,
                 error_message    = ?,
-                channel_states   = ?
+                channel_states   = ?,
+                kind             = ?,
+                supports_ranges  = ?,
+                headers          = ?,
+                cookie_file      = ?,
+                final_path       = ?,
+                stage            = ?,
+                log              = ?
             WHERE id = ?
             "#,
         )
@@ -202,6 +293,13 @@ impl Database {
         .bind(item.speed_mbps)
         .bind(item.error_message.as_deref())
         .bind(crate::models::channel_states_to_json(&item.channels))
+        .bind(item.kind.as_str())
+        .bind(item.supports_ranges as i64)
+        .bind(headers_to_json(&item.headers))
+        .bind(item.cookie_file.as_deref())
+        .bind(item.final_path.as_deref())
+        .bind(&item.stage)
+        .bind(&item.log)
         .bind(item.id)
         .execute(&self.pool)
         .await
@@ -335,6 +433,42 @@ impl Database {
             other_dir: opt_dir_of(&r, "other_dir"),
             default_dir: opt_dir_of(&r, "default_dir")
                 .unwrap_or_else(crate::manager::default_download_dir),
+            server_port: r.try_get::<i64, _>("server_port").unwrap_or(48213).clamp(
+                i64::from(crate::settings::MIN_PORT),
+                i64::from(crate::settings::MAX_PORT),
+            ) as u16,
+            max_concurrent: r
+                .try_get::<i64, _>("max_concurrent")
+                .unwrap_or(3)
+                .clamp(1, i64::from(crate::settings::MAX_CONCURRENT))
+                as u32,
+            auto_start: bool_of(&r, "auto_start", true),
+            notify_on_complete: bool_of(&r, "notify_on_complete", true),
+            show_detail_on_start: bool_of(&r, "show_detail_on_start", true),
+            auto_close_detail: bool_of(&r, "auto_close_detail", false),
+            watch_clipboard: bool_of(&r, "watch_clipboard", true),
+            capture_group_ids: capture_groups_of(&r),
+            custom_extensions: r
+                .try_get::<String, _>("custom_extensions")
+                .unwrap_or_default(),
+            organize_by_category: bool_of(&r, "organize_by_category", true),
+            ytdlp_path: r.try_get::<String, _>("ytdlp_path").unwrap_or_default(),
+            video_format: r.try_get::<String, _>("video_format").unwrap_or_default(),
+            video_container: r
+                .try_get::<String, _>("video_container")
+                .unwrap_or_else(|_| "mp4".to_string()),
+            video_max_height: r.try_get::<i64, _>("video_max_height").unwrap_or(1080) as i32,
+            check_for_updates: bool_of(&r, "check_for_updates", true),
+            start_in_tray: bool_of(&r, "start_in_tray", false),
+            close_to_tray: bool_of(&r, "close_to_tray", true),
+            autostart: bool_of(&r, "autostart", false),
+            deno_prompt_suppressed: bool_of(&r, "deno_prompt_suppressed", false),
+            last_update_check: r
+                .try_get::<Option<String>, _>("last_update_check")
+                .unwrap_or(None),
+            skipped_update_version: r
+                .try_get::<Option<String>, _>("skipped_update_version")
+                .unwrap_or(None),
         };
         settings.normalize();
 
@@ -348,15 +482,41 @@ impl Database {
 
         sqlx::query(
             "INSERT INTO settings \
-                 (id, lang, default_channel_count, video_dir, audio_dir, other_dir, default_dir) \
-             VALUES (1, ?, ?, ?, ?, ?, ?) \
+                 (id, lang, default_channel_count, video_dir, audio_dir, other_dir, default_dir, \
+                  server_port, max_concurrent, auto_start, notify_on_complete, show_detail_on_start, \
+                  auto_close_detail, watch_clipboard, capture_group_ids, custom_extensions, \
+                  organize_by_category, ytdlp_path, video_format, video_container, video_max_height, \
+                  check_for_updates, start_in_tray, close_to_tray, autostart, deno_prompt_suppressed, \
+                  last_update_check, skipped_update_version) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET \
                  lang                  = excluded.lang, \
                  default_channel_count = excluded.default_channel_count, \
                  video_dir             = excluded.video_dir, \
                  audio_dir             = excluded.audio_dir, \
                  other_dir             = excluded.other_dir, \
-                 default_dir           = excluded.default_dir",
+                 default_dir           = excluded.default_dir, \
+                 server_port           = excluded.server_port, \
+                 max_concurrent        = excluded.max_concurrent, \
+                 auto_start            = excluded.auto_start, \
+                 notify_on_complete    = excluded.notify_on_complete, \
+                 show_detail_on_start  = excluded.show_detail_on_start, \
+                 auto_close_detail     = excluded.auto_close_detail, \
+                 watch_clipboard       = excluded.watch_clipboard, \
+                 capture_group_ids     = excluded.capture_group_ids, \
+                 custom_extensions     = excluded.custom_extensions, \
+                 organize_by_category  = excluded.organize_by_category, \
+                 ytdlp_path            = excluded.ytdlp_path, \
+                 video_format          = excluded.video_format, \
+                 video_container       = excluded.video_container, \
+                 video_max_height      = excluded.video_max_height, \
+                 check_for_updates     = excluded.check_for_updates, \
+                 start_in_tray         = excluded.start_in_tray, \
+                 close_to_tray         = excluded.close_to_tray, \
+                 autostart             = excluded.autostart, \
+                 deno_prompt_suppressed = excluded.deno_prompt_suppressed, \
+                 last_update_check     = excluded.last_update_check, \
+                 skipped_update_version = excluded.skipped_update_version",
         )
         .bind(normalized.lang.as_str())
         .bind(normalized.default_channel_count as i64)
@@ -364,6 +524,27 @@ impl Database {
         .bind(bind_dir(&normalized.audio_dir))
         .bind(bind_dir(&normalized.other_dir))
         .bind(normalized.default_dir.to_string_lossy().to_string())
+        .bind(normalized.server_port as i64)
+        .bind(normalized.max_concurrent as i64)
+        .bind(normalized.auto_start as i64)
+        .bind(normalized.notify_on_complete as i64)
+        .bind(normalized.show_detail_on_start as i64)
+        .bind(normalized.auto_close_detail as i64)
+        .bind(normalized.watch_clipboard as i64)
+        .bind(serde_json::to_string(&normalized.capture_group_ids).unwrap_or_else(|_| "[]".into()))
+        .bind(&normalized.custom_extensions)
+        .bind(normalized.organize_by_category as i64)
+        .bind(&normalized.ytdlp_path)
+        .bind(&normalized.video_format)
+        .bind(&normalized.video_container)
+        .bind(normalized.video_max_height as i64)
+        .bind(normalized.check_for_updates as i64)
+        .bind(normalized.start_in_tray as i64)
+        .bind(normalized.close_to_tray as i64)
+        .bind(normalized.autostart as i64)
+        .bind(normalized.deno_prompt_suppressed as i64)
+        .bind(normalized.last_update_check.clone())
+        .bind(normalized.skipped_update_version.clone())
         .execute(&self.pool)
         .await
         .context(err("err.db_settings_save"))?;
@@ -388,6 +569,43 @@ fn bind_dir(dir: &Option<PathBuf>) -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
+/// Başlık listesini JSON metnine çevirir; boşsa `NULL`.
+fn headers_to_json(headers: &[(String, String)]) -> Option<String> {
+    if headers.is_empty() {
+        return None;
+    }
+    serde_json::to_string(headers).ok()
+}
+
+/// JSON metinden başlık listesini okur.
+fn headers_from_json(raw: Option<String>) -> Vec<(String, String)> {
+    raw.as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<(String, String)>>(s).ok())
+        .unwrap_or_default()
+}
+
+/// Satırdaki 0/1 tam sayısını oku; kolon yoksa varsayılan.
+fn bool_of(row: &SqliteRow, column: &str, default: bool) -> bool {
+    row.try_get::<i64, _>(column)
+        .map(|v| v != 0)
+        .unwrap_or(default)
+}
+
+/// Yakalama grupları JSON dizisini okur; boşsa varsayılan gruplar.
+fn capture_groups_of(row: &SqliteRow) -> Vec<String> {
+    let raw: Option<String> = row.try_get("capture_group_ids").unwrap_or(None);
+    match raw
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+    {
+        Some(groups) if !groups.is_empty() => groups,
+        _ => crate::capture::DEFAULT_GROUPS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+    }
+}
+
 /// Tablo oluşturma / şema migrasyonu.
 ///
 /// `SCHEMA` bir sabit `&[&str]` olduğu için SQL enjeksiyonu riski yoktur;
@@ -401,7 +619,23 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
             .await
             .with_context(|| err1("err.db_schema", first_line(sql)))?;
     }
+    add_missing_columns(pool).await?;
     seed_settings(pool).await
+}
+
+/// Var olan veritabanına, MC portunun ihtiyaç duyduğu kolonları ekler.
+///
+/// Kolon adları sabit listeden geldiği için SQL birleştirme güvenlidir.
+/// `ALTER TABLE` başarısızsa (kolon zaten veya tablo yok) sessizce geçilir:
+/// yeni kurulumlarda kolonlar `SCHEMA` içinde tanımlıdır.
+async fn add_missing_columns(pool: &SqlitePool) -> Result<()> {
+    for (table, column) in ADDED_COLUMNS {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column}");
+        // Kolon zaten varsa hata verir; bu beklenen durumdur.
+        // Tablo/kolon adları `ADDED_COLUMNS` sabitinden gelir; enjeksiyon yok.
+        let _ = sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await;
+    }
+    Ok(())
 }
 
 /// Ayar satırını ilk kez oluşturur (idempotent).
@@ -478,6 +712,15 @@ fn row_to_item(r: &SqliteRow) -> DownloadItem {
             .unwrap_or(None)
             .map(|raw| i18n::render(&raw)),
         channels,
+        kind: crate::models::DownloadKind::from_db(
+            &r.try_get::<String, _>("kind").unwrap_or_default(),
+        ),
+        supports_ranges: bool_of(r, "supports_ranges", false),
+        headers: headers_from_json(r.try_get("headers").unwrap_or(None)),
+        cookie_file: r.try_get("cookie_file").unwrap_or(None),
+        final_path: r.try_get("final_path").unwrap_or(None),
+        stage: r.try_get::<String, _>("stage").unwrap_or_default(),
+        log: r.try_get::<String, _>("log").unwrap_or_default(),
     }
 }
 
@@ -529,6 +772,7 @@ mod tests {
             speed_mbps: 0.0,
             error_message: None,
             channels: Vec::new(),
+            ..DownloadItem::default()
         }
     }
 
@@ -774,6 +1018,8 @@ mod tests {
     async fn ayarlar_kaydedilip_okunur() {
         let db = test_db("ayar_rt").await;
 
+        // Varsayılan dilden farklı bir değer seçilir: aksi halde dilin
+        // gerçekten kalıcı olduğu doğrulanmış olmaz.
         let saved = Settings {
             lang: i18n::Lang::En,
             default_channel_count: 16,
@@ -781,6 +1027,7 @@ mod tests {
             audio_dir: Some(PathBuf::from("C:/Muzik")),
             other_dir: None,
             default_dir: PathBuf::from("C:/Genel"),
+            ..Settings::default()
         };
         db.save_settings(&saved).await.unwrap();
 
@@ -848,5 +1095,132 @@ mod tests {
         let got = db.load_settings().await.unwrap();
         assert_eq!(got.lang, i18n::Lang::En);
         assert_eq!(got.video_dir, Some(PathBuf::from("C:/Video")));
+    }
+
+    // -----------------------------------------------------------------
+    // MC portu alanları
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn mc_kolonlari_migrasyonla_eklenir() {
+        let db = test_db("mc_kolon").await;
+
+        // Var olan bir kayıt bulunsun: yeni kolonların bu satıra da
+        // varsayılanla uygulandığı doğrulanacak.
+        sqlx::query(
+            "INSERT INTO downloads \
+                 (url, file_path, file_name, status, created_at, last_updated) \
+             VALUES ('http://x/y.bin', 'C:/y.bin', 'y.bin', 'completed', \
+                     '2024-01-01T00:00:00', '2024-01-01T00:00:00')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        // Eski şema gibi davran: yeni kolonları düşür, sonra migrate çalıştır.
+        sqlx::query("ALTER TABLE downloads DROP COLUMN kind")
+            .execute(db.pool())
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE downloads DROP COLUMN stage")
+            .execute(db.pool())
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE settings DROP COLUMN server_port")
+            .execute(db.pool())
+            .await
+            .ok();
+
+        migrate(db.pool()).await.unwrap();
+
+        // Kolonlar geri geldi mi?
+        let row: (String, String, i64) =
+            sqlx::query("SELECT kind, stage, channel_count FROM downloads LIMIT 1")
+                .fetch_optional(db.pool())
+                .await
+                .map(|r| {
+                    r.map(|row| {
+                        (
+                            row.try_get("kind").unwrap_or_default(),
+                            row.try_get("stage").unwrap_or_default(),
+                            row.try_get("channel_count").unwrap_or(0),
+                        )
+                    })
+                    .unwrap_or_default()
+                })
+                .unwrap_or_default();
+        assert_eq!(row.0, "file");
+
+        let port: i64 = sqlx::query("SELECT server_port FROM settings WHERE id = 1")
+            .fetch_optional(db.pool())
+            .await
+            .unwrap()
+            .map(|r| r.try_get("server_port").unwrap_or(48213))
+            .unwrap_or(48213);
+        assert_eq!(port, 48213);
+    }
+
+    #[tokio::test]
+    async fn kind_ve_ek_alanlar_yuvarlanir() {
+        let db = test_db("kind_rt").await;
+
+        let mut item = sample("video");
+        item.kind = crate::models::DownloadKind::Video;
+        item.supports_ranges = true;
+        item.headers = vec![("Referer".to_string(), "https://x.tld".to_string())];
+        item.cookie_file = Some("C:/tmp/cookies.txt".to_string());
+        item.final_path = Some("C:/out/video.mp4".to_string());
+        item.stage = "Video indiriliyor…".to_string();
+        item.log = "[download] Destination: Video.f137.mp4".to_string();
+
+        let id = db.insert(&item).await.unwrap();
+
+        let got = db.get(id).await.unwrap().unwrap();
+        assert_eq!(got.kind, crate::models::DownloadKind::Video);
+        assert!(got.supports_ranges);
+        assert_eq!(
+            got.headers,
+            vec![("Referer".to_string(), "https://x.tld".to_string())]
+        );
+        assert_eq!(got.cookie_file.as_deref(), Some("C:/tmp/cookies.txt"));
+        assert_eq!(got.final_path.as_deref(), Some("C:/out/video.mp4"));
+        assert_eq!(got.stage, "Video indiriliyor…");
+        assert!(got.log.contains("Destination"));
+    }
+
+    #[tokio::test]
+    async fn mc_ayarlari_kaydedilip_okunur() {
+        let db = test_db("mc_ayar").await;
+
+        let saved = Settings {
+            server_port: 55555,
+            max_concurrent: 5,
+            auto_start: false,
+            watch_clipboard: false,
+            organize_by_category: false,
+            capture_group_ids: vec!["video".to_string()],
+            custom_extensions: "mkv, iso".to_string(),
+            ytdlp_path: "C:/tools/yt-dlp.exe".to_string(),
+            video_container: "webm".to_string(),
+            video_max_height: 720,
+            start_in_tray: true,
+            close_to_tray: false,
+            ..Settings::default()
+        };
+        db.save_settings(&saved).await.unwrap();
+
+        let got = db.load_settings().await.unwrap();
+        assert_eq!(got.server_port, 55555);
+        assert_eq!(got.max_concurrent, 5);
+        assert!(!got.auto_start);
+        assert!(!got.watch_clipboard);
+        assert!(!got.organize_by_category);
+        assert_eq!(got.capture_group_ids, vec!["video".to_string()]);
+        assert_eq!(got.custom_extensions, "mkv, iso");
+        assert_eq!(got.ytdlp_path, "C:/tools/yt-dlp.exe");
+        assert_eq!(got.video_container, "webm");
+        assert_eq!(got.video_max_height, 720);
+        assert!(got.start_in_tray);
+        assert!(!got.close_to_tray);
     }
 }

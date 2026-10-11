@@ -15,6 +15,10 @@
 
 // Modüller `pub` olarak dışa açılır: entegrasyon testleri (tests/)
 // kütüphaneyi doğrudan kullanır.
+pub mod bridge;
+pub mod capture;
+pub mod categories;
+pub mod clipboard;
 pub mod commands;
 pub mod db;
 pub mod engine;
@@ -22,6 +26,10 @@ pub mod i18n;
 pub mod manager;
 pub mod models;
 pub mod settings;
+pub mod site_login;
+pub mod tools;
+pub mod update;
+pub mod video;
 
 use tauri::Manager;
 
