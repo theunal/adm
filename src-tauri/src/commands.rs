@@ -305,19 +305,50 @@ pub async fn get_settings(manager: State<'_, DownloadManager>) -> Res<Settings> 
 
 /// Uygulama ayarlarını kaydeder.
 ///
+/// Gelen nesne **kısmi** olabilir: yalnızca gönderilen alanlar değişir,
+/// geri kalanı kayıtlı değerde kalır. Arayüz sekmeleri her seferinde yalnızca
+/// kendi alanlarını gönderdiği için bu gereklidir; aksi hâlde bir sekmeyi
+/// kaydetmek diğer sekmelerin ayarlarını varsayılana döndürürdü.
+///
 /// Kaydedilen dil hemen etkinleşir; arayüzün ayrıca `set_language`
 /// çağırmasına gerek yoktur.
 #[tauri::command]
 pub async fn save_settings(
     manager: State<'_, DownloadManager>,
     state: State<'_, RuntimeState>,
-    settings: Settings,
+    settings: serde_json::Value,
 ) -> Res<()> {
-    manager.save_settings(&settings).await.map_err(tr)?;
+    let current = manager.settings().await.map_err(tr)?;
+    let merged = merge_settings(&current, &settings)?;
+    manager.save_settings(&merged).await.map_err(tr)?;
     // Arka plan görevleri (pano izleyici, pencere davranışları) yeni
     // değerleri bir sonraki turda görsün.
-    state.apply(&settings);
+    state.apply(&merged);
     Ok(())
+}
+
+/// Kayıtlı ayarların üzerine gelen kısmi JSON yamasını uygular.
+///
+/// Yalnızca üst düzey anahtarlar birleştirilir; bilinmeyen anahtarlar
+/// yok sayılır (ileri sürüm uyumluluğu).
+fn merge_settings(current: &Settings, patch: &serde_json::Value) -> Res<Settings> {
+    let value = serde_json::to_value(current).map_err(|e| tr(e.into()))?;
+    let mut base = match value {
+        serde_json::Value::Object(map) => map,
+        // Nesne olmayan bir kayıt beklenmez; yama uygulanamaz.
+        _ => return Ok(current.clone()),
+    };
+    let Some(patch) = patch.as_object() else {
+        // Nesne olmayan gövde: yama uygulanamaz, kayıtlı ayarlar korunur.
+        return Ok(current.clone());
+    };
+    for (key, value) in patch {
+        if base.contains_key(key) {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    serde_json::from_value(serde_json::Value::Object(base))
+        .map_err(|e| i18n::t("err.db_settings_save", &[&e.to_string()]))
 }
 
 /// Bir URL için ayarlara göre çözümlenen tam hedef yol.
@@ -397,18 +428,30 @@ impl BridgeState {
     }
 
     /// Tarayıcı bağlantısını kaydeder ve arayüze bildirir.
+    ///
+    /// Uzantı `/ping` adresini saniyede birkaç kez yoklar; olay **yalnızca**
+    /// tarayıcı ilk kez görüldüğünde yayınlanır, aksi hâlde olay kanalı
+    /// gereksiz yere dolardı.
     fn note_browser(&self, app: &AppHandle, browser: &str) {
-        if let Ok(mut slot) = self.0.lock()
-            && !slot.browsers.iter().any(|b| b == browser)
-        {
-            slot.browsers.push(browser.to_string());
+        let is_new = match self.0.lock() {
+            Ok(mut slot) => {
+                if slot.browsers.iter().any(|b| b == browser) {
+                    false
+                } else {
+                    slot.browsers.push(browser.to_string());
+                    true
+                }
+            }
+            Err(_) => false,
+        };
+        if is_new {
+            let _ = app.emit(
+                "download://event",
+                &crate::manager::DownloadEvent::BridgeConnection {
+                    browser: browser.to_string(),
+                },
+            );
         }
-        let _ = app.emit(
-            "download://event",
-            &crate::manager::DownloadEvent::BridgeConnection {
-                browser: browser.to_string(),
-            },
-        );
     }
 }
 
@@ -501,14 +544,25 @@ pub fn start_bridge(app: AppHandle, manager: DownloadManager, port: u16) {
     });
 }
 
-/// Köprüden gelen indirme isteği gövdesi (uzantı bu biçimde gönderir).
+/// Köprüden gelen indirme isteği gövdesi.
+///
+/// Alan adları MC uzantısının gönderdiği gövdeyle birebir aynıdır
+/// (`background.js` → `sendToApp`).
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct BridgeDownloadBody {
     url: String,
+    /// Tarayıcının önerdiği dosya adı (kategori klasörüyle birleştirilir).
+    filename: String,
+    /// Sayfanın adresi; indirme isteklerinde `Referer` başlığı olur.
+    referer: String,
+    /// `file` | `video`.
     kind: Option<String>,
-    headers: std::collections::HashMap<String, String>,
-    cookie: Option<String>,
+    user_agent: String,
+    /// `Cookie:` başlığı metni.
+    cookie_header: String,
+    /// Yapılandırılmış çerezler (alan adı bilgisiyle).
+    cookies: Vec<crate::site_login::CookieRow>,
     channel_count: Option<u32>,
 }
 
@@ -549,14 +603,21 @@ async fn route(
 
     let path = req.path.split('?').next().unwrap_or("/");
     match (req.method.as_str(), path) {
-        ("GET", "/ping") => HttpResponse::ok(json!({
-            "ok": true,
-            "app": "ADM",
-            "version": crate::update::current_version(),
-        })),
+        // Uzantı `/ping` yanıtından `active` (rozet) ve `captureExtensions`
+        // (yakalama filtresi) okur.
+        ("GET", "/ping") => {
+            let active = manager.active_count().await;
+            HttpResponse::ok(json!({
+                "ok": true,
+                "app": "ADM",
+                "version": crate::update::current_version(),
+                "active": active,
+                "captureExtensions": app.state::<RuntimeState>().extensions(),
+            }))
+        }
         ("GET", "/downloads") => {
-            let downloads = manager.bridge_downloads().await;
-            HttpResponse::ok(json!({ "ok": true, "downloads": downloads }))
+            let items = manager.bridge_downloads().await;
+            HttpResponse::ok(json!({ "ok": true, "items": items }))
         }
         ("POST", "/download") => {
             let Ok(body) = serde_json::from_str::<BridgeDownloadBody>(&req.body) else {
@@ -571,7 +632,16 @@ async fn route(
                 .as_deref()
                 .map(crate::models::DownloadKind::from_db)
                 .unwrap_or(crate::models::DownloadKind::File);
-            let headers: Vec<(String, String)> = body.headers.into_iter().collect();
+
+            // Referer ve User-Agent, indirme isteğine başlık olarak eklenir.
+            let mut headers: Vec<(String, String)> = Vec::new();
+            if !body.referer.trim().is_empty() {
+                headers.push(("Referer".to_string(), body.referer.trim().to_string()));
+            }
+            if !body.user_agent.trim().is_empty() {
+                headers.push(("User-Agent".to_string(), body.user_agent.trim().to_string()));
+            }
+
             let channels = match body.channel_count {
                 Some(n) if n > 0 => n,
                 _ => manager
@@ -581,8 +651,19 @@ async fn route(
                     .unwrap_or(8),
             };
 
+            let cookie_header = Some(body.cookie_header)
+                .filter(|c| !c.trim().is_empty());
+
             match manager
-                .bridge_add(body.url, headers, body.cookie, kind, channels)
+                .bridge_add(
+                    body.url,
+                    Some(body.filename).filter(|f| !f.trim().is_empty()),
+                    headers,
+                    cookie_header,
+                    body.cookies,
+                    kind,
+                    channels,
+                )
                 .await
             {
                 Ok(id) => HttpResponse::ok(json!({ "ok": true, "id": id })),
@@ -670,25 +751,6 @@ pub async fn install_tool(
 // Site girişi (çerezler)
 // ---------------------------------------------------------------------
 
-/// Arayüzden gelen çerez satırı (WebView2 `cookies()` çıktısı).
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SiteCookie {
-    pub domain: String,
-    #[serde(default = "default_cookie_path")]
-    pub path: String,
-    #[serde(default)]
-    pub secure: bool,
-    #[serde(default)]
-    pub expires: i64,
-    pub name: String,
-    pub value: String,
-}
-
-fn default_cookie_path() -> String {
-    "/".to_string()
-}
-
 /// Kayıtlı site girişi çerezlerinin durumu.
 #[tauri::command]
 pub fn site_login_status() -> Res<crate::site_login::LoginStatus> {
@@ -697,25 +759,13 @@ pub fn site_login_status() -> Res<crate::site_login::LoginStatus> {
 
 /// Giriş penceresinden toplanan çerezleri Netscape dosyasına yazar.
 #[tauri::command]
-pub fn save_site_cookies(app: AppHandle, cookies: Vec<SiteCookie>) -> Res<usize> {
+pub fn save_site_cookies(app: AppHandle, cookies: Vec<crate::site_login::CookieRow>) -> Res<usize> {
     if cookies.is_empty() {
         return Err(i18n::t("err.site_cookies_empty", &[]));
     }
 
-    let rows: Vec<crate::site_login::CookieRow> = cookies
-        .into_iter()
-        .map(|c| crate::site_login::CookieRow {
-            domain: c.domain,
-            path: c.path,
-            secure: c.secure,
-            expires: c.expires,
-            name: c.name,
-            value: c.value,
-        })
-        .collect();
-
-    let count = rows.len();
-    crate::site_login::write_cookies(&rows)
+    let count = cookies.len();
+    crate::site_login::write_cookies(&cookies)
         .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
 
     emit_log(
@@ -800,10 +850,22 @@ fn browser_label(browser: &str) -> Option<&'static str> {
     }
 }
 
-/// Kaynak eklenti klasörü (paketlenmiş kaynaklar).
+/// Kaynak eklenti klasörü.
+///
+/// Önce paketlenmiş kaynaklar (`<resource>/extension`) denenir; `tauri dev`
+/// sırasında kaynaklar kopyalanmadığı için derleme zamanındaki proje köküne
+/// (`../src-extension`) düşülür.
 fn extension_source(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().resource_dir().ok()?.join("extension");
-    dir.is_dir().then_some(dir)
+    if let Ok(dir) = app.path().resource_dir() {
+        let bundled = dir.join("extension");
+        if bundled.is_dir() {
+            return Some(bundled);
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("src-extension");
+    dev.is_dir().then_some(dev)
 }
 
 /// Desteklenen tarayıcıların listesi (sihirbaz için).
@@ -928,7 +990,8 @@ impl RuntimeState {
         self.watch_clipboard.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    fn extensions(&self) -> Vec<String> {
+    /// Arayüz ve köprü için etkin yakalama uzantısı listesi.
+    pub fn extensions(&self) -> Vec<String> {
         self.capture_extensions
             .lock()
             .map(|e| e.clone())
@@ -1079,4 +1142,49 @@ pub fn install_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     builder.build(app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn kismi_ayar_yamasi_diger_alanlari_korur() {
+        let current = Settings {
+            server_port: 49000,
+            max_concurrent: 5,
+            start_in_tray: true,
+            ..Settings::default()
+        };
+
+        // Arayüzün eski "Genel" sekmesi yalnızca iki alanı gönderir.
+        let patch = json!({ "defaultChannelCount": 16, "lang": "en" });
+        let merged = merge_settings(&current, &patch).expect("yama uygulanamadı");
+
+        assert_eq!(merged.default_channel_count, 16);
+        assert_eq!(merged.lang, i18n::Lang::En);
+        // Gönderilmeyen alanlar kayıtlı değerde kalır.
+        assert_eq!(merged.server_port, 49000);
+        assert_eq!(merged.max_concurrent, 5);
+        assert!(merged.start_in_tray);
+    }
+
+    #[test]
+    fn bilinmeyen_anahtar_yok_sayilir() {
+        let current = Settings::default();
+        let patch = json!({ "gelecekBirAlan": 1, "maxConcurrent": 4 });
+        let merged = merge_settings(&current, &patch).expect("yama uygulanamadı");
+        assert_eq!(merged.max_concurrent, 4);
+    }
+
+    #[test]
+    fn nesne_olmayan_govde_kayitli_ayarlari_dondurur() {
+        let current = Settings {
+            server_port: 49001,
+            ..Settings::default()
+        };
+        let merged = merge_settings(&current, &json!("bozuk")).expect("yama uygulanamadı");
+        assert_eq!(merged.server_port, 49001);
+    }
 }

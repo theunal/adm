@@ -1750,3 +1750,152 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* -----------------------------------------------------------------
+   Tarayıcı eklentisi kurulum sihirbazı (BrowserSetupDialog.tsx)
+   ----------------------------------------------------------------- */
+
+.wizard-browsers {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.wizard-browser {
+  position: relative;
+  flex: 1;
+  height: 32px;
+  background: var(--bg-raise);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t);
+}
+
+.wizard-browser:hover:not(:disabled) {
+  background: var(--bg-raise-hover);
+}
+
+.wizard-browser.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.wizard-browser:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Bağlanmış tarayıcı işareti */
+.wizard-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.wizard-warn,
+.wizard-bridge {
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border-radius: var(--r-md);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wizard-warn {
+  background: rgba(224, 166, 60, 0.12);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
+.wizard-bridge {
+  background: var(--ok-soft);
+  border: 1px solid var(--ok);
+  color: var(--ok);
+}
+
+.wizard-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+.wizard-step.current {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.wizard-step.done {
+  color: var(--ok);
+}
+
+.wizard-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.wizard-body {
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.wizard-body p {
+  margin: 10px 0;
+}
+
+.wizard-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.wizard-path code {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--bg-raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wizard-ok {
+  color: var(--ok);
+  font-weight: 600;
+}

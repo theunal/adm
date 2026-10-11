@@ -33,7 +33,12 @@ export const MAX_CHANNELS = 32;
 /** Kanal sayısı önayarları (formla aynı). */
 export const CHANNEL_PRESETS = [1, 4, 8, 16, 32];
 
-/** Ayarlar okunana kadar geçerli sayılan değerler. */
+/**
+ * Ayarlar okunana kadar geçerli sayılan değerler.
+ *
+ * Rust tarafındaki `Settings::default()` ile **aynı** olmalıdır; uygulama
+ * ilk boyamada bu değerleri gösterir, ardından gerçek ayarlar gelir.
+ */
 function fallback(): Settings {
   return {
     lang: detectLocale(),
@@ -42,6 +47,28 @@ function fallback(): Settings {
     audioDir: null,
     otherDir: null,
     defaultDir: "",
+
+    serverPort: 48213,
+    maxConcurrent: 3,
+    autoStart: true,
+    notifyOnComplete: true,
+    showDetailOnStart: true,
+    autoCloseDetail: false,
+    watchClipboard: true,
+    captureGroupIds: [],
+    customExtensions: "",
+    organizeByCategory: true,
+    ytdlpPath: "",
+    videoFormat: "",
+    videoContainer: "mp4",
+    videoMaxHeight: 1080,
+    checkForUpdates: true,
+    startInTray: false,
+    closeToTray: true,
+    autostart: false,
+    denoPromptSuppressed: false,
+    lastUpdateCheck: null,
+    skippedUpdateVersion: null,
   };
 }
 
@@ -80,16 +107,14 @@ export async function initSettings(): Promise<void> {
   }
 }
 
-/** Mevcut ayarların bir kopyası. */
+/**
+ * Mevcut ayarların bir kopyası.
+ *
+ * Tüm alanlar kopyalanır: `updateSettings` bu kopyanın üzerine yama uygular,
+ * eksik alan bırakmak Rust tarafında o alanı varsayılana döndürürdü.
+ */
 function snapshot(): Settings {
-  return {
-    lang: settings.lang,
-    defaultChannelCount: settings.defaultChannelCount,
-    videoDir: settings.videoDir,
-    audioDir: settings.audioDir,
-    otherDir: settings.otherDir,
-    defaultDir: settings.defaultDir,
-  };
+  return { ...settings };
 }
 
 /**

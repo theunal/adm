@@ -46,6 +46,7 @@ import StatusBar from "./components/StatusBar";
 import SettingsPanel from "./components/SettingsPanel";
 import RowContextMenu from "./components/RowContextMenu";
 import AboutDialog from "./components/AboutDialog";
+import BrowserSetupDialog from "./components/BrowserSetupDialog";
 import PropertiesDialog from "./components/PropertiesDialog";
 import NewDownloadDialog from "./components/NewDownloadDialog";
 
@@ -188,6 +189,7 @@ export default function App() {
         <RowContextMenu />
         <NewDownloadDialog />
         <AboutDialog />
+        <BrowserSetupDialog />
         <PropertiesDialog />
       </Show>
     </div>

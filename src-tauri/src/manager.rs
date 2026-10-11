@@ -54,6 +54,11 @@ pub struct StartRequest {
     pub headers: Vec<(String, String)>,
     /// `Cookie` başlığı metni (uzantıdan gelir).
     pub cookie_header: Option<String>,
+    /// Yapılandırılmış çerezler (uzantı/WebView2).
+    ///
+    /// Doluysa Netscape dosyası **bu satırlardan** üretilir; yt-dlp'ye
+    /// verilecek dosyanın alan adı bilgisi ancak böyle doğru olur.
+    pub cookies: Vec<crate::site_login::CookieRow>,
     /// Çerezleri Netscape dosyasına yaz ve indirmede kullan.
     pub use_cookies: bool,
 }
@@ -68,6 +73,7 @@ impl StartRequest {
             kind: crate::models::DownloadKind::File,
             headers: Vec::new(),
             cookie_header: None,
+            cookies: Vec::new(),
             use_cookies: false,
         }
     }
@@ -193,6 +199,65 @@ pub struct DownloadManager {
     events: broadcast::Sender<DownloadEvent>,
 }
 
+/// Tarayıcı uzantısının beklediği indirme kaydı.
+///
+/// MC'nin `/downloads` yanıtındaki alan adları korunur (`state`, `received`,
+/// `total`, `speed`, `stage`, `error`); uzantının rozet/popup kodu bunlara
+/// göre yazılmıştır. Durum metinleri MC'nin küçük harfli değerleridir.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeItem {
+    pub id: i64,
+    pub name: String,
+    /// `queued` | `probing` | `downloading` | `paused` | `completed` |
+    /// `failed` | `cancelled`
+    pub state: &'static str,
+    pub received: u64,
+    pub total: u64,
+    /// Bayt/saniye (uzantı `fmtSize(speed) + '/s'` gösterir).
+    pub speed: u64,
+    pub stage: String,
+    pub error: Option<String>,
+}
+
+impl BridgeItem {
+    fn from_item(item: crate::models::DownloadItem) -> Self {
+        use crate::models::{DownloadKind, DownloadStatus};
+
+        let state = match item.status {
+            DownloadStatus::Queued => "queued",
+            // Video indirmeleri yt-dlp çözümlemesiyle başlar; MC bu aralığı
+            // `probing` olarak gösterir.
+            DownloadStatus::Downloading
+                if item.kind == DownloadKind::Video
+                    && item.total_bytes == 0
+                    && item.downloaded_bytes == 0 =>
+            {
+                "probing"
+            }
+            DownloadStatus::Downloading => "downloading",
+            DownloadStatus::Paused => "paused",
+            DownloadStatus::Completed => "completed",
+            DownloadStatus::Failed => "failed",
+            DownloadStatus::Cancelled => "cancelled",
+        };
+
+        Self {
+            id: item.id,
+            name: item.file_name,
+            state,
+            received: item.downloaded_bytes,
+            total: item.total_bytes,
+            speed: (item.speed_mbps.max(0.0) * 1024.0 * 1024.0).round() as u64,
+            // Metinler kalıcı olarak kanonik biçimde saklanır; dışarı
+            // verilmeden önce seçili dile çevrilir.
+            stage: i18n::render(&item.stage),
+            error: item.error_message.as_deref().map(i18n::render),
+        }
+    }
+}
+
+/// İndirme yöneticisi: kuyruk, yaşam döngüsü ve olay yayını.
 impl DownloadManager {
     pub fn new(db: Database) -> Self {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
@@ -293,10 +358,8 @@ impl DownloadManager {
 
         // Uzantıdan gelen çerezler Netscape dosyasına yazılır (MC davranışı).
         let cookie_file = if req.use_cookies {
-            match req.cookie_header.as_deref() {
-                Some(text) if !text.trim().is_empty() => self.write_cookie_file(text).await,
-                _ => None,
-            }
+            self.write_cookie_file(&req.cookies, req.cookie_header.as_deref(), &req.url)
+                .await
         } else {
             None
         };
@@ -343,14 +406,37 @@ impl DownloadManager {
     }
 
     /// Çerezleri Netscape dosyasına yazar ve yolunu döner.
-    async fn write_cookie_file(&self, cookie_text: &str) -> Option<String> {
+    ///
+    /// Öncelik yapılandırılmış listeye verilir; liste boşsa `Cookie:` başlığı
+    /// hedef alan adına göre satırlara çevrilir. Ham başlık metni dosyaya
+    /// **yazılmaz**: yt-dlp Netscape biçimi bekler.
+    async fn write_cookie_file(
+        &self,
+        cookies: &[crate::site_login::CookieRow],
+        header: Option<&str>,
+        url: &str,
+    ) -> Option<String> {
+        let rows: Vec<crate::site_login::CookieRow> = if cookies.is_empty() {
+            let header = header.filter(|h| !h.trim().is_empty())?;
+            let host = crate::models::host_from_url(url)?;
+            crate::site_login::rows_from_header(header, &host)
+        } else {
+            cookies.to_vec()
+        };
+        if rows.is_empty() {
+            return None;
+        }
+
         let path = crate::db::db_dir()
             .join("cookies")
             .join(format!("bridge-{}.txt", self.next_cookie_id()));
         if let Some(parent) = path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
-        if tokio::fs::write(&path, cookie_text).await.is_err() {
+        if tokio::fs::write(&path, crate::site_login::render(&rows))
+            .await
+            .is_err()
+        {
             return None;
         }
         Some(path.to_string_lossy().to_string())
@@ -660,49 +746,95 @@ impl DownloadManager {
     // Tarayıcı köprüsü (uzantıdan gelen istekler)
     // -----------------------------------------------------------------
 
+    /// Etkin (kuyrukta veya indirilen) kayıt sayısı.
+    ///
+    /// Uzantının `/ping` yanıtındaki `active` alanı için kullanılır: rozet
+    /// yalnızca bu değer sıfırdan büyükken yanıp söner. Duraklatılmış
+    /// kayıtlar ilerlemediği için sayılmaz.
+    pub async fn active_count(&self) -> usize {
+        self.db
+            .list_active()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| {
+                matches!(
+                    i.status,
+                    crate::models::DownloadStatus::Queued
+                        | crate::models::DownloadStatus::Downloading
+                )
+            })
+            .count()
+    }
+
     /// Köprü listenin en son 50 kaydı (uzantının `/downloads` yanıtı).
-    pub async fn bridge_downloads(&self) -> Vec<crate::models::DownloadItem> {
+    ///
+    /// Uzantı MC'nin alan adlarını bekler (`state`, `received`, `total`…);
+    /// bu yüzden kayıtlar burada dönüştürülür.
+    pub async fn bridge_downloads(&self) -> Vec<BridgeItem> {
         self.db
             .list_all()
             .await
             .unwrap_or_default()
             .into_iter()
             .take(50)
+            .map(BridgeItem::from_item)
             .collect()
     }
 
     /// Köprüden yeni indirme isteği.
     ///
-    /// Uzantının gönderdiği URL, başlıklar ve çerezlerle kayıt oluşturur;
-    /// kimliği döner. `kind = video` ise indirme yt-dlp ile yapılır.
+    /// Uzantının gönderdiği URL, dosya adı, başlıklar ve çerezlerle kayıt
+    /// oluşturur; kimliği döner. `kind = video` ise indirme yt-dlp ile yapılır.
+    #[allow(clippy::too_many_arguments)]
     pub async fn bridge_add(
         &self,
         url: String,
+        file_name: Option<String>,
         headers: Vec<(String, String)>,
         cookie_header: Option<String>,
+        cookies: Vec<crate::site_login::CookieRow>,
         kind: crate::models::DownloadKind,
         channel_count: u32,
     ) -> Result<i64> {
+        // Tarayıcının önerdiği ad yalnızca dosya adıdır; kategori klasörüyle
+        // birlikte tam yola çevrilir (MC `destinationDirectory`).
+        let file_path = match file_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => {
+                let settings = self.db.load_settings().await?;
+                Some(
+                    settings
+                        .resolve_target_named(name)
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            }
+            _ => None,
+        };
+
         self.start(StartRequest {
             url,
-            file_path: None,
+            file_path,
             channel_count,
             kind,
             headers,
             cookie_header,
+            cookies,
             use_cookies: true,
         })
         .await
     }
 
-    /// Köprüden eylem isteği (`pause` / `resume` / `stop` / `delete` /
-    /// `open`).
+    /// Köprüden eylem isteği.
+    ///
+    /// MC'nin uzantısı `pause` / `resume` / `cancel` / `remove` / `open`
+    /// gönderir; ADM'nin iç adları (`stop` / `delete`) da kabul edilir.
     pub async fn bridge_action(&self, id: i64, action: &str) -> Result<()> {
         match action {
             "pause" => self.pause(id).await,
             "resume" => self.resume(id).await,
-            "stop" => self.cancel(id).await,
-            "delete" => {
+            "cancel" | "stop" => self.cancel(id).await,
+            "remove" | "delete" => {
                 self.delete(id, true).await?;
                 Ok(())
             }
@@ -1536,5 +1668,80 @@ mod tests {
         assert_eq!(percent_of(50, 100), 50.0);
         assert_eq!(percent_of(150, 100), 100.0);
         assert_eq!(percent_of(10, 0), 0.0);
+    }
+
+    // -----------------------------------------------------------------
+    // Tarayıcı köprüsü: uzantının beklediği kayıt biçimi
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn kopru_kaydi_mc_durum_adlarini_kullanir() {
+        let durumlar = [
+            (DownloadStatus::Queued, "queued"),
+            (DownloadStatus::Downloading, "downloading"),
+            (DownloadStatus::Paused, "paused"),
+            (DownloadStatus::Completed, "completed"),
+            (DownloadStatus::Failed, "failed"),
+            (DownloadStatus::Cancelled, "cancelled"),
+        ];
+        for (status, beklenen) in durumlar {
+            let item = DownloadItem {
+                status,
+                total_bytes: 100,
+                downloaded_bytes: 10,
+                ..DownloadItem::default()
+            };
+            assert_eq!(BridgeItem::from_item(item).state, beklenen);
+        }
+    }
+
+    #[test]
+    fn kopru_kaydi_video_cozumlemesini_probing_gosterir() {
+        // Video indirmesi başlarken boyut henüz bilinmez: MC bunu `probing`
+        // olarak işaretler.
+        let probing = DownloadItem {
+            kind: crate::models::DownloadKind::Video,
+            status: DownloadStatus::Downloading,
+            total_bytes: 0,
+            downloaded_bytes: 0,
+            ..DownloadItem::default()
+        };
+        assert_eq!(BridgeItem::from_item(probing).state, "probing");
+
+        // Boyut öğrenildiğinde normal indirmeye döner.
+        let indiriliyor = DownloadItem {
+            kind: crate::models::DownloadKind::Video,
+            status: DownloadStatus::Downloading,
+            total_bytes: 1024,
+            downloaded_bytes: 0,
+            ..DownloadItem::default()
+        };
+        assert_eq!(BridgeItem::from_item(indiriliyor).state, "downloading");
+
+        // Dosya indirmeleri hiçbir zaman `probing` olmaz.
+        let dosya = DownloadItem {
+            kind: crate::models::DownloadKind::File,
+            status: DownloadStatus::Downloading,
+            total_bytes: 0,
+            downloaded_bytes: 0,
+            ..DownloadItem::default()
+        };
+        assert_eq!(BridgeItem::from_item(dosya).state, "downloading");
+    }
+
+    #[test]
+    fn kopru_kaydi_hizi_bayta_cevirir() {
+        let item = DownloadItem {
+            speed_mbps: 1.5,
+            ..DownloadItem::default()
+        };
+        assert_eq!(BridgeItem::from_item(item).speed, 1_572_864);
+
+        // Negatif hız (bozuk kayıt) sıfıra kırpılır.
+        let negatif = DownloadItem {
+            speed_mbps: -3.0,
+            ..DownloadItem::default()
+        };
+        assert_eq!(BridgeItem::from_item(negatif).speed, 0);
     }
 }

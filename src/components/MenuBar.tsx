@@ -42,6 +42,7 @@ import {
   graphOpen,
   logOpen,
   setAboutOpen,
+  openBrowserSetup,
   setAddDialogOpen,
   setGraphOpen,
   setLogOpen,
@@ -265,6 +266,11 @@ const MENUS: MenuRoot[] = [
         accel: "Ctrl+S",
         checked: () => settingsOpen(),
         run: () => setSettingsOpen(!settingsOpen()),
+      },
+      {
+        kind: "item",
+        key: "menu.item.browser_setup",
+        run: () => openBrowserSetup("chrome"),
       },
       { kind: "sep" },
       {

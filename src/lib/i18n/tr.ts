@@ -53,6 +53,7 @@ export const tr = {
   "menu.item.speed_graph": "Hız Grafiği",
   "menu.item.event_log": "Olay Günlüğü",
   "menu.item.settings": "Ayarlar…",
+  "menu.item.browser_setup": "Tarayıcı Eklentisi…",
   "menu.item.about": "ADM Hakkında",
   "menu.item.exit": "Çıkış",
 
@@ -291,6 +292,39 @@ export const tr = {
   "status.Failed": "Başarısız",
   "status.Paused": "Duraklatıldı",
   "status.Queued": "Sırada",
+
+  // -----------------------------------------------------------------
+  // Tarayıcı eklentisi kurulum sihirbazı (BrowserSetupDialog.tsx)
+  // -----------------------------------------------------------------
+  "wizard.title": "Tarayıcı eklentisi kurulumu",
+  "wizard.step.prepare": "Dosyaları hazırla",
+  "wizard.step.open": "Uzantı sayfasını aç",
+  "wizard.step.load": "Eklentiyi yükle",
+  "wizard.step.connect": "Bağlantıyı doğrula",
+  "wizard.bridge_off":
+    "Tarayıcı köprüsü çalışmıyor. Ayarlar ▸ Tarayıcılar bölümünden portu denetleyin; köprü açık olmadan eklenti indirmeleri iletemez.",
+  "wizard.bridge_on": "Köprü 127.0.0.1:{port} adresinde dinliyor.",
+  "wizard.hint.prepare":
+    "{browser} için eklenti dosyaları ADM klasörüne kopyalanacak. Bu klasörü birazdan tarayıcıya göstereceksiniz.",
+  "wizard.hint.open":
+    "Açılan sayfada sağ üstteki “Geliştirici modu”nu açın, ardından “Paketlenmemiş öğe yükle” düğmesine basın.",
+  "wizard.hint.open_firefox":
+    "Açılan sayfada “Geçici Eklenti Yükle…” düğmesine basın.",
+  "wizard.hint.load":
+    "Dosya seçme penceresinde aşağıdaki klasörü seçip içindeki manifest.json dosyasını onaylayın. Klasörü önce buradan açabilirsiniz.",
+  "wizard.hint.load_firefox":
+    "Aşağıdaki klasörü açın ve içindeki manifest.json dosyasını seçin.",
+  "wizard.hint.connect":
+    "Eklenti yüklendi. Tarayıcıdan bir indirme başlattığınızda ADM bağlantıyı burada gösterecek.",
+  "wizard.action.prepare": "Dosyaları hazırla",
+  "wizard.action.open": "Uzantı sayfasını aç",
+  "wizard.action.open_firefox": "about:debugging sayfasını aç",
+  "wizard.action.open_folder": "Klasörü aç",
+  "wizard.action.recheck": "Bağlantıyı yeniden denetle",
+  "wizard.working": "Hazırlanıyor…",
+  "wizard.prepared": "Eklenti dosyaları hazırlandı",
+  "wizard.connected": "{browser} bağlandı",
+  "wizard.close": "Kapat",
 };
 
 /**

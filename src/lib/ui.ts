@@ -15,6 +15,25 @@ export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** "Hakkında" penceresi. */
 export const [aboutOpen, setAboutOpen] = createSignal(false);
 
+/**
+ * Tarayıcı eklentisi kurulum sihirbazı.
+ *
+ * Ayarlar ▸ Tarayıcılar sekmesinden ve ilk çalıştırma ipucundan açılır;
+ * tarayıcı seçimi sihirbaz açılırken verilir (`null` = henüz seçilmedi).
+ */
+export const [browserSetupBrowser, setBrowserSetupBrowser] =
+  createSignal<import("./api").BrowserId | null>(null);
+
+/** Sihirbazı belirli bir tarayıcıyla açar. */
+export function openBrowserSetup(browser: import("./api").BrowserId): void {
+  setBrowserSetupBrowser(browser);
+}
+
+/** Sihirbazı kapatır. */
+export function closeBrowserSetup(): void {
+  setBrowserSetupBrowser(null);
+}
+
 /** Özellikler penceresinin konusu (`null` ise kapalı). */
 export const [propertiesItem, setPropertiesItem] = createSignal<DownloadItem | null>(
   null,

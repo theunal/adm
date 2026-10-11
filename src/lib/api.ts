@@ -25,6 +25,52 @@ export interface Settings {
   otherDir: string | null;
   /** Eşleşmeyen dosyaların (ve boş kategorilerin) hedefi. */
   defaultDir: string;
+
+  // -----------------------------------------------------------------
+  // MC portu ayarları
+  // -----------------------------------------------------------------
+  /** Tarayıcı köprüsünün dinlediği port (1024..=65535). */
+  serverPort: number;
+  /** Aynı anda çalışan indirme sayısı (1..=10). */
+  maxConcurrent: number;
+  /** Yeni indirmeler hemen başlar; kapalıysa kuyrukta bekler. */
+  autoStart: boolean;
+  /** Tamamlanınca bildirim göster. */
+  notifyOnComplete: boolean;
+  /** İndirme başlarken detay penceresini aç. */
+  showDetailOnStart: boolean;
+  /** Detay penceresini tamamlanınca kapat. */
+  autoCloseDetail: boolean;
+  /** Panoyu izleyip bulunan bağlantıları sor. */
+  watchClipboard: boolean;
+  /** Yakalanacak dosya türü grupları (`capture::DEFAULT_GROUPS`). */
+  captureGroupIds: string[];
+  /** Yakalamaya eklenen özel uzantılar (virgülle ayrılmış). */
+  customExtensions: string;
+  /** İndirmeleri kategori alt klasörlerine ayır. */
+  organizeByCategory: boolean;
+  /** Özel yt-dlp yolu (boş = PATH'teki/araçlar klasöründeki). */
+  ytdlpPath: string;
+  /** Özel yt-dlp `-f` ifadesi (boş = hazır seçiciler). */
+  videoFormat: string;
+  /** Video kapsayıcısı: `mp4` | `mkv` | `webm` | `original`. */
+  videoContainer: string;
+  /** Azami çözünürlük (0 = en iyi, -1 = ses m4a, -2 = ses mp3). */
+  videoMaxHeight: number;
+  /** Açılışta güncelleme denetle. */
+  checkForUpdates: boolean;
+  /** Uygulamayı tepki simgesinde (pencere açmadan) başlat. */
+  startInTray: boolean;
+  /** Pencere kapatılınca uygulamayı arka planda tut. */
+  closeToTray: boolean;
+  /** Windows oturum açılışında çalıştır. */
+  autostart: boolean;
+  /** deno kurulum sorusu bir daha sorulmasın. */
+  denoPromptSuppressed: boolean;
+  /** Son güncelleme denetimi (RFC 3339). */
+  lastUpdateCheck: string | null;
+  /** Kullanıcının atladığı sürüm. */
+  skippedUpdateVersion: string | null;
 }
 
 /** Tauri olayının adı. */
@@ -220,4 +266,128 @@ export async function confirm(
 ): Promise<boolean> {
   const { ask } = await import("@tauri-apps/plugin-dialog");
   return ask(message, { title, kind: "warning" });
+}
+
+/* -----------------------------------------------------------------
+   Tarayıcı köprüsü ve eklenti kurulumu (MC portu)
+   ----------------------------------------------------------------- */
+
+/** Kurulum sihirbazının desteklediği tarayıcılar. */
+export type BrowserId = "chrome" | "edge" | "brave" | "firefox";
+
+/** Köprünün çalışma durumu (durum çubuğu göstergesi). */
+export interface BridgeStatus {
+  running: boolean;
+  port: number;
+  /** Köprüye bağlanmış tarayıcılar (son görülme sırasıyla). */
+  browsers: string[];
+}
+
+/** Köprünün durumunu okur. */
+export function bridgeStatus(): Promise<BridgeStatus> {
+  return invoke<BridgeStatus>("bridge_status");
+}
+
+/** Desteklenen tarayıcıların listesi. */
+export function browserList(): Promise<BrowserId[]> {
+  return invoke<BrowserId[]>("browser_list");
+}
+
+/**
+ * Eklenti dosyalarını tarayıcı klasörüne kopyalar.
+ *
+ * Dönen değer, "paketlenmemiş öğe yükle" için seçilecek klasörün yoludur.
+ */
+export function prepareBrowserFiles(browser: BrowserId): Promise<string> {
+  return invoke<string>("prepare_browser_files", { browser });
+}
+
+/** Eklenti klasörünü dosya yöneticisinde açar. */
+export function openPluginFolder(browser: BrowserId): Promise<void> {
+  return invoke<void>("open_plugin_folder", { browser });
+}
+
+/** Tarayıcının uzantı yönetimi sayfasını açar. */
+export function openBrowserExtensionsPage(browser: BrowserId): Promise<void> {
+  return invoke<void>("open_browser_extensions_page", { browser });
+}
+
+/* -----------------------------------------------------------------
+   Harici araçlar (yt-dlp / ffmpeg / deno)
+   ----------------------------------------------------------------- */
+
+/** `tools::Tool` karşılığı. */
+export type ToolId = "yt-dlp" | "ffmpeg" | "deno";
+
+/** Bir aracın kurulum durumu. */
+export interface ToolStatus {
+  tool: string;
+  installed: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+/** Kurulu araçların durumu. */
+export function toolStatus(): Promise<ToolStatus[]> {
+  return invoke<ToolStatus[]>("tool_status");
+}
+
+/** Aracı indirip kurar; ilerleme `download://event` ile yayınlanır. */
+export function installTool(tool: ToolId): Promise<string> {
+  return invoke<string>("install_tool", { tool });
+}
+
+/* -----------------------------------------------------------------
+   Site girişi (çerezler)
+   ----------------------------------------------------------------- */
+
+/** WebView2'den toplanan tek bir çerez. */
+export interface SiteCookie {
+  domain: string;
+  path: string;
+  secure: boolean;
+  expirationDate: number;
+  name: string;
+  value: string;
+}
+
+/** Kayıtlı çerez dosyasının durumu. */
+export interface SiteLoginStatus {
+  cookieCount: number;
+  savedAt: string | null;
+  domains: string[];
+}
+
+/** Kayıtlı site girişi çerezlerinin durumunu okur. */
+export function siteLoginStatus(): Promise<SiteLoginStatus> {
+  return invoke<SiteLoginStatus>("site_login_status");
+}
+
+/** Giriş penceresinden toplanan çerezleri Netscape dosyasına yazar. */
+export function saveSiteCookies(cookies: SiteCookie[]): Promise<number> {
+  return invoke<number>("save_site_cookies", { cookies });
+}
+
+/** Kayıtlı site girişi çerezlerini siler. */
+export function clearSiteCookies(): Promise<void> {
+  return invoke<void>("clear_site_cookies");
+}
+
+/* -----------------------------------------------------------------
+   Güncelleme, pano ve tepsi
+   ----------------------------------------------------------------- */
+
+/** Güncellemeyi denetler; sonuç `download://event` ile yayınlanır. */
+export function checkForUpdate(): Promise<void> {
+  return invoke<void>("check_for_update");
+}
+
+/** Panodaki bağlantı sorusunu yanıtlandı olarak işaretler. */
+export function answerClipboardPrompt(): Promise<void> {
+  return invoke<void>("answer_clipboard_prompt");
+}
+
+/** Ana pencereyi gösterir ve öne getirir (tepsi menüsüyle aynı yol). */
+export function trayShow(): Promise<void> {
+  return invoke<void>("tray_show");
 }

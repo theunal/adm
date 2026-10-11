@@ -48,6 +48,7 @@ export const en: Dict = {
   "menu.item.speed_graph": "Speed Graph",
   "menu.item.event_log": "Events Log",
   "menu.item.settings": "Settings…",
+  "menu.item.browser_setup": "Browser Extension…",
   "menu.item.about": "About ADM",
   "menu.item.exit": "Exit",
 
@@ -286,4 +287,37 @@ export const en: Dict = {
   "status.Failed": "Failed",
   "status.Paused": "Paused",
   "status.Queued": "Queued",
+
+  // -----------------------------------------------------------------
+  // Browser extension setup wizard (BrowserSetupDialog.tsx)
+  // -----------------------------------------------------------------
+  "wizard.title": "Browser extension setup",
+  "wizard.step.prepare": "Prepare files",
+  "wizard.step.open": "Open extensions page",
+  "wizard.step.load": "Load the extension",
+  "wizard.step.connect": "Verify connection",
+  "wizard.bridge_off":
+    "The browser bridge is not running. Check the port under Settings ▸ Browsers; the extension cannot deliver downloads without it.",
+  "wizard.bridge_on": "The bridge is listening on 127.0.0.1:{port}.",
+  "wizard.hint.prepare":
+    "The extension files for {browser} will be copied into the ADM folder. You will point the browser at this folder next.",
+  "wizard.hint.open":
+    "On the page that opens, turn on “Developer mode” in the top right, then click “Load unpacked”.",
+  "wizard.hint.open_firefox":
+    "On the page that opens, click “Load Temporary Add-on…”.",
+  "wizard.hint.load":
+    "In the file picker, choose the folder below and confirm the manifest.json inside it. You can open the folder first.",
+  "wizard.hint.load_firefox":
+    "Open the folder below and select the manifest.json inside it.",
+  "wizard.hint.connect":
+    "The extension is loaded. Start a download in the browser and ADM will report the connection here.",
+  "wizard.action.prepare": "Prepare files",
+  "wizard.action.open": "Open extensions page",
+  "wizard.action.open_firefox": "Open about:debugging",
+  "wizard.action.open_folder": "Open folder",
+  "wizard.action.recheck": "Re-check connection",
+  "wizard.working": "Preparing…",
+  "wizard.prepared": "Extension files are ready",
+  "wizard.connected": "{browser} connected",
+  "wizard.close": "Close",
 };

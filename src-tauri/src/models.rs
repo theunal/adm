@@ -332,6 +332,32 @@ pub type HeaderMap = Vec<(String, String)>;
 /// Varsayılan dosya adı.
 pub const DEFAULT_FILE_NAME: &str = "indirme.bin";
 
+/// URL'den alan adını çıkarır (`https://a.b:8443/x` → `a.b`).
+///
+/// Köprüde çerez satırlarının alan adını doldurmak için kullanılır; harici
+/// bir URL ayrıştırıcıya gerek bırakmaz. Şema yoksa giriş yolu olarak
+/// değerlendirilir.
+pub fn host_from_url(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // `kullanıcı:parola@alan` biçiminde kimlik bilgisi varsa atılır.
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    if host_port.is_empty() {
+        return None;
+    }
+    // IPv6: `[::1]:48213` → `::1`
+    if let Some(inner) = host_port.strip_prefix('[') {
+        let host = inner.split(']').next()?;
+        return (!host.is_empty()).then(|| host.to_ascii_lowercase());
+    }
+    let host = host_port.split(':').next().unwrap_or("");
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
 /// Başlangıç URL'sine göre dosya adı türetir.
 /// `https://x.com/a/b/file.bin?x=1` -> `file.bin`
 pub fn file_name_from_url(url: &str) -> String {
@@ -808,5 +834,26 @@ mod tests {
             split_extension("uzantisiz"),
             ("uzantisiz".to_string(), None)
         );
+    }
+
+    #[test]
+    fn alan_adi_url_den_cikarilir() {
+        assert_eq!(
+            host_from_url("https://www.youtube.com/watch?v=1"),
+            Some("www.youtube.com".to_string())
+        );
+        assert_eq!(
+            host_from_url("http://a.b:8443/x"),
+            Some("a.b".to_string())
+        );
+        // Kimlik bilgisi ve IPv6 köşe durumları.
+        assert_eq!(
+            host_from_url("https://user:pw@x.tld/p"),
+            Some("x.tld".to_string())
+        );
+        assert_eq!(host_from_url("http://[::1]:48213/p"), Some("::1".to_string()));
+        // Şemasız giriş de kabul edilir; ayırt edilemeyen giriş `None`.
+        assert_eq!(host_from_url("youtube.com"), Some("youtube.com".to_string()));
+        assert_eq!(host_from_url(""), None);
     }
 }

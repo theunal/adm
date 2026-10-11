@@ -40,6 +40,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../src-extension/": "extension/"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"
