@@ -17,6 +17,9 @@
   "notifVideoTitle": {
     "message": "Video download started"
   },
+  "notifRejectedTitle": {
+    "message": "ADM rejected the download"
+  },
   "notifOfflineTitle": {
     "message": "ADM is not running"
   },

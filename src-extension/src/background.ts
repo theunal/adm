@@ -44,13 +44,34 @@
   const BRIDGE_HEADERS = { 'X-ADM-Extension': BROWSER };
 
   // ---------- App communication ----------
+  // Köprü TCP bağlantısını kabul edip yanıt yazmayabilir (yarı açık
+  // bağlantı, askıda kalan istek). Zaman aşımı olmadan `fetch` hiç bitmez:
+  // yoklama 1,5 sn'de bir takılır, worker hiç boşta düşmez ve kullanıcı
+  // "hiçbir geri bildirim yok" durumunda kalır. Bu yüzden her köprü isteği
+  // `signal` ile sınırlıdır.
+  const PING_TIMEOUT_MS = 1200;
+  const BRIDGE_TIMEOUT_MS = 5000;
+
+  /** Zaman aşımı olan köprü `fetch`'i. */
+  async function bridgeFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+    // `AbortSignal.timeout` eski motorlarda yok; `AbortController` her yerde var.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function ping(settings?: Settings): Promise<AppInfo | null> {
     const cfg = settings || (await getSettings());
     try {
-      const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 1200);
-      const r = await fetch(base(cfg) + '/ping?browser=' + BROWSER, { signal: ctrl.signal, cache: 'no-store', headers: BRIDGE_HEADERS });
-      clearTimeout(timeout);
+      const r = await bridgeFetch(
+        base(cfg) + '/ping?browser=' + BROWSER,
+        { cache: 'no-store', headers: BRIDGE_HEADERS },
+        PING_TIMEOUT_MS,
+      );
       if (!r.ok) return null;
       const app = (await r.json()) as AppInfo | null;
       if (app && app.active > 0) startProgress();
@@ -63,9 +84,11 @@
   // ---------- Download progress: toolbar badge + popup list ----------
   async function bridgeJSON<T = unknown>(path: string, init?: RequestInit): Promise<T> {
     const settings = await getSettings();
-    const r = await fetch(base(settings) + path, {
-      cache: 'no-store', ...init, headers: { ...BRIDGE_HEADERS, ...(init?.headers) },
-    });
+    const r = await bridgeFetch(
+      base(settings) + path,
+      { cache: 'no-store', ...init, headers: { ...BRIDGE_HEADERS, ...(init?.headers) } },
+      BRIDGE_TIMEOUT_MS,
+    );
     return (await r.json()) as T;
   }
   async function getDownloads(): Promise<DownloadItem[]> {
@@ -246,11 +269,22 @@
     }
   }
 
+  // Bildirim söz döndürür; `await` edilmediği için önceki `catch` yalnızca
+  // eşzamanlı throw'ları yakalıyor, red'i değil. Worker bu çağrı bitmeden
+  // sonlanırsa kullanıcı bildirimi hiç görmez.
   function notify(title: string, message: string): void {
+    // Tek argümanlı `create(options)` hem Chrome hem Firefox'ta geçerli
+    // (kimlik otomatik üretilir); `create('', …)` yalnızca Chrome'da
+    // çalışıyordu, Firefox `undefined` bekliyor.
+    const opts: chrome.notifications.NotificationCreateOptions = {
+      type: 'basic', iconUrl: 'icons/icon128.png', title, message: String(message || '').slice(0, 200),
+    };
     try {
-      api.notifications?.create?.('', {
-        type: 'basic', iconUrl: 'icons/icon128.png', title, message: String(message || '').slice(0, 200),
-      });
+      const p = api.notifications?.create?.(opts);
+      // API yoksa söz de yoktur; varsa red'ı yut.
+      if (p && typeof (p as Promise<unknown>).catch === 'function') {
+        (p as Promise<unknown>).catch(() => { /* bildirim gösterilemedi */ });
+      }
     } catch { }
   }
 
@@ -262,11 +296,21 @@
       userAgent: navigator.userAgent, cookieHeader: ck.header, cookies: ck.list,
     };
     try {
-      const r = await fetch(base(settings) + '/download', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...BRIDGE_HEADERS }, body: JSON.stringify(body),
-      });
+      const r = await bridgeFetch(
+        base(settings) + '/download',
+        { method: 'POST', headers: { 'Content-Type': 'application/json', ...BRIDGE_HEADERS }, body: JSON.stringify(body) },
+        BRIDGE_TIMEOUT_MS,
+      );
       const j = (await r.json()) as { ok?: boolean; error?: string };
-      if (!j.ok) throw new Error(j.error || 'app error');
+      // Uygulama çalışıyordu ama işi reddetti (geçersiz URL, kota, şema...).
+      // Bu "uygulama kapalı" durumu DEĞİLDİR. Önceden her hata
+      // `notifOfflineTitle` ile bildiriliyor ve `j.error` yutuluyordu;
+      // kullanıcı hem yanlış yönlendiriliyor hem de gerçek nedeni hiç
+      // göremiyordu.
+      if (!j.ok) {
+        notify(t('notifRejectedTitle'), String(j.error || '').slice(0, 200));
+        return { ok: false, error: String(j.error || 'app error') };
+      }
       notify(payload.kind === 'video' ? t('notifVideoTitle') : t('notifSentTitle'), payload.filename || payload.url);
       startProgress();
       return { ok: true };
@@ -466,10 +510,13 @@
     const create = (): void => {
       if (created) return;
       created = true;
-      try {
-        menus.create({ id: 'dm-link', title: t('menuDownloadLink'), contexts: ['link', 'video', 'audio', 'image'] });
-        menus.create({ id: 'dm-page-video', title: t('menuPageVideo'), contexts: ['page', 'video', 'frame', 'action'] });
-      } catch { }
+      // Her `create` kendi `try`si içinde: ikisi tek blokta olursa ilk
+      // çağrı hata verdiğinde (ör. `removeAll` yarışıyla eski `dm-link`
+      // kayıtlıysa "duplicate id") `catch` yutuyor ve `dm-page-video`
+      // hiç oluşmuyor. `created` zaten true olduğu için ikinci deneme de
+      // atlanıyor, kullanıcı menüyü kalıcı olarak kaybediyordu.
+      try { menus.create({ id: 'dm-link', title: t('menuDownloadLink'), contexts: ['link', 'video', 'audio', 'image'] }); } catch { }
+      try { menus.create({ id: 'dm-page-video', title: t('menuPageVideo'), contexts: ['page', 'video', 'frame', 'action'] }); } catch { }
     };
     // Chrome geri çağrı alır; Firefox'un browser.menus'ü söz döner.
     try {
@@ -493,10 +540,27 @@
   });
 
   // ---------- Popup / content script messages ----------
+  //
+  // Yetkilendirme: `sender.id` eşleşmesi kapıdır. Web sayfaları
+  // `externally_connectable` tanımlı olmadığı için zaten doğrudan
+  // `sendMessage` çağıramaz; yalnızca kendi content script'imiz (veya başka
+  // bir eklenti) mesaj gönderebilir. `sender.id` kontrolü ikisini de
+  // ayırır ve tek satırdır.
+  //
+  // Ayrıca `pageMedia` girdisi doğrulanmazsa bir sayfa, kendi
+  // `<video>`'su olmadan istediği URL'yi "yakalanan medya" listesine
+  // yazabilir; kullanıcı Download'a bastığında uygulama o URL'yi **o
+  // origin'in çerezleriyle** indirir. Bu yüzden gönderen sekmenin
+  // origin'i ile medya URL'sinin origin'i eşleşmeli.
+  function sameOrigin(a: string, b: string): boolean {
+    try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
+  }
+
   api.runtime.onMessage.addListener((rawMsg, sender, sendResponse) => {
     const msg = rawMsg as ExtMessage;
     (async () => {
       try {
+        if (sender.id !== api.runtime.id) { sendResponse({ ok: false, error: 'forbidden' }); return; }
         switch (msg?.type) {
           case 'status': {
             const settings = await getSettings();
@@ -509,18 +573,54 @@
             sendResponse(response);
             break;
           }
-          case 'getMedia': sendResponse(await readMedia(msg.tabId)); break;
+          case 'getMedia': {
+            // Sekme kimliği istemciden gelir; yalnızca kendi sekmesine
+            // bakabilmesi için gönderenin o sekmeye erişimi doğrulanır.
+            const tabId = Number(msg.tabId);
+            if (!Number.isInteger(tabId) || tabId < 0) { sendResponse([]); break; }
+            if (!sender.tab || sender.tab.id !== tabId) {
+              // Popup kendi sekmesini sorar; başka bir sekmeyi soramaz.
+              let ok = false;
+              try { const tabs = await api.tabs.query({ active: true, currentWindow: true }); ok = tabs.some((t) => t.id === tabId); } catch { }
+              if (!ok) { sendResponse([]); break; }
+            }
+            sendResponse(await readMedia(tabId));
+            break;
+          }
           case 'downloads': sendResponse(await getDownloads()); break;
-          case 'action': sendResponse(await downloadAction(msg.id, msg.action)); break;
+          case 'action': sendResponse(await downloadAction(String(msg.id), String(msg.action))); break;
           case 'download': sendResponse(await sendToApp(msg)); break;
-          case 'setSettings': await setSettings(msg.settings || {}); sendResponse({ ok: true }); break;
+          case 'setSettings': {
+            // Yalnızca popup ayar değiştirebilir; content script'ın köprü
+            // portunu değiştirmesine izin verilmez. Port ayrıca aralığa
+            // kırpılır — `popup.html`'deki `min/max` yalnızca HTML giriş
+            // doğrulamasıdır, `onchange` okunan değeri kırpmıyordu.
+            if (sender.tab) { sendResponse({ ok: false, error: 'forbidden' }); break; }
+            const p = msg.settings || {};
+            const clean: Partial<Settings> = {};
+            if (typeof p.intercept === 'boolean') clean.intercept = p.intercept;
+            if (typeof p.sniff === 'boolean') clean.sniff = p.sniff;
+            if (typeof p.minSizeMB === 'number' && Number.isFinite(p.minSizeMB)) clean.minSizeMB = Math.max(0, p.minSizeMB);
+            if (typeof p.port === 'number' && Number.isInteger(p.port)) clean.port = Math.min(65535, Math.max(1024, p.port));
+            await setSettings(clean);
+            sendResponse({ ok: true });
+            break;
+          }
           case 'pageMedia': {
-            if (sender.tab) {
-              for (const m of msg.items || []) {
-                const kind = classify(m.url, m.type || '');
-                if (kind || MEDIA_EXT.test(m.url)) {
-                  await addMedia(sender.tab.id!, { url: m.url, type: m.type || '', size: 0, kind: kind || 'media', time: Date.now(), name: m.name });
-                }
+            const items = Array.isArray(msg.items) ? msg.items : [];
+            if (sender.tab && sender.tab.id !== undefined && sender.tab.url) {
+              for (const m of items) {
+                const url = typeof m?.url === 'string' ? m.url : '';
+                if (!/^https?:/i.test(url)) continue;
+                // Yalnızca gönderen sayfanın kendi origin'inden medya kabul et.
+                if (!sameOrigin(sender.tab.url, url)) continue;
+                const kind = classify(url, typeof m.type === 'string' ? m.type : '');
+                if (!kind && !MEDIA_EXT.test(url)) continue;
+                await addMedia(sender.tab.id, {
+                  url, type: typeof m.type === 'string' ? m.type : '', size: 0,
+                  kind: kind || 'media', time: Date.now(),
+                  name: typeof m.name === 'string' ? m.name.slice(0, 120) : undefined,
+                });
               }
             }
             sendResponse({ ok: true });

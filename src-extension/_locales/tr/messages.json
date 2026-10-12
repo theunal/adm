@@ -17,6 +17,9 @@
   "notifVideoTitle": {
     "message": "Video indirmesi başlatıldı"
   },
+  "notifRejectedTitle": {
+    "message": "ADM indirmeyi reddetti"
+  },
   "notifOfflineTitle": {
     "message": "ADM çalışmıyor"
   },
