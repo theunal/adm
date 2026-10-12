@@ -74,6 +74,14 @@ struct ServerOpts {
     /// kullanılır; `Arc` paylaşıldığı için klonlanan `ServerOpts` üzerinden de
     /// okunur.
     seen: Arc<std::sync::Mutex<Vec<String>>>,
+    /// 429 döndürülecek veri isteği bütçesi (`0` = kapalı).
+    ///
+    /// Yoklama isteği (`bytes=0-0`) harcanmaz: motor gövde okumaz, bütçe
+    /// gerçek indirmeye saklanır.
+    rate_budget: Arc<AtomicUsize>,
+    /// Gerçekte döndürülen 429 sayısı — test, sınırlandırma yolunun
+    /// gerçekten geçildiğini buradan doğrular.
+    limited: Arc<AtomicUsize>,
 }
 
 impl ServerOpts {
@@ -84,7 +92,15 @@ impl ServerOpts {
             truncate_count: 0,
             redirect_to: None,
             seen: Arc::new(std::sync::Mutex::new(Vec::new())),
+            rate_budget: Arc::new(AtomicUsize::new(0)),
+            limited: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// İlk `k` veri isteğine `429 Too Many Requests` döndürür.
+    fn rate_limited(mut self, k: usize) -> Self {
+        self.rate_budget = Arc::new(AtomicUsize::new(k));
+        self
     }
 
     /// Sunucuya gelen istek başlıklarını kaydet.
@@ -115,6 +131,7 @@ struct TestServer {
     hits: Arc<AtomicUsize>,
     shutdown: Arc<AtomicBool>,
     seen: Arc<std::sync::Mutex<Vec<String>>>,
+    limited: Arc<AtomicUsize>,
 }
 
 impl TestServer {
@@ -150,6 +167,7 @@ impl TestServer {
         let t = Arc::clone(&truncations);
         // `opts` aşağıda kapanışa taşınır; başlık kaydını önceden al.
         let seen = Arc::clone(&opts.seen);
+        let limited = Arc::clone(&opts.limited);
 
         std::thread::spawn(move || {
             listener.set_nonblocking(true).ok();
@@ -178,6 +196,7 @@ impl TestServer {
             hits,
             shutdown,
             seen,
+            limited,
         }
     }
 
@@ -200,6 +219,14 @@ impl TestServer {
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default()
+    }
+
+    /// Gerçekte `429 Too Many Requests` döndürülen istek sayısı.
+    ///
+    /// `0` dönerse sınırlandırma yolu hiç geçilmemiş demektir ve testin
+    /// iddiası hiçbir şey kanıtlamaz; bu yüzden bu sayı ayrıca ölçülür.
+    fn rate_limited(&self) -> usize {
+        self.limited.load(Ordering::SeqCst)
     }
 
     /// Yönlendirme hedefi (basit `/` -> `/dosya.bin` sıçraması).
@@ -316,6 +343,30 @@ fn handle(
     let requested = parse_range(&headers);
     let range = opts.range;
     let throttle = opts.throttle;
+
+    // Sınırlandırma yanıtı (`THROTTLE_STATUSES`). `Truncating` bütçesi gibi
+    // bir sayı harcanır; yoklama isteği (`bytes=0-0`) sayılmaz, çünkü motor
+    // gövde okumaz ve bütçe gerçek indirmeye saklanır.
+    //
+    // Bu yol daha önce hiçbir bütünleşik testte çalışmamıştı: 429/503
+    // döndüren bir sunucu kurgulanmadığı için `ChannelOutcome::Throttled`
+    // kolu hep ölü kalmıştı.
+    let yoklama = matches!(requested, Some((0, Some(0))));
+    if !yoklama
+        && opts
+            .rate_budget
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+            .is_ok()
+    {
+        opts.limited.fetch_add(1, Ordering::SeqCst);
+        let response = "HTTP/1.1 429 Too Many Requests\r\n\
+                        Retry-After: 1\r\n\
+                        Content-Length: 0\r\n\
+                        Connection: close\r\n\r\n";
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
+        return;
+    }
 
     match range {
         RangeSupport::None => {
@@ -1311,4 +1362,54 @@ async fn ek_baslik_yoksa_varsayilan_ua_korunur() {
         seen.iter().any(|h| h.to_ascii_lowercase().contains("user-agent:")),
         "hiç User-Agent gönderilmemiş"
     );
+}
+
+/// `429 Too Many Requests` alan motor indirmeyi bozmadan sürdürüyor.
+///
+/// `ChannelOutcome::Throttled` kolu daha önce **hiçbir** bütünleşik testte
+/// çalışmamıştı: test sunucusunun 429 döndüren bir modu yoktu, dolayısıyla
+/// `narrow()`, ortak `throttledUntil` ve geri çekilme üçlüsü kurgu
+/// dışında kalıyordu.
+///
+/// Burada iki şey ölçülür:
+///
+/// 1. Yol gerçekten geçilmiş mi (`rate_limited()` — 0 ise testin iddiası
+///    hiçbir şey kanıtlamaz),
+/// 2. Sınırlandırma tekrarları **dosyayı bozmadan** tamamlanmış mı
+///    (içerik birebir eşit olmalı).
+#[tokio::test]
+async fn sinirlama_yaniiti_alinca_indirme_surdurulur() {
+    let server = TestServer::with(ServerOpts::new(RangeSupport::Proper).rate_limited(3));
+    let path = temp_path("sinirlama.bin");
+    let _ = std::fs::remove_file(&path);
+
+    let engine = DownloadEngine::new();
+    let (_, hook) = recorder();
+    engine
+        .download(
+            &server.file_url(),
+            &path,
+            4,
+            None,
+            &[],
+            AbortSignal::new(),
+            hook,
+            noop_probe(),
+        )
+        .await
+        .expect("429 alan indirme tamamlanmalı");
+
+    let written = std::fs::read(&path).expect("dosya okunamadı");
+    assert_eq!(
+        written,
+        test_payload(),
+        "sınırlandırma tekrarları dosyayı bozmuş olmalı"
+    );
+    let _ = std::fs::remove_file(&path);
+
+    assert!(
+        server.rate_limited() >= 1,
+        "429 hiç döndürülmedi; test sınırlandırma yolunu hiç sınamadı"
+    );
+    assert_eq!(server.rate_limited(), 3, "bütçenin tamamı harcanmalı");
 }

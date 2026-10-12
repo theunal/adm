@@ -930,17 +930,24 @@ async fn run_channel(
             continue;
         }
 
-        let outcome = fetch_range(
-            &url,
-            &mut file,
-            &me,
-            start_byte,
-            end_byte,
-            extra,
-            &signal,
-            ranged,
-        )
-        .await;
+        // MC `fillSlots`: yeni istek iki kapıdan geçer — önce ortak bekleme
+        // (`throttledUntil`), sonra eşzamanlılık sınırı (`activeLimit`).
+        // Slot yalnızca HTTP isteği boyunca tutulur: geri çekilme uykusu
+        // bağlantı sayısını meşgul etmemeli.
+        let outcome = {
+            let _slot = throttle.acquire(&signal).await?;
+            fetch_range(
+                &url,
+                &mut file,
+                &me,
+                start_byte,
+                end_byte,
+                extra,
+                &signal,
+                ranged,
+            )
+            .await
+        };
 
         match outcome {
             Ok(ChannelOutcome::Done) => {
@@ -980,6 +987,11 @@ async fn run_channel(
                         &MAX_RETRIES_PER_CHANNEL.to_string(),
                     ));
                 }
+                // Ceza yalnızca bu kanalı değil TÜM kanalları yavaşlatır
+                // (MC `throttledUntil`). `sleep_backoff` ile aynı eğri
+                // kullanıldığı için bu kanalın uykusu bittiğinde ortak kapı
+                // da açılmış olur.
+                throttle.set_throttled_for(attempts);
                 sleep_backoff(&signal, attempts).await;
             }
             Err(EngineError::Aborted) => return Err(EngineError::Aborted),
@@ -1284,15 +1296,47 @@ async fn sleep_backoff(signal: &AbortSignal, attempt: u32) {
     }
 }
 
-/// Tüm kanalların paylaştığı sınırlama durumu (MC `throttledUntil`).
+/// Tüm kanalların paylaştığı sınırlama durumu (MC `SegmentedDownloader`).
 ///
-/// Bir kanal sınırlama yanıtı aldığında buraya bekleme süresi yazılır; diğer
-/// kanallar bir sonraki istekten önce bu süre kadar bekler. Sınır bir seferde
-/// azalır, başarılı bir istek sonrası geri artar (MC `activeLimit`).
-#[derive(Debug, Default)]
+/// MC `fillSlots()` yeni bir isteği başlatmadan önce iki kapıdan geçirir:
+///
+/// 1. **`throttledUntil`** — sınırlama yanıtı gelince bu ana kadar YENİ
+///    istek atılmaz. Ceza yalnızca çeken kanala değil, bekleyen tüm
+///    kanallara yayılır.
+/// 2. **`activeLimit`** — aynı anda kaç kanalın istek atabileceği.
+///    `throttle()` bir azaltır, başarılı istekte geri artar.
+///
+/// ADM'de ikisi de yalnızca yazılıyordu: `narrow`/`widen` çağrılıyor ama
+/// `active_limit` hiç okunmadığı için daraltma ekranda hiçbir şeyi
+/// değiştirmiyordu. `throttledUntil` ise hiç yoktu — bir kanal ceza
+/// yediğinde diğerleri son hız devam ediyordu.
+#[derive(Debug)]
 struct Throttle {
-    /// Kaç kanalın aynı anda istek atabileceği.
+    /// Aynı anda istek atabilecek kanal sayısı (MC `activeLimit`).
     active_limit: std::sync::atomic::AtomicU32,
+    /// Şu anda istekte olan kanal sayısı (MC `segmentTasks.count`).
+    used: std::sync::atomic::AtomicU32,
+    /// Ortak bekleme bitişi (MC `throttledUntil`).
+    throttled_until: std::sync::Mutex<Option<Instant>>,
+    /// Durum değiştiğinde slot bekleyen kanalları uyandırır.
+    ///
+    /// `watch` kullanılmasının nedeni kayıp bildirimdir: koşul kontrolü ile
+    /// beklemeye geçme arasına sıkışan bildirim `Notify::notify_waiters`
+    /// ile yutulur ve kanal sonsuza dek uyur. `watch` alıcısının gördüğü
+    /// sürüm kaydı bu boşluğu kapatır — bu yüzden alıcı, koşul ÖNCESENDEĞİL
+    /// ÖNCE oluşturulur.
+    changed: tokio::sync::watch::Sender<u64>,
+}
+
+impl Default for Throttle {
+    fn default() -> Self {
+        Self {
+            active_limit: std::sync::atomic::AtomicU32::new(0),
+            used: std::sync::atomic::AtomicU32::new(0),
+            throttled_until: std::sync::Mutex::new(None),
+            changed: tokio::sync::watch::channel(0).0,
+        }
+    }
 }
 
 impl Throttle {
@@ -1312,6 +1356,111 @@ impl Throttle {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
                 Some((v + 1).min(max.max(1)))
             });
+        self.wake();
+    }
+
+    /// Ortak bekleme anını yaz (MC `throttledUntil = now + min(15, 1.5 × deneme)`).
+    ///
+    /// `attempts` 1'den başlar; eğri `sleep_backoff` ile aynıdır, böylece
+    /// çeken kanalın kendi geri çekilme uykusu bittiğinde ortak kapı da
+    /// açılmış olur.
+    fn set_throttled_for(&self, attempts: u32) {
+        let delay = THROTTLE_BASE_DELAY
+            .saturating_mul(attempts.min(10))
+            .min(THROTTLE_MAX_DELAY);
+
+        if let Ok(mut slot) = self.throttled_until.lock() {
+            // Var olan süre daha uzunsa uzatma; diğer kanalları gereksiz
+            // bekletme (MC `max(throttledUntil, ...)` mantığı).
+            let yeni = Instant::now() + delay;
+            match *slot {
+                Some(mevcut) if mevcut >= yeni => {}
+                _ => *slot = Some(yeni),
+            }
+        }
+        self.wake();
+    }
+
+    /// Bekleyen tüm kanalları durum yeniden değerlendirmesi için uyandırır.
+    fn wake(&self) {
+        self.changed.send_modify(|v| *v = v.wrapping_add(1));
+    }
+
+    /// Boşta bir slot varsa kapar; yoksa `false`.
+    fn try_take_slot(&self) -> bool {
+        // MC de `max(1, ...)` kullanır: sınır 0 kalırsa hiçbir kanal
+        // açılmaz ve indirme sessizce durur.
+        let limit = self.active_limit.load(Ordering::SeqCst).max(1);
+        self.used
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                (v < limit).then_some(v + 1)
+            })
+            .is_ok()
+    }
+
+    /// Yeni bir isteği başlatmadan önce çağrılır (MC `fillSlots`).
+    ///
+    /// Ortak bekleme ve eşzamanlılık sınırı dolana kadar bekler. Dönen
+    /// tutamaç düşürülünce slot geri verilir; `?`, `return` ya da panik
+    /// yolu fark etmez, RAII sayesinde sayaç sarkmaz.
+    ///
+    /// Sinyal alınırsa `EngineError::Aborted` döner; slot hiç kapılmamış
+    /// olur.
+    async fn acquire(&self, signal: &AbortSignal) -> Result<ThrottleSlot<'_>, EngineError> {
+        // Alıcı KOŞULDAN ÖNCE kurulmalı (yukarıdaki `changed` açıklaması).
+        let mut changed = self.changed.subscribe();
+
+        loop {
+            if signal.is_aborted() {
+                return Err(EngineError::Aborted);
+            }
+
+            // 1) Ortak kapı (MC `throttledUntil`). Kilit yalnızca `Instant`
+            //    kopyalanır; `await` sırasında elde tutulmaz.
+            let ortak_bekleme = {
+                let kilit = self.throttled_until.lock().expect("kilit bozuk");
+                match *kilit {
+                    Some(until) => {
+                        let now = Instant::now();
+                        (until > now).then_some(until - now)
+                    }
+                    None => None,
+                }
+            };
+            if let Some(durak) = ortak_bekleme {
+                tokio::select! {
+                    _ = tokio::time::sleep(durak) => {}
+                    _ = signal.wait() => {}
+                }
+                continue; // uyandıktan sonra kapılar yeniden denenir
+            }
+
+            // 2) Eşzamanlılık kapısı (MC `segmentTasks.count < activeLimit`).
+            if self.try_take_slot() {
+                return Ok(ThrottleSlot { throttle: self });
+            }
+
+            // Boşalması için başka bir kanalın isteği bitmesi gerekir.
+            tokio::select! {
+                _ = changed.changed() => {}
+                _ = signal.wait() => {}
+            }
+        }
+    }
+}
+
+/// `Throttle::acquire` ile alınmış slotun tutamaçı.
+///
+/// Düşürülmesi slotu serbest bırakır ve bekleyen kanalları uyandırır.
+#[derive(Debug)]
+struct ThrottleSlot<'a> {
+    throttle: &'a Throttle,
+}
+
+impl Drop for ThrottleSlot<'_> {
+    fn drop(&mut self) {
+        self.throttle.used.fetch_sub(1, Ordering::SeqCst);
+        self.throttle.wake();
     }
 }
 
@@ -1544,6 +1693,167 @@ mod tests {
         let t = Throttle::default();
         t.widen(0);
         assert_eq!(t.active_limit.load(Ordering::SeqCst), 1);
+    }
+
+    // -----------------------------------------------------------------
+    // Sınırın gerçekten uygulanması (daha önce yalnızca yazılıyordu)
+    // -----------------------------------------------------------------
+
+    /// Sınır doluyken ikinci kanal slot alamaz; boşalınca uyanır.
+    ///
+    /// Bu, `active_limit`'in ilk kez okunmasıdır: eski kodda `narrow`/
+    /// `widen` çağrılıyor ama hiçbir istek gecikmiyordu.
+    #[tokio::test]
+    async fn sinirlama_ikinci_kanali_geride_birakir() {
+        let t = Arc::new(Throttle::default());
+        t.active_limit.store(1, Ordering::SeqCst);
+        let signal = AbortSignal::new();
+
+        let birinci = t.acquire(&signal).await.expect("ilk slot alınmalı");
+
+        let bekleyen = tokio::spawn({
+            let t = Arc::clone(&t);
+            let signal = signal.clone();
+            async move {
+                let slot = t.acquire(&signal).await?;
+                drop(slot);
+                Ok::<(), EngineError>(())
+            }
+        });
+
+        // Kanal hâlâ bekiyor olmalı: sınır 1 ve o slot dolu.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            !bekleyen.is_finished(),
+            "sınır doluyken ikinci kanal slot alamamalı"
+        );
+
+        drop(birinci);
+
+        tokio::time::timeout(Duration::from_secs(5), bekleyen)
+            .await
+            .expect("ikinci kanal uyanmadı")
+            .expect("görev panikledi")
+            .expect("slot boşalınca alınmalı");
+    }
+
+    /// Ortak bekleme (`throttledUntil`) yeni isteği erteler.
+    ///
+    /// MC `fillSlots()`: `if throttledUntil.timeIntervalSinceNow > 0 { bekle }`.
+    /// Tek bir kanalın yediği ceza, diğerlerini de yavaşlatır.
+    #[tokio::test]
+    async fn ortak_bekleme_yeni_istekleri_erteler() {
+        let t = Throttle::default();
+        t.active_limit.store(4, Ordering::SeqCst);
+        let signal = AbortSignal::new();
+
+        let bekleme = Duration::from_millis(300);
+        *t.throttled_until.lock().expect("kilit bozuk") =
+            Some(Instant::now() + bekleme);
+
+        let baslangic = Instant::now();
+        let slot = t.acquire(&signal).await.expect("slot alınmalı");
+        let gecen = baslangic.elapsed();
+        drop(slot);
+
+        // Zamanlayıcı er uyanabilir; 250 ms altında kalmışsa kapı işlememiş.
+        assert!(
+            gecen >= Duration::from_millis(250),
+            "ortak kapı isteği ertelemeliydi, yalnızca {gecen:?} geçti"
+        );
+    }
+
+    /// Var olan ortak süre daha uzunsa yenisi onu kısaltmaz.
+    #[tokio::test]
+    async fn ortak_bekleme_kisa_cezayla_uzatilmaz() {
+        let t = Throttle::default();
+        let uzun = Instant::now() + Duration::from_secs(10);
+        *t.throttled_until.lock().expect("kilit bozuk") = Some(uzun);
+
+        t.set_throttled_for(1); // 1.5 sn'lik ceza
+
+        let kalan = *t.throttled_until.lock().expect("kilit bozuk");
+        assert!(
+            kalan.is_some_and(|k| k >= uzun - Duration::from_millis(100)),
+            "kısa ceza on yıllık bekleme etmemeli"
+        );
+    }
+
+    /// Slot tutamacı RAII ile serbest kalır: `?`, `return` ya da panik
+    /// yolu fark etmez, sayaç sarkmaz.
+    ///
+    /// Sayaç sarsa bir sonraki indirme az kanalla başlar ve hiçbir zaman
+    /// tam hıza çıkmaz — hata sessizdir.
+    #[tokio::test]
+    async fn slot_dusunce_sayac_sifirlanir() {
+        let t = Throttle::default();
+        t.active_limit.store(2, Ordering::SeqCst);
+        let signal = AbortSignal::new();
+
+        assert_eq!(t.used.load(Ordering::SeqCst), 0);
+
+        {
+            let _a = t.acquire(&signal).await.expect("slot");
+            let _b = t.acquire(&signal).await.expect("slot");
+            assert_eq!(
+                t.used.load(Ordering::SeqCst),
+                2,
+                "iki slot da tutuluyor olmalı"
+            );
+        }
+
+        assert_eq!(
+            t.used.load(Ordering::SeqCst),
+            0,
+            "tutamaçlar düşünce slot geri vermeli"
+        );
+
+        // Sayaç sarsaydı bu slot artık alınamazdı.
+        let _yine = t.acquire(&signal).await.expect("slot tekrar alınmalı");
+    }
+
+    /// Slot beklerken iptal edilen kanal slot KAPMAZ ve `Aborted` döner.
+    #[tokio::test]
+    async fn iptal_edilen_bekleyen_slot_kapmaz() {
+        let t = Arc::new(Throttle::default());
+        t.active_limit.store(1, Ordering::SeqCst);
+        let signal = AbortSignal::new();
+
+        let _tutuyor = t.acquire(&signal).await.expect("slot");
+
+        let bekleyen = tokio::spawn({
+            let t = Arc::clone(&t);
+            let signal = signal.clone();
+            async move {
+                // Slot alındıysa bırakılır: tutamaç fonksiyondan dışarı
+                // taşınamaz (borrow), sonuç yine de Ok/Err olarak ölçülür.
+                match t.acquire(&signal).await {
+                    Ok(slot) => {
+                        drop(slot);
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        signal.abort();
+
+        let sonuc = tokio::time::timeout(Duration::from_secs(5), bekleyen)
+            .await
+            .expect("iptal bekleyen kanal uyanmadı")
+            .expect("görev panikledi");
+
+        assert!(
+            matches!(sonuc, Err(EngineError::Aborted)),
+            "iptal bekleyen kanal Aborted dönmeli, alınan: {sonuc:?}"
+        );
+        assert_eq!(
+            t.used.load(Ordering::SeqCst),
+            1,
+            "yalnızca ilk kanal slot tutuyor olmalı"
+        );
     }
 
     #[test]
