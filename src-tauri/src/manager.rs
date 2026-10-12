@@ -307,7 +307,9 @@ impl DownloadManager {
         let _ = self.events.send(ev);
     }
 
-    fn log(&self, level: &str, msg: impl Into<String>, id: Option<i64>) {
+    /// Uygulama günlüğüne bir satır yayar (`commands::forward_events` bunu
+    /// `download://event` üzerinden arayüze iletir).
+    pub fn log(&self, level: &str, msg: impl Into<String>, id: Option<i64>) {
         self.emit(DownloadEvent::log(level, msg, id));
     }
 

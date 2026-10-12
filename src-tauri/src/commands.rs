@@ -314,6 +314,7 @@ pub async fn get_settings(manager: State<'_, DownloadManager>) -> Res<Settings> 
 /// çağırmasına gerek yoktur.
 #[tauri::command]
 pub async fn save_settings(
+    app: AppHandle,
     manager: State<'_, DownloadManager>,
     state: State<'_, SharedState>,
     settings: serde_json::Value,
@@ -324,6 +325,9 @@ pub async fn save_settings(
     // Arka plan görevleri (pano izleyici, pencere davranışları) yeni
     // değerleri bir sonraki turda görsün.
     state.apply(&merged);
+    // Otomatik başlatma sistemde ayrı tutulur; ayar yazıldıktan hemen sonra
+    // uygulanır ki paneldeki anahtar ile kayıt asla ayrışmasın.
+    reconcile_autostart(&app, &manager, merged.autostart);
     Ok(())
 }
 
@@ -1278,6 +1282,86 @@ pub fn install_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     builder.build(app)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Ayarların davranışa bağlanması (MC `LaunchAtLogin` + `NotificationCenter`)
+// ---------------------------------------------------------------------
+
+/// Otomatik başlatma kaydını ayarlar.
+///
+/// Ayar tek doğruluktur: açılışta bir kez, ayar değişiminde de yeniden
+/// uygulanır. Böylece kayıt silinse ya da elle eklense bile paneldeki anahtar
+/// ile sistemdeki gerçek durum ayrışmaz.
+///
+/// Hata **yükseltilmez**, günlüğe yazılır: kaydın yazılamaması uygulamanın
+/// açılmasını ya da diğer ayarların kaydedilmesini engellememeli.
+pub fn reconcile_autostart(app: &AppHandle, manager: &DownloadManager, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let result = if enabled {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    };
+
+    if let Err(e) = result {
+        manager.log("error", i18n::t("err.autostart", &[&e.to_string()]), None);
+    }
+}
+
+/// Tamamlanan indirmeler için sistem bildirimi.
+///
+/// `notify_on_complete` **her bitişte veritabanından okunur**: anahtarın etkisi
+/// anında görünsün diye ayrı bir çalışma zamanı kopyası tutulmaz. Kapalıysa
+/// bildirim gönderilmez; abonelik sürer çünkü anahtar sonradan açılabilir.
+///
+/// Yalnızca `Completed` olayı **`Completed` durumuyla** geldiğinde bildirilir:
+/// duraklatma, iptal ve hata da aynı olayı taşır, bunlar kullanıcıya "bitti"
+/// diye duyurulmaz.
+///
+/// Görev kapanma anında sessizce biter: yayın kapanınca `RecvError::Closed`
+/// alınır ve döngüden çıkılır.
+pub fn start_notifications(
+    app: AppHandle,
+    mut rx: tokio::sync::broadcast::Receiver<crate::manager::DownloadEvent>,
+) {
+    use crate::manager::DownloadEvent;
+    use crate::models::DownloadStatus;
+    use tauri_plugin_notification::NotificationExt;
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(DownloadEvent::Completed { id, status }) => {
+                    if status != DownloadStatus::Completed {
+                        continue;
+                    }
+                    let Some(manager) = app.try_state::<DownloadManager>() else {
+                        continue;
+                    };
+                    let Ok(true) = manager.settings().await.map(|s| s.notify_on_complete) else {
+                        continue;
+                    };
+                    // Kayıt silinmiş ya da yeniden adlandırılmış olabilir; o
+                    // durumda bildirim gönderilmez (yol taşıyan bir uyarı
+                    // anlamsız olurdu).
+                    let Ok(Some(item)) = manager.get(id).await else {
+                        continue;
+                    };
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title(i18n::t("notify.completed_title", &[]))
+                        .body(item.file_name)
+                        .show();
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }
 
 #[cfg(test)]

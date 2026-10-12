@@ -39,6 +39,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // MC `NotificationCenter`: tamamlanan indirmeler için sistem bildirimi.
+        .plugin(tauri_plugin_notification::init())
+        // MC `LaunchAtLogin`: "açılışta başlat" anahtarı.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             // 1) Veritabanı: `%LocalAppData%\ADM\downloads.db`
             let database = tauri::async_runtime::block_on(db::Database::connect())
@@ -83,10 +90,40 @@ pub fn run() {
             // 7) Pano izleyici (MC `ClipboardWatcher`).
             commands::start_clipboard(app.handle().clone(), clipboard);
 
-            // 8) Tepki simgesi + kapatınca arka planda kalma (MC `AppPresence`).
-            commands::install_tray(app.handle())?;
+            // 8) Tepsi simgesi + kapatınca arka planda kalma (MC `AppPresence`).
+            //    Pencere `visible: false` ile doğduğu için tepsi kurulamazsa
+            //    kullanıcı penceresiz kalırdı; bu yüzden hatadan önce yine de
+            //    gösterilir, sonra hata yükseltilir.
+            if let Err(e) = commands::install_tray(app.handle()) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                return Err(e);
+            }
 
-            // 9) Açılışta güncelleme denetimi (ayar açıksa, sessizce).
+            // 9) Otomatik başlatma (MC `LaunchAtLogin`): ayar tek doğruluktur,
+            //    açılışta bir kez yeniden uygulanır. Hata günlüğe düşer.
+            commands::reconcile_autostart(app.handle(), &manager, settings.autostart);
+
+            // 10) Ana pencere `visible: false` ile doğur (açılışta titreme olmasın
+            //     diye). `start_in_tray` kapalıysa şimdi gösterilir; açıksa tepsi
+            //     simgesinde kalır ve menüsünden açılır.
+            //
+            //     Değer çalışma zamanı kopyasından okunur: `RuntimeState` setup'ın
+            //     5. adımında ayarlarla doldurulmuştu. Arama boşsa (olmamalı)
+            //     pencere yine de gösterilir — kullanıcı penceresiz kalmasın.
+            if !commands::starts_in_tray(app.handle())
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+
+            // 11) Tamamlanan indirmelerin sistem bildirimi (MC `NotificationCenter`).
+            commands::start_notifications(app.handle().clone(), manager.subscribe());
+
+            // 12) Açılışta güncelleme denetimi (ayar açıksa, sessizce).
             if settings.check_for_updates {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

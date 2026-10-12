@@ -672,6 +672,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "Site girişi penceresi açık değil",
         "The site login window is not open",
     ),
+    (
+        "err.autostart",
+        "Otomatik başlatma kaydı yazılamadı: {0}",
+        "Could not write the automatic start entry: {0}",
+    ),
     // -----------------------------------------------------------------
     // Tepsi simgesi menüsü
     // -----------------------------------------------------------------
@@ -680,6 +685,10 @@ static MESSAGES: &[(&str, &str, &str)] = &[
     ("tray.pause_all", "Tümünü duraklat", "Pause all"),
     ("tray.resume_all", "Tümünü sürdür", "Resume all"),
     ("tray.quit", "Çık", "Quit"),
+    // -----------------------------------------------------------------
+    // Sistem bildirimleri
+    // -----------------------------------------------------------------
+    ("notify.completed_title", "İndirme tamamlandı", "Download complete"),
 ];
 
 /// Anahtarı tabloda arar.

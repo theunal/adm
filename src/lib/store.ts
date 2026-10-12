@@ -37,6 +37,8 @@ import {
   type UpdateInfo,
 } from "./format";
 import { pushFeedback } from "./useFeedback";
+import { settings } from "./settings";
+import { setPropertiesItem } from "./ui";
 
 /* -----------------------------------------------------------------
    Görünüm (kenar çubuğu filtreleri)
@@ -597,10 +599,35 @@ export function markBusy(id: number, busy: boolean) {
 
 /** Kaydı arayüz durumuna ekler/günceller. */
 function upsert(item: DownloadItem) {
+  const previous = state.byId[item.id]?.status;
   setState("byId", item.id, item);
   if (!state.order.includes(item.id)) {
     setState("order", (o) => [item.id, ...o]);
   }
+  maybeOpenDetailOnStart(previous, item.status, item.id);
+}
+
+/**
+ * `showDetailOnStart` (Ayarlar ▸ Genel): indirme **başlarken** ayrıntı
+ * penceresini açar.
+ *
+ * Yalnızca durum `Downloading`'a *geçtiği* anda etkindir; ilerleme turları bu
+ * fonksiyonu ~500 ms'de bir çağırsa da pencere bir kez açılır ve odağı
+ * kullanıcıdan çalmaz. Kayıt henüz listeye düşmemişse (`itemById` boş dönerse)
+ * sessizce geçilir — pencereyi bir sonraki geçiş açar.
+ *
+ * Durum `Paused`'dan `Downloading`'a geçerken de açılır: kullanıcı devam
+ * ettirdiğinde ayrıntıyı görmek ister.
+ */
+function maybeOpenDetailOnStart(
+  previous: DownloadStatus | undefined,
+  next: DownloadStatus,
+  id: number,
+) {
+  if (previous === next || next !== "Downloading") return;
+  if (!settings.showDetailOnStart) return;
+  const item = itemById(id);
+  if (item) setPropertiesItem(item);
 }
 
 /** İlerleme olayını uygular. */
@@ -621,6 +648,7 @@ function applyProgress(ev: Extract<DownloadEvent, { kind: "progress" }>) {
     return;
   }
 
+  const previous = existing.status;
   setState(
     "byId",
     ev.id,
@@ -635,6 +663,9 @@ function applyProgress(ev: Extract<DownloadEvent, { kind: "progress" }>) {
       }
     }),
   );
+  // Durum gerçekte ne olduysa ona bakılır: `Paused` iken `Downloading`
+  // gelen turlarda kayıt hâlâ `Paused` sayılır ve pencere açılmaz.
+  maybeOpenDetailOnStart(previous, state.byId[ev.id]?.status ?? previous, ev.id);
 }
 
 /** Tamamlanma olayını uygular. */
