@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    /* MV3 çıktıları: her giriş dosyası klassik bir script olarak derlenir,
+       manifest.json aynı dosya adlarına bakar ve değişmez. */
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2020",
+      "DOM"
+    ],
+    "types": [
+      "chrome"
+    ],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "alwaysStrict": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "rootDir": "src",
+    "outDir": ".",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
