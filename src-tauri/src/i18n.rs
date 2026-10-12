@@ -677,6 +677,21 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "Otomatik başlatma kaydı yazılamadı: {0}",
         "Could not write the automatic start entry: {0}",
     ),
+    (
+        "err.clipboard_unavailable",
+        "Pano şu anda okunamıyor",
+        "The clipboard cannot be read right now",
+    ),
+    (
+        "err.clipboard_empty",
+        "Panoda indirilecek bir bağlantı bulunamadı",
+        "No link to download was found in the clipboard",
+    ),
+    (
+        "err.clipboard_busy",
+        "Bir pano sorusu zaten açık",
+        "A clipboard prompt is already open",
+    ),
     // -----------------------------------------------------------------
     // Tepsi simgesi menüsü
     // -----------------------------------------------------------------

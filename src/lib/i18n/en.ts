@@ -34,6 +34,7 @@ export const en: Dict = {
   "menu.options": "Options",
   "menu.help": "Help",
   "menu.item.add_url": "Add URL",
+  "menu.item.paste_url": "Paste from Clipboard",
   "menu.item.open_file": "Open File",
   "menu.item.open_folder": "Open Containing Folder",
   "menu.item.copy_url": "Copy Address to Clipboard",

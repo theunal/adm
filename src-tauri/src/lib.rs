@@ -194,6 +194,7 @@ pub fn run() {
             commands::open_plugin_folder,
             commands::open_browser_extensions_page,
             commands::answer_clipboard_prompt,
+            commands::paste_download,
             commands::tray_show,
         ])
         .run(tauri::generate_context!())

@@ -39,6 +39,7 @@ export const tr = {
   "menu.options": "Seçenekler",
   "menu.help": "Yardım",
   "menu.item.add_url": "URL Ekle",
+  "menu.item.paste_url": "Panodan Yapıştır",
   "menu.item.open_file": "Dosyayı Aç",
   "menu.item.open_folder": "Klasörü Aç",
   "menu.item.copy_url": "Adresi Panoya Kopyala",

@@ -413,6 +413,19 @@ export function answerClipboardPrompt(): Promise<void> {
   return invoke<void>("answer_clipboard_prompt");
 }
 
+/**
+ * `Ctrl+V`: panodaki metinden bağlantıları alır ve soruyu açar.
+ *
+ * MC `handlePaste` gibi yalnızca http(s) bağlantıları kabul edilir; izleyicinin
+ * dosya türü süzgeci uygulanmaz. Sonuç `clipboard` olayıyla gelir ve aynı
+ * `ClipboardPromptDialog` gösterilir.
+ *
+ * Panoda uygun bağlantı yoksa hata döner (arayüz durum şeridinde gösterir).
+ */
+export function pasteDownload(): Promise<void> {
+  return invoke<void>("paste_download");
+}
+
 /** Ana pencereyi gösterir ve öne getirir (tepsi menüsüyle aynı yol). */
 export function trayShow(): Promise<void> {
   return invoke<void>("tray_show");

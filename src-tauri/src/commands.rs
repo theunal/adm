@@ -1076,6 +1076,9 @@ fn copy_dir(source: &std::path::Path, target: &std::path::Path) -> std::io::Resu
 // Çalışma zamanı durumu (pano izleyici + pencere davranışları)
 // ---------------------------------------------------------------------
 
+/// Pano sorusunun yayıldığı kanalın tipi.
+type PromptTx = tokio::sync::mpsc::UnboundedSender<crate::clipboard::ClipboardPrompt>;
+
 /// Ayarlardan türetilen paylaşılan durum.
 ///
 /// Arka plan görevleri (pano izleyici, pencere olayları) her seferinde
@@ -1088,6 +1091,12 @@ pub struct RuntimeState {
     capture_extensions: std::sync::Mutex<Vec<String>>,
     /// Panoda sorulan bağlantı yanıtlanmayı bekliyor mu?
     prompting: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Sorunun yayıldığı kanal.
+    ///
+    /// `start_clipboard` kanalı kurunca buraya yazılır. `Ctrl+V` de aynı
+    /// kanalı kullanır; boşken (`None`) yapıştırma sorusu çıkmaz — izleyici
+    /// henüz başlamamış olabilir.
+    prompt_tx: std::sync::Mutex<Option<PromptTx>>,
 }
 
 impl Default for RuntimeState {
@@ -1099,6 +1108,7 @@ impl Default for RuntimeState {
             start_in_tray: AtomicBool::new(false),
             capture_extensions: std::sync::Mutex::new(Vec::new()),
             prompting: std::sync::Arc::new(AtomicBool::new(false)),
+            prompt_tx: std::sync::Mutex::new(None),
         }
     }
 }
@@ -1146,6 +1156,11 @@ pub type SharedState = std::sync::Arc<RuntimeState>;
 pub fn start_clipboard(app: AppHandle, state: SharedState) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
+    // `Ctrl+V` de aynı kanalı kullanır; kanalı duruma bırak.
+    if let Ok(mut slot) = state.prompt_tx.lock() {
+        *slot = Some(tx.clone());
+    }
+
     let enabled = state.clone();
     let extensions = state.clone();
     crate::clipboard::spawn_watcher(
@@ -1176,6 +1191,63 @@ pub fn answer_clipboard_prompt(state: State<'_, SharedState>) {
     state
         .prompting
         .store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// `Ctrl+V`: panodaki metinden bağlantı alıp kullanıcıya sorar.
+///
+/// MC `ClipboardWatcher.handlePaste`'in karşılığı. İzleyiciden farkı: burada
+/// **her** http(s) bağlantı kabul edilir; dosya türü ve yakalama grubu
+/// süzgeci uygulanmaz (kullanıcı açıkça eylemde bulunuyor).
+///
+/// Sorma akışı ortaktır: `ClipboardPrompt` olayı yayılır, arayüz
+/// `ClipboardPromptDialog` ile yanıtlar. Kural izleyiciyle aynıdır —
+/// yanıtsız bir soru varken yenisi sorulmaz, aksi halde ikinci soru ilkinin
+/// yerini alırdı.
+///
+/// Pano bir bloklayıcı iş parçacığından okunur: `arboard` Windows'ta COM
+/// gerektirir ve ana iş parçacığından çağırmak WebView2 ile kilitlenebilir.
+#[tauri::command]
+pub async fn paste_download(state: State<'_, SharedState>) -> Res<()> {
+    use crate::clipboard::ClipboardPrompt;
+    use std::sync::atomic::Ordering::SeqCst;
+
+    let text = tauri::async_runtime::spawn_blocking(|| {
+        let mut clipboard = arboard::Clipboard::new().ok()?;
+        clipboard.get_text().ok()
+    })
+    .await
+    .map_err(|_| i18n::t("err.clipboard_unavailable", &[]))?;
+
+    let Some(text) = text else {
+        return Err(i18n::t("err.clipboard_unavailable", &[]));
+    };
+
+    let urls = crate::clipboard::extract_urls(&text);
+    if urls.is_empty() {
+        return Err(i18n::t("err.clipboard_empty", &[]));
+    }
+
+    if state.prompting.load(SeqCst) {
+        return Err(i18n::t("err.clipboard_busy", &[]));
+    }
+
+    let Some(tx) = state
+        .prompt_tx
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+    else {
+        // İzleyici henüz başlamamış; soru çıkarılsa bile yanıtı iletilemezdi.
+        return Err(i18n::t("err.clipboard_unavailable", &[]));
+    };
+
+    state.prompting.store(true, SeqCst);
+    let _ = tx.send(ClipboardPrompt {
+        prefer_video: urls.iter().all(|u| crate::capture::looks_like_video_page(u)),
+        urls,
+        source: "paste".to_string(),
+    });
+    Ok(())
 }
 
 // ---------------------------------------------------------------------

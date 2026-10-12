@@ -40,7 +40,7 @@ import {
   settingsOpen,
 } from "./lib/ui";
 import { bulkCancel, bulkPause, bulkResume, deleteSelected } from "./lib/bulk";
-import { answerClipboardPrompt, confirm } from "./lib/api";
+import { answerClipboardPrompt, confirm, pasteDownload } from "./lib/api";
 import { clipboardPrompt, setClipboardPrompt } from "./lib/store";
 import TitleBar from "./components/TitleBar";
 import Toolbar from "./components/Toolbar";
@@ -97,6 +97,22 @@ export default function App() {
       if (ok) await deleteSelected(false);
     }
 
+    /**
+     * `Ctrl+V`: panodan bağlantı alıp sorma penceresini açar (MC
+     * `ClipboardWatcher.handlePaste`).
+     *
+     * Pano okunamıyor ya da uygun bağlantı yoksa hata **durum şeridinde**
+     * görünür: tuşa basıp hiçbir şey olmaması, tuşun işlemediği izlenimini
+     * verirdi.
+     */
+    async function pasteFromClipboard() {
+      try {
+        await pasteDownload();
+      } catch (e) {
+        pushFeedback("warn", errorText(e));
+      }
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       // `Escape` her zaman çalışır: açık pencere / menüyü kapatır.
       if (event.key === "Escape") {
@@ -121,6 +137,10 @@ export default function App() {
           case "n":
             event.preventDefault();
             setAddDialogOpen(true);
+            break;
+          case "v":
+            event.preventDefault();
+            void pasteFromClipboard();
             break;
           case "p":
             event.preventDefault();

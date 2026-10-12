@@ -19,6 +19,7 @@ import {
   confirm,
   openFolder,
   openPath,
+  pasteDownload,
 } from "../lib/api";
 import {
   bulkCancel,
@@ -179,6 +180,18 @@ const MENUS: MenuRoot[] = [
         checked: () => addDialogOpen(),
         run: () => setAddDialogOpen(true),
       },
+        {
+          kind: "item",
+          key: "menu.item.paste_url",
+          accel: "Ctrl+V",
+          // Hata durum şeridine düşer: panoda uygun bağlantı yoksa tuşun
+          // işlemediği anlaşılmalı.
+          run: () => {
+            void pasteDownload().catch((e: unknown) =>
+              pushFeedback("warn", errorText(e)),
+            );
+          },
+        },
         {
           kind: "item",
           key: "menu.item.open_file",
