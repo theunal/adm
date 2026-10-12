@@ -429,6 +429,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "Could not delete the file ({0}): {1}",
     ),
     (
+        "log.move_failed",
+        "Dosya hedef klasöre taşınamadı ({0}): {1}",
+        "Could not move the file to its destination ({0}): {1}",
+    ),
+    (
         "log.record_deleted",
         "Kayıt silindi: {0}",
         "Record deleted: {0}",

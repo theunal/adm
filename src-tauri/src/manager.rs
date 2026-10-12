@@ -1558,23 +1558,39 @@ impl DownloadManager {
             let dir = settings.resolve_dir_named(&item.file_name);
             let desired = dir.join(&item.file_name);
             let (unique, name) = unique_destination(&desired, &item.file_name);
-            // Dosya zaten doğru yerdeyse taşıma; yoksa taşı.
             let current = PathBuf::from(&item.file_path);
-            if current != unique && current.exists() {
+
+            if current == unique || !current.exists() {
+                // Dosya zaten hedefte, ya da taşıyacak bir şey yok.
+                (
+                    unique.to_string_lossy().to_string(),
+                    name,
+                    Some(unique.to_string_lossy().to_string()),
+                )
+            } else {
                 if let Some(parent) = unique.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                if tokio::fs::rename(&current, &unique).await.is_err() {
-                    // Aynı birim dışına taşıma gerekiyorsa kopyala+sil.
-                    let _ = tokio::fs::copy(&current, &unique).await;
-                    let _ = tokio::fs::remove_file(&current).await;
+                match move_into_place(&current, &unique).await {
+                    Ok(()) => (
+                        unique.to_string_lossy().to_string(),
+                        name,
+                        Some(unique.to_string_lossy().to_string()),
+                    ),
+                    // Taşınamadı. Dosya indiği yerde duruyor; orayı silmek
+                    // tek nüshayı yok ederdi. Kayıt dosyanın GERÇEK yerine
+                    // işaret eder ve olay günlüğe yazılır — kullanıcı
+                    // "Tamamlandı" görüp dosyayı bulamazsa nedenini bilir.
+                    Err(e) => {
+                        self.log(
+                            "error",
+                            t("log.move_failed", &[&item.file_name, &e.to_string()]),
+                            Some(id),
+                        );
+                        (item.file_path.clone(), item.file_name.clone(), None)
+                    }
                 }
             }
-            (
-                unique.to_string_lossy().to_string(),
-                name,
-                Some(unique.to_string_lossy().to_string()),
-            )
         } else {
             (item.file_path.clone(), item.file_name.clone(), None)
         };
@@ -1648,6 +1664,30 @@ fn split_name(file_name: &str) -> (String, Option<String>) {
     match file_name.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), Some(ext.to_string())),
         _ => (file_name.to_string(), None),
+    }
+}
+
+/// Tamamlanan dosyayı hedef konuma taşır.
+///
+/// Önce `rename` denenir; aynı birim dışına taşıma gerekiyorsa bu başarısız
+/// olur ve kopyala+sil yoluna geçilir.
+///
+/// **Güvenlik — kaynak dosya yalnızca kopyalama başarılıysa silinir.**
+/// Kopyalama hatası yutulup kaynak yine de silinseydi (disk dolu, hedefte
+/// izin yok, ağ kesilmesi) indirme "Tamamlandı" görünürken tek nüsha
+/// kaybolurdu. Yarım kopya da temizlenir: sonraki denemede
+/// `unique_destination` bozuk dosyayı çakışma sanıp yeni ad vermesin.
+async fn move_into_place(current: &Path, unique: &Path) -> std::io::Result<()> {
+    match tokio::fs::rename(current, unique).await {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            if let Err(copy_err) = tokio::fs::copy(current, unique).await {
+                let _ = tokio::fs::remove_file(unique).await;
+                return Err(copy_err);
+            }
+            let _ = tokio::fs::remove_file(current).await;
+            Ok(())
+        }
     }
 }
 
@@ -1942,5 +1982,74 @@ mod tests {
             ("a.tar".to_string(), Some("gz".to_string()))
         );
         assert_eq!(split_name(".env"), (".env".to_string(), None));
+    }
+
+    // -----------------------------------------------------------------
+    // Taşıma — kaynak dosyanın kaderi
+    // -----------------------------------------------------------------
+
+    /// Test başına ayrık bir geçici dizin.
+    fn temp_test_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("saat geriye sarmış")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "adm-move-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("geçici dizin oluşturulamadı");
+        dir
+    }
+
+    #[tokio::test]
+    async fn tasima_basariliyken_kaynak_yok_olur() {
+        let dir = temp_test_dir("ok");
+        let src = dir.join("ad.bin");
+        let dest = dir.join("ad (2).bin");
+        tokio::fs::write(&src, b"icerik").await.expect("yazılamadı");
+
+        move_into_place(&src, &dest).await.expect("taşıma başarısız");
+
+        assert!(!src.exists(), "kaynak silinmeliydi");
+        assert_eq!(
+            tokio::fs::read(&dest).await.expect("okunamadı"),
+            b"icerik",
+            "içerik değişmemeli"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kopyalama yolunun kendi denemesi.
+    ///
+    /// `rename` birim dışına çıkınca başarısız olur; burada hedef bilerek
+    /// bir **dizin** yapılarak her iki yolun da (rename ve copy) aynı anda
+    /// başarısız olması sağlanır — asıl korkulan durum budur: disk dolu ya
+    /// da hedefte izin yok.
+    #[tokio::test]
+    async fn tasinamazsa_kaynak_silinmez() {
+        let dir = temp_test_dir("fail");
+        let src = dir.join("ad.bin");
+        tokio::fs::write(&src, b"tek-nusha").await.expect("yazılamadı");
+
+        // Hedef bir dosya değil, dizin: `rename` de `copy` de reddedilir.
+        let dest = dir.join("hedef");
+        tokio::fs::create_dir(&dest).await.expect("dizin oluşturulamadı");
+
+        assert!(
+            move_into_place(&src, &dest).await.is_err(),
+            "başarısızlık fark edilmeli"
+        );
+
+        // Kritik: tek nüsha kaybolmamalı.
+        assert!(src.exists(), "kaynak SİLİNMEMELİ — bu veri kaybıdır");
+        assert_eq!(
+            tokio::fs::read(&src).await.expect("okunamadı"),
+            b"tek-nusha",
+            "kaynak içeriği değişmemeli"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
