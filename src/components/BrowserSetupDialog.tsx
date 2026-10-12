@@ -15,6 +15,12 @@
  * Firefox'ta 2. adım `about:debugging#/runtime/this-firefox` olur ve
  * "Geçici eklenti yükle" ile klasördeki `manifest.json` seçilir.
  *
+ * **Safari** bu akışın dışındadır: uzantı `.appex` olduğu için dosya
+ * kopyalanarak kurulamaz, sürüm sayfasından indirilen ayrı bir `.app`
+ * içinde gelir. Safari seçiliyken adım göstergesi yerine yönlendirme
+ * listesi gösterilir; doğrulama aynı "Bağlan" mantığıyla yürür. Safari
+ * yalnızca macOS'ta listelendiğinden bu akış Windows'ta görülemez.
+ *
  * Köprü çalışmıyorsa sihirbaz bunu en başta söyler: kullanıcı boşuna
  * eklenti kurmasın.
  */
@@ -25,9 +31,10 @@ import {
   browserList,
   openBrowserExtensionsPage,
   openPluginFolder,
+  openReleasePage,
   prepareBrowserFiles,
   type BridgeStatus,
-  type BrowserId,
+  type WizardBrowser,
 } from "../lib/api";
 import { closeBrowserSetup, browserSetupBrowser } from "../lib/ui";
 import { t } from "../lib/i18n";
@@ -37,8 +44,8 @@ import { errorText, pushFeedback } from "../lib/useFeedback";
 const STEPS = ["prepare", "open", "load", "connect"] as const;
 type Step = (typeof STEPS)[number];
 
-/** Tarayıcı listesi alınamazsa gösterilen varsayılan sıra. */
-const FALLBACK_BROWSERS: BrowserId[] = ["chrome", "edge", "brave", "firefox"];
+/** Tarayıcı listesi alınamazsa gösterilen varsayılan sıra (macOS dışı). */
+const FALLBACK_BROWSERS: WizardBrowser[] = ["chrome", "edge", "brave", "firefox"];
 
 /** Adımın sözlük anahtarı. */
 function stepTitle(step: Step): string {
@@ -46,7 +53,7 @@ function stepTitle(step: Step): string {
 }
 
 /** Tarayıcının görünen adı (marka yazımıyla). */
-function browserLabel(browser: BrowserId): string {
+function browserLabel(browser: WizardBrowser): string {
   switch (browser) {
     case "chrome":
       return "Chrome";
@@ -56,11 +63,13 @@ function browserLabel(browser: BrowserId): string {
       return "Brave";
     case "firefox":
       return "Firefox";
+    case "safari":
+      return "Safari";
   }
 }
 
 export default function BrowserSetupDialog() {
-  const [browser, setBrowser] = createSignal<BrowserId>("chrome");
+  const [browser, setBrowser] = createSignal<WizardBrowser>("chrome");
   const [folder, setFolder] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   /** Kullanıcı hangi adımı görüyor (0..=3). */
@@ -71,11 +80,19 @@ export default function BrowserSetupDialog() {
   const [status, { refetch: refetchStatus }] = createResource<BridgeStatus>(() =>
     bridgeStatus(),
   );
-  const [browsers] = createResource<BrowserId[]>(() => browserList());
+  const [browsers] = createResource<WizardBrowser[]>(() => browserList());
 
   /** Açılışta hangi tarayıcı seçiliyse onunla başla. */
   const initial = browserSetupBrowser();
   if (initial) setBrowser(initial);
+
+  /**
+   * Safari mi seçili?
+   *
+   * Dosya kopyalama adımları bu tarayıcıda anlamsızdır; sihirbaz onların
+   * yerine yönlendirme listesi gösterir.
+   */
+  const isSafari = createMemo(() => browser() === "safari");
 
   /** Bağlantı kurulan tarayıcı bu sihirbazın tarayıcısı mı? */
   const isConnected = createMemo(() => {
@@ -101,11 +118,19 @@ export default function BrowserSetupDialog() {
   });
   onCleanup(() => unlisten?.());
 
-  /** 1. adım — eklenti dosyalarını kopyala. */
+  /**
+   * 1. adım — eklenti dosyalarını kopyala.
+   *
+   * Safari'de çağrılmaz: `prepare_browser_files` Safari'yi tanımaz (`err.unknown`).
+   * ASLA `as BrowserId` ile geçilmesin — daraltma burada yapılarak tip
+   * güvencesi korunur.
+   */
   async function doPrepare() {
+    const target = browser();
+    if (target === "safari") return;
     setBusy(true);
     try {
-      const path = await prepareBrowserFiles(browser());
+      const path = await prepareBrowserFiles(target);
       setFolder(path);
       setStep(1);
       pushFeedback("success", t("wizard.prepared"));
@@ -116,21 +141,34 @@ export default function BrowserSetupDialog() {
     }
   }
 
-  /** 2. adım — uzantı sayfasını aç. */
+  /** 2. adım — uzantı sayfasını aç (Safari'de anlamsız, çağrılmaz). */
   async function doOpenPage() {
+    const target = browser();
+    if (target === "safari") return;
     try {
-      await openBrowserExtensionsPage(browser());
+      await openBrowserExtensionsPage(target);
       setStep(2);
     } catch (error) {
       pushFeedback("error", errorText(error));
     }
   }
 
-  /** 3. adım — klasörü göster, "Bağlan" adımına geç. */
+  /** 3. adım — klasörü göster, "Bağlan" adımına geç (Safari'de çağrılmaz). */
   async function doOpenFolder() {
+    const target = browser();
+    if (target === "safari") return;
     try {
-      await openPluginFolder(browser());
+      await openPluginFolder(target);
       setStep(3);
+    } catch (error) {
+      pushFeedback("error", errorText(error));
+    }
+  }
+
+  /** Safari — sürüm sayfasını aç (`safari-unsigned-macos.zip` oradadır). */
+  async function doOpenRelease() {
+    try {
+      await openReleasePage();
     } catch (error) {
       pushFeedback("error", errorText(error));
     }
@@ -206,88 +244,136 @@ export default function BrowserSetupDialog() {
               </For>
             </div>
 
-            {/* Adım göstergesi */}
-            <ol class="wizard-steps">
-              <For each={STEPS}>
-                {(item, index) => (
-                  <li
-                    class={`wizard-step${step() === index() ? " current" : ""}${
-                      stepDone(index()) ? " done" : ""
-                    }`}
-                  >
-                    <span class="wizard-step-no">
-                      {stepDone(index()) ? "✓" : index() + 1}
-                    </span>
-                    <span class="wizard-step-text">{stepTitle(item)}</span>
-                  </li>
-                )}
-              </For>
-            </ol>
+            {/* Adım göstergesi — adımlar dosya kopyalamaya dayanır; Safari'de
+                böyle bir kurulum yoktur, gösterilmez. */}
+            <Show when={!isSafari()}>
+              <ol class="wizard-steps">
+                <For each={STEPS}>
+                  {(item, index) => (
+                    <li
+                      class={`wizard-step${step() === index() ? " current" : ""}${
+                        stepDone(index()) ? " done" : ""
+                      }`}
+                    >
+                      <span class="wizard-step-no">
+                        {stepDone(index()) ? "✓" : index() + 1}
+                      </span>
+                      <span class="wizard-step-text">{stepTitle(item)}</span>
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
 
             {/* Geçerli adımın açıklaması */}
             <div class="wizard-body">
-              <Show when={step() === 0}>
-                <p>{t("wizard.hint.prepare", { browser: browserLabel(browser()) })}</p>
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  disabled={busy()}
-                  onClick={doPrepare}
-                >
-                  {busy() ? t("wizard.working") : t("wizard.action.prepare")}
-                </button>
-              </Show>
+              <Show
+                when={!isSafari()}
+                fallback={
+                  <>
+                    <p>{t("wizard.safari.lead")}</p>
+                    <ol>
+                      <li>{t("wizard.safari.step1")}</li>
+                      <li>{t("wizard.safari.step2")}</li>
+                      <li>{t("wizard.safari.step3")}</li>
+                      <li>{t("wizard.safari.step4")}</li>
+                    </ol>
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      onClick={doOpenRelease}
+                    >
+                      {t("wizard.safari.download")}
+                    </button>
 
-              <Show when={step() === 1}>
-                <p>
-                  {browser() === "firefox"
-                    ? t("wizard.hint.open_firefox")
-                    : t("wizard.hint.open")}
-                </p>
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  onClick={doOpenPage}
-                >
-                  {browser() === "firefox"
-                    ? t("wizard.action.open_firefox")
-                    : t("wizard.action.open")}
-                </button>
-              </Show>
-
-              <Show when={step() === 2}>
-                <p>
-                  {browser() === "firefox"
-                    ? t("wizard.hint.load_firefox")
-                    : t("wizard.hint.load")}
-                </p>
-                <div class="wizard-path">
-                  <code title={folder() ?? ""}>{folder() ?? "—"}</code>
-                  <button type="button" class="btn" onClick={doOpenFolder}>
-                    {t("wizard.action.open_folder")}
+                    {/* Doğrulama, diğer tarayıcılarla aynı köprü mantığıyla
+                        yürür: Safari de aynı MV3 kodunu çalıştırır ve köprüye
+                        `safari` adıyla bağlanır. */}
+                    <Show
+                      when={isConnected()}
+                      fallback={
+                        <>
+                          <p>{t("wizard.safari.waiting")}</p>
+                          <button
+                            type="button"
+                            class="btn"
+                            onClick={() => void refetchStatus()}
+                          >
+                            {t("wizard.action.recheck")}
+                          </button>
+                        </>
+                      }
+                    >
+                      <p class="wizard-ok">
+                        {t("wizard.connected", { browser: browserLabel(browser()) })}
+                      </p>
+                    </Show>
+                  </>
+                }
+              >
+                <Show when={step() === 0}>
+                  <p>{t("wizard.hint.prepare", { browser: browserLabel(browser()) })}</p>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={busy()}
+                    onClick={doPrepare}
+                  >
+                    {busy() ? t("wizard.working") : t("wizard.action.prepare")}
                   </button>
-                </div>
-              </Show>
+                </Show>
 
-              <Show when={step() === 3}>
-                <Show
-                  when={isConnected()}
-                  fallback={
-                    <>
-                      <p>{t("wizard.hint.connect")}</p>
-                      <button
-                        type="button"
-                        class="btn"
-                        onClick={() => void refetchStatus()}
-                      >
-                        {t("wizard.action.recheck")}
-                      </button>
-                    </>
-                  }
-                >
-                  <p class="wizard-ok">
-                    {t("wizard.connected", { browser: browserLabel(browser()) })}
+                <Show when={step() === 1}>
+                  <p>
+                    {browser() === "firefox"
+                      ? t("wizard.hint.open_firefox")
+                      : t("wizard.hint.open")}
                   </p>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    onClick={doOpenPage}
+                  >
+                    {browser() === "firefox"
+                      ? t("wizard.action.open_firefox")
+                      : t("wizard.action.open")}
+                  </button>
+                </Show>
+
+                <Show when={step() === 2}>
+                  <p>
+                    {browser() === "firefox"
+                      ? t("wizard.hint.load_firefox")
+                      : t("wizard.hint.load")}
+                  </p>
+                  <div class="wizard-path">
+                    <code title={folder() ?? ""}>{folder() ?? "—"}</code>
+                    <button type="button" class="btn" onClick={doOpenFolder}>
+                      {t("wizard.action.open_folder")}
+                    </button>
+                  </div>
+                </Show>
+
+                <Show when={step() === 3}>
+                  <Show
+                    when={isConnected()}
+                    fallback={
+                      <>
+                        <p>{t("wizard.hint.connect")}</p>
+                        <button
+                          type="button"
+                          class="btn"
+                          onClick={() => void refetchStatus()}
+                        >
+                          {t("wizard.action.recheck")}
+                        </button>
+                      </>
+                    }
+                  >
+                    <p class="wizard-ok">
+                      {t("wizard.connected", { browser: browserLabel(browser()) })}
+                    </p>
+                  </Show>
                 </Show>
               </Show>
             </div>

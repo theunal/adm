@@ -336,6 +336,23 @@ export const en: Dict = {
   "wizard.working": "Preparing…",
   "wizard.prepared": "Extension files are ready",
   "wizard.connected": "{browser} connected",
+
+  // -----------------------------------------------------------------
+  // Safari — no file copy; install comes from the release page
+  // -----------------------------------------------------------------
+  "wizard.safari.lead":
+    "The Safari extension cannot be installed by copying files; it ships as a separate app downloaded from the release page.",
+  "wizard.safari.step1":
+    "Download safari-unsigned-macos.zip from the release page.",
+  "wizard.safari.step2":
+    "Open the downloaded ADM.app. Because it is unsigned you may have to right-click it and choose \"Open\" on the first launch.",
+  "wizard.safari.step3":
+    "Turn ADM on under Safari ▸ Settings ▸ Extensions.",
+  "wizard.safari.step4":
+    "Enable Safari Develop ▸ Allow Unsigned Extensions; Safari asks for this permission on every launch.",
+  "wizard.safari.download": "Open the release page",
+  "wizard.safari.waiting":
+    "Waiting for the connection — this line turns green once ADM is enabled in Safari.",
   "wizard.close": "Close",
 
   // -----------------------------------------------------------------

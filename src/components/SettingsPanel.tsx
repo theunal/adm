@@ -1116,7 +1116,11 @@ function InterfaceTab(props: Pick<TabProps, "saving" | "guard">) {
 /** Tarayıcı listesi; hata olursa boş liste (varsayılana düşülür). */
 async function browserListSafe(): Promise<BrowserId[]> {
   try {
-    return await browserList();
+    const list = await browserList();
+    // Safari dosya kopyalanarak kurulmaz, bu bölüm ise yalnızca kopyalanan
+    // paketlerle ilgilenir. Safari'yi sihirbaz yönetir; burada gösterilirse
+    // "Dosyaları hazırla" düğmesi `err.unknown` ile geri dönerdi.
+    return list.filter((b): b is BrowserId => b !== "safari");
   } catch {
     return [];
   }

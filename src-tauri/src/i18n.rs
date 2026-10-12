@@ -174,6 +174,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "Klasör açılamadı: {0}",
         "Could not open the folder: {0}",
     ),
+    (
+        "err.open_url",
+        "Bağlantı açılamadı: {0}",
+        "Could not open the link: {0}",
+    ),
     // -----------------------------------------------------------------
     // Ağ hataları
     // -----------------------------------------------------------------

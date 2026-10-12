@@ -1848,6 +1848,16 @@ body {
   margin: 10px 0;
 }
 
+/* Safari akışı: adımların numaralı listesi (dosya yolu yok, yönlendirme var). */
+.wizard-body ol {
+  margin: 10px 0;
+  padding-left: 22px;
+}
+
+.wizard-body ol li {
+  margin: 6px 0;
+}
+
 .wizard-path {
   display: flex;
   align-items: center;

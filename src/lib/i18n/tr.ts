@@ -342,6 +342,23 @@ export const tr = {
   "wizard.working": "Hazırlanıyor…",
   "wizard.prepared": "Eklenti dosyaları hazırlandı",
   "wizard.connected": "{browser} bağlandı",
+
+  // -----------------------------------------------------------------
+  // Safari — dosya kopyalama yok, sürüm sayfasından kurulum var
+  // -----------------------------------------------------------------
+  "wizard.safari.lead":
+    "Safari uzantısı dosya kopyalanarak kurulamaz; sürüm sayfasından indirilen ayrı bir uygulama içinde gelir.",
+  "wizard.safari.step1":
+    "Sürüm sayfasından safari-unsigned-macos.zip dosyasını indirin.",
+  "wizard.safari.step2":
+    "İndirilen ADM.app dosyasını açın. İmzasız olduğu için ilk açılışta sağ tıklayıp \"Aç\" demeniz gerekebilir.",
+  "wizard.safari.step3":
+    "Safari ▸ Ayarlar ▸ Uzantılar bölümünde ADM'yi etkinleştirin.",
+  "wizard.safari.step4":
+    "Safari Geliştir ▸ İmzasız Uzantılara İzin Ver seçeneğini açın; Safari bu izni her açılışta yeniden ister.",
+  "wizard.safari.download": "Sürüm sayfasını aç",
+  "wizard.safari.waiting":
+    "Bağlantı bekleniyor — ADM'yi Safari'de etkinleştirdikten sonra bu satır yeşile döner.",
   "wizard.close": "Kapat",
 
   // -----------------------------------------------------------------

@@ -173,6 +173,7 @@ pub fn run() {
             commands::database_path,
             commands::open_path,
             commands::open_folder,
+            commands::open_release_page,
             commands::minimize_window,
             commands::toggle_maximize_window,
             commands::close_window,

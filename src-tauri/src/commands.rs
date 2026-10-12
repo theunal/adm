@@ -253,6 +253,22 @@ pub fn open_folder(app: AppHandle, path: String) -> Res<()> {
         .map_err(|e| i18n::t("err.open_folder", &[&e.to_string()]))
 }
 
+/// Sürüm sayfasını tarayıcıda açar.
+///
+/// Adres Rust tarafında sabittir (`update::release_page`); arayüzün rastgele
+/// bir adresi açabilmesi için `opener:allow-open-url` yetkisi gerekmez.
+///
+/// Safari uzantısı uygulamayla birlikte gelmez, sürüm sayfasındaki
+/// `safari-unsigned-macos.zip` dosyasından indirilir — sihirbaz oraya
+/// yönlendirir.
+#[tauri::command]
+pub fn open_release_page(app: AppHandle) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(crate::update::release_page(), None::<&str>)
+        .map_err(|e| i18n::t("err.open_url", &[&e.to_string()]))
+}
+
 /// Uygulama penceresini simge durumuna küçültür.
 #[tauri::command]
 pub fn minimize_window(app: AppHandle) -> Res<()> {
@@ -1001,12 +1017,22 @@ fn extension_source(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// Desteklenen tarayıcıların listesi (sihirbaz için).
+///
+/// `BROWSERS` dosya kopyalanan paketlerdir ve her platformda listelenir.
+/// Safari **yalnızca macOS'ta** eklenir: uzantı `.appex` olduğu için dosya
+/// kopyalanarak kurulamaz, indirilen ayrı bir `.app` içinde gelir. Bu yüzden
+/// `prepare_browser_files` / `open_plugin_folder` Safari'yi tanımaz ve
+/// `err.unknown` döner — sihirbaz onları çağırmaz.
 #[tauri::command]
 pub fn browser_list() -> Res<Vec<String>> {
-    Ok(BROWSERS
+    let mut names: Vec<String> = BROWSERS
         .iter()
         .map(|(name, _)| (*name).to_string())
-        .collect())
+        .collect();
+    if cfg!(target_os = "macos") {
+        names.push("safari".to_string());
+    }
+    Ok(names)
 }
 
 /// Eklenti dosyalarını tarayıcı klasörüne kopyalar ve `README.txt` yazar.

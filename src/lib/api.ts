@@ -281,8 +281,18 @@ export async function confirm(
    Tarayıcı köprüsü ve eklenti kurulumu (MC portu)
    ----------------------------------------------------------------- */
 
-/** Kurulum sihirbazının desteklediği tarayıcılar. */
+/**
+ * Dosya kopyalanarak kurulan tarayıcılar (krom paketi).
+ *
+ * Safari bilinçli olarak buna dâhil değildir: uzantı `.appex` olduğu için
+ * dosya kopyalanarak kurulamaz, indirilen ayrı bir `.app` içinde gelir.
+ * `prepare_browser_files` / `open_plugin_folder` /
+ * `open_browser_extensions_page` bu yüzden Safari'yi tanımaz.
+ */
 export type BrowserId = "chrome" | "edge" | "brave" | "firefox";
+
+/** Sihirbazda gösterilebilecek tarayıcılar (macOS'ta Safari de gelir). */
+export type WizardBrowser = BrowserId | "safari";
 
 /** Köprünün durumunu okur. */
 export function bridgeStatus(): Promise<BridgeStatus> {
@@ -290,8 +300,20 @@ export function bridgeStatus(): Promise<BridgeStatus> {
 }
 
 /** Desteklenen tarayıcıların listesi. */
-export function browserList(): Promise<BrowserId[]> {
-  return invoke<BrowserId[]>("browser_list");
+/** Tarayıcı listesi (macOS'ta Safari de dâhildir). */
+export function browserList(): Promise<WizardBrowser[]> {
+  return invoke<WizardBrowser[]>("browser_list");
+}
+
+/**
+ * Sürüm sayfasını tarayıcıda açar.
+ *
+ * Adres Rust tarafında sabittir; arayüzün rastgele bir adresi açabilmesi için
+ * `opener:allow-open-url` yetkisi gerekmez. Safari uzantısı bu sayfadaki
+ * `safari-unsigned-macos.zip` dosyasından indirilir.
+ */
+export function openReleasePage(): Promise<void> {
+  return invoke<void>("open_release_page");
 }
 
 /**
