@@ -315,7 +315,7 @@ pub async fn get_settings(manager: State<'_, DownloadManager>) -> Res<Settings> 
 #[tauri::command]
 pub async fn save_settings(
     manager: State<'_, DownloadManager>,
-    state: State<'_, RuntimeState>,
+    state: State<'_, SharedState>,
     settings: serde_json::Value,
 ) -> Res<()> {
     let current = manager.settings().await.map_err(tr)?;
@@ -612,7 +612,7 @@ async fn route(
                 "app": "ADM",
                 "version": crate::update::current_version(),
                 "active": active,
-                "captureExtensions": app.state::<RuntimeState>().extensions(),
+                "captureExtensions": app.state::<SharedState>().extensions(),
             }))
         }
         ("GET", "/downloads") => {
@@ -1127,11 +1127,19 @@ impl RuntimeState {
     }
 }
 
+/// Paylaşılan çalışma durumunun Tauri'de saklandığı tip.
+///
+/// `lib.rs` bunu `app.manage(...)` ile kaydeder, komutlar da aynı tipi ister.
+/// İki yerde elle yazılsa birbirinden kolayca sapar: `Arc` olarak yönetilip
+/// `RuntimeState` istenirse Tauri `TypeId` eşleşmesi bulamaz ve komut çağırmadan
+/// önce hata döner. Bu yüzden **her zaman bu takma adı kullanın.**
+pub type SharedState = std::sync::Arc<RuntimeState>;
+
 /// Pano izleyiciyi başlatır (MC `ClipboardWatcher`).
 ///
 /// Bulunan bağlantılar `download://event` üzerinden `clipboard` olayıyla
 /// arayüze gider; arayüz yanıtlayınca `answer_clipboard_prompt` çağrılır.
-pub fn start_clipboard(app: AppHandle, state: std::sync::Arc<RuntimeState>) {
+pub fn start_clipboard(app: AppHandle, state: SharedState) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     let enabled = state.clone();
@@ -1160,7 +1168,7 @@ pub fn start_clipboard(app: AppHandle, state: std::sync::Arc<RuntimeState>) {
 
 /// Arayüz panodaki bağlantı sorusunu yanıtladı (indir / yoksay).
 #[tauri::command]
-pub fn answer_clipboard_prompt(state: State<'_, RuntimeState>) {
+pub fn answer_clipboard_prompt(state: State<'_, SharedState>) {
     state
         .prompting
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1172,14 +1180,14 @@ pub fn answer_clipboard_prompt(state: State<'_, RuntimeState>) {
 
 /// Kapatma isteği "tepsiye gizle"ye mi dönüşecek?
 pub fn close_to_tray(app: &AppHandle) -> bool {
-    app.try_state::<RuntimeState>()
+    app.try_state::<SharedState>()
         .map(|s| s.close_to_tray.load(std::sync::atomic::Ordering::SeqCst))
         .unwrap_or(false)
 }
 
 /// Uygulama tepsi simgesinde (pencere açılmadan) mı başlamalı?
 pub fn starts_in_tray(app: &AppHandle) -> bool {
-    app.try_state::<RuntimeState>()
+    app.try_state::<SharedState>()
         .map(|s| s.start_in_tray.load(std::sync::atomic::Ordering::SeqCst))
         .unwrap_or(false)
 }
