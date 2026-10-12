@@ -323,7 +323,15 @@ jobs:
             exit 1
           fi
           mkdir -p keys
-          printf '%s\n' "$CRX_PRIVATE_KEY" > keys/extension.pem
+          # Pasting a PEM through a web form on Windows often drags in CRLF line
+          # endings; crx3 then fails with an opaque error, so strip them here and
+          # fail early with a readable message if the key is not a valid PEM.
+          printf '%s\n' "$CRX_PRIVATE_KEY" | tr -d '\r' > keys/extension.pem
+          if ! openssl pkey -in keys/extension.pem -noout 2>/dev/null; then
+            echo "::error::CRX_PRIVATE_KEY is not a valid PEM private key. Paste the whole file, including the BEGIN/END lines."
+            exit 1
+          fi
+          echo "Signing key loaded; extension ID: $(node scripts/extension-id.mjs)"
 
       - name: Build per-browser packages
         env:
