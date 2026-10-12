@@ -1,17 +1,22 @@
-// ADM bridge extension — background script (Chrome MV3 / Edge / Brave / Firefox)
+// ADM bridge extension — background script
+// Chrome / Edge / Brave / Opera / Vivaldi (MV3 service worker),
+// Firefox (MV3 event page) ve Safari (converter ile paketlenmiş) için tek kaynak.
 //
 // MC Download Manager uzantısının birebir portudur. Farklar:
 //   * Marka ADM, köprü başlığı `X-ADM-Extension`
-//   * Safari / native-messaging yolu çıkarıldı (Windows'ta gerekmez)
+//   * Safari / native-messaging yolu çıkarıldı (köprü HTTP üzerinden)
 
 (() => {
   'use strict';
 
-
-  // Firefox (ve türevleri) uzantı sayfalarını moz-extension:// üzerinden sunar.
-  // `browser` küresi yalnızca Firefox'ta tanımlıdır; Chrome tarafında `chrome` kullanılır.
+  // `browser` küresi Firefox ve Safari'de tanımlıdır ve söz (promise) döndürür.
+  // Chromium'da yalnızca `chrome` vardır; MV3'te o da çoğu API için söz döndürür.
+  // Geri çağrı / söz ayrımı Firefox'a değil, `browser` küresinin varlığına
+  // bağlanmalıdır: Safari de `browser` sunar ama `moz-extension:` değildir.
   const ff = (globalThis as { browser?: unknown }).browser as FirefoxApi | undefined;
+  const PROMISE_NS = !!ff;
   const IS_FIREFOX = !!ff && String(ff.runtime.getURL('')).startsWith('moz-extension:');
+  const IS_SAFARI = !!ff && String(ff.runtime.getURL('')).startsWith('safari-web-extension:');
   const api = ff ? (ff as unknown as typeof chrome) : chrome;
 
   const t = (k: string, subs?: string | string[]): string => {
@@ -19,13 +24,24 @@
   };
 
   const DEFAULTS: Settings = { port: 48213, intercept: true, minSizeMB: 0, sniff: true };
-  const BROWSER = IS_FIREFOX
-    ? 'firefox'
-    : ((navigator as Navigator & { brave?: unknown }).brave ? 'brave' : (/Edg\//.test(navigator.userAgent) ? 'edge' : 'chrome'));
+
+  function detectBrowser(): string {
+    if (IS_FIREFOX) return 'firefox';
+    if (IS_SAFARI) return 'safari';
+    const nav = navigator as Navigator & { brave?: unknown };
+    const ua = nav.userAgent;
+    if (nav.brave) return 'brave';
+    if (/Edg\//.test(ua)) return 'edge';
+    if (/OPR\//.test(ua)) return 'opera';
+    if (/Vivaldi\//.test(ua)) return 'vivaldi';
+    return 'chrome';
+  }
+  const BROWSER = detectBrowser();
 
   const MEDIA_EXT = /\.(mp4|m4v|webm|mkv|mov|avi|flv|mp3|m4a|aac|ogg|opus|wav|flac)(\?|#|$)/i;
   const FRAGMENT = /\.(ts|m4s|m4f|cmfv|cmfa|fmp4|init)(\?|#|$)|[/_.-](seg|segment|chunk|frag|fragment)[-_]?\d+/i;
   const IGNORED_HOSTS = /(^|\.)googlevideo\.com$|(^|\.)fbcdn\.net$|(^|\.)twimg\.com$/i;
+  const HTTP_URL = /^https?:/i;
 
   // ---------- Settings ----------
   async function getSettings(): Promise<Settings> {
@@ -35,6 +51,7 @@
   async function setSettings(patch: Partial<Settings>): Promise<void> {
     const cur = await getSettings();
     await api.storage.local.set({ settings: { ...cur, ...patch } });
+    pingCache = null;
   }
   const base = (s: Settings): string => `http://127.0.0.1:${s.port}`;
   // Özel başlık, isteğin bir uzantıdan geldiğinin kanıtıdır: normal web sayfalar
@@ -44,15 +61,18 @@
   const BRIDGE_HEADERS = { 'X-ADM-Extension': BROWSER };
 
   // ---------- App communication ----------
-  // Köprü TCP bağlantısını kabul edip yanıt yazmayabilir (yarı açık
-  // bağlantı, askıda kalan istek). Zaman aşımı olmadan `fetch` hiç bitmez:
-  // yoklama 1,5 sn'de bir takılır, worker hiç boşta düşmez ve kullanıcı
-  // "hiçbir geri bildirim yok" durumunda kalır. Bu yüzden her köprü isteği
-  // `signal` ile sınırlıdır.
+  // Köprü TCP bağlantısını kabul edip yanıt yazmayabilir. Zaman aşımı olmadan
+  // `fetch` hiç bitmez; bu yüzden her köprü isteği `signal` ile sınırlıdır.
   const PING_TIMEOUT_MS = 1200;
   const BRIDGE_TIMEOUT_MS = 5000;
+  /**
+   * Her sekmenin her çerçevesindeki content script `status` sorar; her biri
+   * ayrı bir ping olursa çok sekmeli bir oturumda köprüye aynı anda onlarca
+   * istek gider. Kısa süreli önbellek bunu tek isteğe indirir.
+   */
+  const PING_CACHE_MS = 2000;
+  let pingCache: { at: number; port: number; value: Promise<AppInfo | null> } | null = null;
 
-  /** Zaman aşımı olan köprü `fetch`'i. */
   async function bridgeFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     // `AbortSignal.timeout` eski motorlarda yok; `AbortController` her yerde var.
     const ctrl = new AbortController();
@@ -64,11 +84,10 @@
     }
   }
 
-  async function ping(settings?: Settings): Promise<AppInfo | null> {
-    const cfg = settings || (await getSettings());
+  async function pingNow(cfg: Settings): Promise<AppInfo | null> {
     try {
       const r = await bridgeFetch(
-        base(cfg) + '/ping?browser=' + BROWSER,
+        base(cfg) + '/ping?browser=' + encodeURIComponent(BROWSER),
         { cache: 'no-store', headers: BRIDGE_HEADERS },
         PING_TIMEOUT_MS,
       );
@@ -81,6 +100,17 @@
     }
   }
 
+  async function ping(settings?: Settings, fresh = false): Promise<AppInfo | null> {
+    const cfg = settings || (await getSettings());
+    const now = Date.now();
+    if (!fresh && pingCache && pingCache.port === cfg.port && now - pingCache.at < PING_CACHE_MS) {
+      return pingCache.value;
+    }
+    const value = pingNow(cfg);
+    pingCache = { at: now, port: cfg.port, value };
+    return value;
+  }
+
   // ---------- Download progress: toolbar badge + popup list ----------
   async function bridgeJSON<T = unknown>(path: string, init?: RequestInit): Promise<T> {
     const settings = await getSettings();
@@ -89,45 +119,45 @@
       { cache: 'no-store', ...init, headers: { ...BRIDGE_HEADERS, ...(init?.headers) } },
       BRIDGE_TIMEOUT_MS,
     );
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     return (await r.json()) as T;
   }
-  async function getDownloads(): Promise<DownloadItem[]> {
-    try { const j = await bridgeJSON<{ items?: DownloadItem[] }>('/downloads'); return j.items || []; } catch { return []; }
+  /** `null` = uygulamaya ulaşılamadı; `[]` = ulaşıldı ama indirme yok. */
+  async function fetchDownloads(): Promise<DownloadItem[] | null> {
+    try {
+      const j = await bridgeJSON<{ items?: DownloadItem[] }>('/downloads');
+      return Array.isArray(j.items) ? j.items : [];
+    } catch {
+      return null;
+    }
   }
   async function downloadAction(id: string, action: string): Promise<unknown> {
+    if (!DOWNLOAD_ACTIONS.has(action)) return { ok: false, error: 'invalid action' };
     try {
       const j = await bridgeJSON('/action', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action }),
       });
-      tickProgress();
+      void tickProgress();
       return j;
     } catch (e) { return { ok: false, error: String(e) }; }
   }
   const ACTIVE_STATES = new Set(['downloading', 'probing']);
+  const DOWNLOAD_ACTIONS = new Set(['pause', 'resume', 'cancel', 'remove']);
 
   // ---------------------------------------------------------------------
-  // Rozet durumu — MV3 service worker her an sonlanabilir.
-  //
-  // Önceden bu bilgi yalnızca global değişkende tutuluyordu. Worker
-  // sonlandığında kayboluyor, "rozet küresel mi?" sorusunun cevabı yok
-  // oluyor ve sekme rozetleri `null`'da kalıyordu; `tickProgress` onarımı
-  // yalnızca `badgeShown === true` iken çalıştığı için kendiliğinden
-  // düzelmiyordu.
-  //
-  // Çözüm: geçişin *niyetini* `storage.session`'a yaz, geçişi tembel
-  // uzlaştırma ile tamamla. Kapsam tarayıcı oturumuyla aynı — rozetin de
-  // ömrü odur. Alarm, canlı bir zamanlayıcı yokken onarımı sürdürür.
+  // Rozet durumu — MV3 service worker / Firefox event page her an sonlanabilir.
+  // Geçişin *niyeti* `storage.session`'a yazılır, geçiş tembel uzlaştırma ile
+  // tamamlanır. Alarm, canlı bir zamanlayıcı yokken onarımı sürdürür.
   // ---------------------------------------------------------------------
   const BADGE_KEY = 'badge';
   const DONE_BADGE_MS = 4000;
   const PROGRESS_ALARM = 'adm-progress';
-  /** Chrome'un izin verdiği en küçük periyot (30 sn). */
+  /** Chrome 120+ ve Firefox'un izin verdiği en küçük periyot (30 sn). */
   const PROGRESS_ALARM_MIN = 0.5;
 
   type BadgeMode = 'perTab' | 'global' | 'done';
   interface BadgeState {
     mode: BadgeMode;
-    /** 'done' penceresinin bitişi; worker ölse bile kalan süre buradan bilinir. */
     doneUntil: number;
   }
 
@@ -139,8 +169,10 @@
       try {
         const r = (await api.storage.session.get(BADGE_KEY)) as unknown as Record<string, BadgeState | undefined>;
         const v = r && r[BADGE_KEY];
-        // Bozuk/eksik veri `perTab`'a düşsün: en azından rozetler görünür kalır.
-        if (v && (v.mode === 'global' || v.mode === 'done' || v.mode === 'perTab')) return v;
+        if (v && (v.mode === 'global' || v.mode === 'done' || v.mode === 'perTab')) {
+          badgeCache = v;
+          return v;
+        }
       } catch { }
     }
     return badgeCache;
@@ -154,10 +186,6 @@
     await syncAlarm();
   }
 
-  /**
-   * Uzlaştırma alarmı yalnızca rozet durumu düzeltmeyi beklerken ayakta
-   * kalır; `perTab`'a dönülünce kaldırılır — boşta tur dönmesin.
-   */
   async function syncAlarm(): Promise<void> {
     if (!api.alarms) return;
     try {
@@ -174,31 +202,40 @@
       if (color) await api.action.setBadgeBackgroundColor({ color });
     } catch { }
   }
-  // Sekme başına medya sayısı genel rozeti geçersiz kılar; indirme sürerken tüm
-  // sekmeler genel metne döner.
   // `text: null` sekme rozetini temizleyip genel metne düşürür — chrome.action
   // tiplerinde null yoktur, bu yüzden tek noktada cast edilir.
   async function useGlobalBadgeOnAllTabs(on: boolean): Promise<void> {
     let tabs: chrome.tabs.Tab[] = [];
     try { tabs = await api.tabs.query({}); } catch { return; }
     await Promise.all(tabs.map(async (tab) => {
-      // Sekmesi olmayan kayıtlar (devtools, panel girdileri) atlanır.
       if (tab.id === undefined) return;
       if (on) {
         try { await api.action.setBadgeText({ tabId: tab.id, text: null as unknown as string }); } catch { }
         return;
       }
-      // Bir sekmenin medya okuması patlarsa kalan sekmeler atlanmasın:
-      // geri yükleme yarım kalırsa rozetler kalıcı yanlış görünür.
       let count = 0;
       try { count = (await readMedia(tab.id)).length; } catch { return; }
       try { await api.action.setBadgeText({ tabId: tab.id, text: count ? String(count) : '' }); } catch { }
     }));
   }
-  async function tickProgress(): Promise<void> {
-    const list = await getDownloads();
-    const active = list.filter((i) => ACTIVE_STATES.has(i.state));
+
+  /**
+   * `setInterval` 1,5 sn'de bir tetikler ama köprü isteği 5 sn'ye kadar
+   * sürebilir. Örtüşen turlar aynı rozet geçişini paralel yapar ve
+   * `saveBadge` yarışı yaratır; tek uçuşta tur sınırı bunu engeller.
+   */
+  let tickInFlight: Promise<void> | null = null;
+  function tickProgress(): Promise<void> {
+    if (!tickInFlight) {
+      tickInFlight = runTick().catch(() => { }).finally(() => { tickInFlight = null; });
+    }
+    return tickInFlight;
+  }
+
+  async function runTick(): Promise<void> {
+    const list = await fetchDownloads();
     const badge = await loadBadge();
+    const active = (list || []).filter((i) => ACTIVE_STATES.has(i.state));
 
     if (active.length) {
       const measurable = active.filter((i) => i.total > 0);
@@ -209,13 +246,8 @@
         const got = measurable.reduce((a, i) => a + Math.min(i.received, i.total), 0);
         text = Math.round((100 * got) / total) + '%';
       }
-      // Zaten küreselse sekmeleri tekrar temizlemeye gerek yok; her 1,5
-      // saniyede tüm sekmelerde yeniden yazmak boş iş olur.
-      //
-      // Sıralama önemli: her geçişte **önce yan etki, sonra durum yazılır**.
-      // Worker arada ölürse kayıt eski kipte kalır ve bir sonraki tur işi
-      // idempotent olarak tekrarlar. Tersi (önce durum) kalıcı tutarsızlık
-      // bırakırdı — "durum global diyor ama sekme rozetleri temizlenmemiş".
+      // Sıralama: önce yan etki, sonra durum. Worker arada ölürse bir sonraki
+      // tur işi idempotent olarak tekrarlar.
       if (badge.mode !== 'global') {
         await useGlobalBadgeOnAllTabs(true);
         await saveBadge({ mode: 'global', doneUntil: 0 });
@@ -224,20 +256,28 @@
       return;
     }
 
-    // Etkin indirme yok: hızlı yoklama durur, onarım alarmı devralır.
     stopProgress();
 
-    // Her geçiş kalıcı durumdan okunarak yapılır; canlı bir `setTimeout`'a
-    // güvenilmez, çünkü worker bu pencerede sonlanabilir ve o zaman onarım
-    // hiç tetiklenmezdi.
+    // Uygulama kapandı/çöktüyse indirme bitmiş sayılmaz: ✓ göstermeden
+    // doğrudan sekme rozetlerine dönülür.
+    if (list === null && badge.mode !== 'perTab') {
+      await setGlobalBadge('', '#2f6feb');
+      await useGlobalBadgeOnAllTabs(false);
+      await saveBadge({ mode: 'perTab', doneUntil: 0 });
+      return;
+    }
     if (badge.mode === 'global') {
       await setGlobalBadge('✓', '#2ebd59');
       await saveBadge({ mode: 'done', doneUntil: Date.now() + DONE_BADGE_MS });
       return;
     }
     if (badge.mode === 'done') {
-      if (Date.now() < badge.doneUntil) return;   // hâlâ tamamlandı işareti gösteriliyor
-      // Aynı sıralama kuralı: geri yükle, sonra kipi kapat.
+      if (Date.now() < badge.doneUntil) {
+        // Alarm 30 sn'de bir döner; 4 sn'lik pencereyi kaçırmamak için
+        // canlı worker varken kısa bir zamanlayıcıyla tekrar dene.
+        setTimeout(() => { void tickProgress(); }, badge.doneUntil - Date.now() + 50);
+        return;
+      }
       await setGlobalBadge('', '#2f6feb');
       await useGlobalBadgeOnAllTabs(false);
       await saveBadge({ mode: 'perTab', doneUntil: 0 });
@@ -245,18 +285,52 @@
   }
   function startProgress(): void {
     if (progressTimer) return;
-    tickProgress();
-    // Kısa periyot yalnızca "varken" takılabilir: her fetch, iş sürerken
-    // worker'ı canlı tutar. Worker ölürse `PROGRESS_ALARM` devralır.
-    progressTimer = setInterval(tickProgress, 1500);
+    void tickProgress();
+    progressTimer = setInterval(() => { void tickProgress(); }, 1500);
   }
   function stopProgress(): void {
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
   }
 
-  async function cookiesFor(url: string): Promise<{ header: string; list: CookieInfo[] }> {
+  // ---------- Cookies ----------
+  /**
+   * Varsayılan `cookies.getAll({ url })` yalnızca normal pencerenin deposunu
+   * okur. Gizli pencere (Chrome "1", Firefox "firefox-private") veya Firefox
+   * konteyner sekmelerinden gelen indirmeler bu yüzden çerezsiz gidiyor ve
+   * oturum gerektiren dosyalar 401/403 ile düşüyordu.
+   */
+  async function cookieStoreFor(ctx: CookieContext): Promise<string | undefined> {
+    if (ctx.cookieStoreId) return ctx.cookieStoreId;
+    if (!api.cookies?.getAllCookieStores) return undefined;
     try {
-      const list = await api.cookies.getAll({ url });
+      const stores = await api.cookies.getAllCookieStores();
+      const tabId = ctx.tabId;
+      if (typeof tabId === 'number' && tabId >= 0) {
+        const s = stores.find((st) => st.tabIds.includes(tabId));
+        if (s) return s.id;
+      }
+      if (ctx.incognito) {
+        const tabs = await api.tabs.query({});
+        const privateIds = new Set(tabs.filter((tb) => tb.incognito).map((tb) => tb.id));
+        const s = stores.find((st) => st.tabIds.some((id) => privateIds.has(id)));
+        if (s) return s.id;
+      }
+    } catch { }
+    return undefined;
+  }
+
+  async function cookiesFor(url: string, ctx: CookieContext): Promise<{ header: string; list: CookieInfo[] }> {
+    if (!api.cookies?.getAll) return { header: '', list: [] };
+    try {
+      const storeId = await cookieStoreFor(ctx);
+      const query: chrome.cookies.GetAllDetails & { firstPartyDomain?: null } = { url };
+      if (storeId) query.storeId = storeId;
+      // Firefox'ta first-party isolation (privacy.firstparty.isolate / Tor
+      // tabanlı türevler) açıkken `firstPartyDomain` verilmezse çağrı hata
+      // fırlatır. `null` tüm birinci taraf alanlarını döndürür. Chromium bu
+      // anahtarı tanımaz ve şema hatası verir, o yüzden yalnızca Firefox'ta.
+      if (IS_FIREFOX) query.firstPartyDomain = null;
+      const list = await api.cookies.getAll(query);
       return {
         header: list.map((c) => `${c.name}=${c.value}`).join('; '),
         list: list.map((c) => ({
@@ -269,28 +343,25 @@
     }
   }
 
-  // Bildirim söz döndürür; `await` edilmediği için önceki `catch` yalnızca
-  // eşzamanlı throw'ları yakalıyor, red'i değil. Worker bu çağrı bitmeden
-  // sonlanırsa kullanıcı bildirimi hiç görmez.
   function notify(title: string, message: string): void {
-    // Tek argümanlı `create(options)` hem Chrome hem Firefox'ta geçerli
-    // (kimlik otomatik üretilir); `create('', …)` yalnızca Chrome'da
-    // çalışıyordu, Firefox `undefined` bekliyor.
+    // Tek argümanlı `create(options)` hem Chrome hem Firefox'ta geçerli.
+    // Firefox göreli `iconUrl`'yi her zaman çözemez; mutlak adres verilir.
+    // Safari'de `notifications` API'si yoktur; opsiyonel zincir onu atlar.
     const opts: chrome.notifications.NotificationCreateOptions = {
-      type: 'basic', iconUrl: 'icons/icon128.png', title, message: String(message || '').slice(0, 200),
+      type: 'basic', iconUrl: api.runtime.getURL('icons/icon128.png'), title, message: String(message || '').slice(0, 200),
     };
     try {
-      const p = api.notifications?.create?.(opts);
-      // API yoksa söz de yoktur; varsa red'ı yut.
+      const p = api.notifications?.create?.(opts) as unknown;
       if (p && typeof (p as Promise<unknown>).catch === 'function') {
-        (p as Promise<unknown>).catch(() => { /* bildirim gösterilemedi */ });
+        (p as Promise<unknown>).catch(() => { });
       }
     } catch { }
   }
 
   async function sendToApp(payload: SendToAppPayload): Promise<SendToAppResult> {
+    if (!HTTP_URL.test(payload.url)) return { ok: false, error: 'unsupported url' };
     const settings = await getSettings();
-    const ck = await cookiesFor(payload.url);
+    const ck = await cookiesFor(payload.url, payload);
     const body = {
       url: payload.url, filename: payload.filename || '', referer: payload.referer || '', kind: payload.kind || 'file',
       userAgent: navigator.userAgent, cookieHeader: ck.header, cookies: ck.list,
@@ -301,12 +372,9 @@
         { method: 'POST', headers: { 'Content-Type': 'application/json', ...BRIDGE_HEADERS }, body: JSON.stringify(body) },
         BRIDGE_TIMEOUT_MS,
       );
-      const j = (await r.json()) as { ok?: boolean; error?: string };
-      // Uygulama çalışıyordu ama işi reddetti (geçersiz URL, kota, şema...).
-      // Bu "uygulama kapalı" durumu DEĞİLDİR. Önceden her hata
-      // `notifOfflineTitle` ile bildiriliyor ve `j.error` yutuluyordu;
-      // kullanıcı hem yanlış yönlendiriliyor hem de gerçek nedeni hiç
-      // göremiyordu.
+      let j: { ok?: boolean; error?: string } = {};
+      try { j = (await r.json()) as typeof j; } catch { j = { ok: false, error: 'HTTP ' + r.status }; }
+      // Uygulama çalışıyor ama işi reddetti — bu "uygulama kapalı" değildir.
       if (!j.ok) {
         notify(t('notifRejectedTitle'), String(j.error || '').slice(0, 200));
         return { ok: false, error: String(j.error || 'app error') };
@@ -315,6 +383,7 @@
       startProgress();
       return { ok: true };
     } catch (e) {
+      pingCache = null;
       notify(t('notifOfflineTitle'), t('notifOfflineBody'));
       return { ok: false, error: String(e) };
     }
@@ -334,47 +403,45 @@
     return !!e && list.includes(e);
   }
 
-  // ---------- Download interception (Chrome) ----------
+  // ---------- Download interception ----------
+  type BrowserDownloadItem = chrome.downloads.DownloadItem & { tabId?: number; cookieStoreId?: string };
+
   /**
-   * İndirmeyi tetikleyen sayfanın adresi — Rust tarafında `Referer`
-   * başlığı olarak gider.
-   *
-   * Chrome `item.referrer` alanını doldurur. Firefox'ta bu alan hiç yoktur:
-   * tip `string` diyor ama çalışma zamanında `undefined`. Boş kalırsa Rust
-   * tarafı başlığı hiç eklemiyor (`commands.rs`) ve `Referer` doğrulayan
-   * CDN'ler 403 döner — Firefox'ta hotlink korumalı indirmeler bu yüzden
-   * kırılıyordu.
-   *
-   * Sıra: `item.referrer` → indirmeyi başlatan sekmenin adresi → hedefin
-   * kendi origin'i.
+   * Sıra: `item.referrer` (Chrome) → indirmeyi başlatan sekme → hedefin origin'i.
+   * Firefox `referrer` alanını doldurmaz; boş kalırsa `Referer` doğrulayan
+   * CDN'ler 403 döner.
    */
-  async function refererFor(item: chrome.downloads.DownloadItem, url: string): Promise<string> {
-    const direct = item.referrer;
-    if (direct) return direct;
-    // `tabId` gerçekte her iki tarayıcıda da var ama @types/chrome'da
-    // tanımlı değil; dar bir yerel bildirimle okunuyor.
-    const tabId = (item as chrome.downloads.DownloadItem & { tabId?: number }).tabId;
+  async function refererFor(item: BrowserDownloadItem, url: string): Promise<string> {
+    if (item.referrer) return item.referrer;
+    const tabId = item.tabId;
     if (typeof tabId === 'number' && tabId >= 0) {
       try {
         const tab = await api.tabs.get(tabId);
-        if (tab.url && /^https?:/i.test(tab.url)) return tab.url;
+        if (tab.url && HTTP_URL.test(tab.url)) return tab.url;
       } catch { }
     }
     try { return new URL(url).origin + '/'; } catch { }
     return '';
   }
 
-  async function interceptDownload(item: chrome.downloads.DownloadItem): Promise<boolean> {
-    const settings = await getSettings();
-    if (!settings.intercept) return false;
+  async function shouldIntercept(item: BrowserDownloadItem, settings: Settings): Promise<{ url: string } | null> {
+    if (!settings.intercept) return null;
     const url = item.finalUrl || item.url;
-    if (!/^https?:/i.test(url)) return false;
-    if (item.byExtensionId) return false;
+    if (!HTTP_URL.test(url)) return null;
+    if (item.byExtensionId) return null;
     const totalBytes = item.totalBytes || 0;
-    if (settings.minSizeMB > 0 && totalBytes > 0 && totalBytes < settings.minSizeMB * 1024 * 1024) return false;
-    const app = await ping(settings);
-    if (!app) return false;
-    if (!matchesCaptureTypes(app, item.filename || '', url)) return false;
+    if (settings.minSizeMB > 0 && totalBytes > 0 && totalBytes < settings.minSizeMB * 1024 * 1024) return null;
+    const app = await ping(settings, true);
+    if (!app) return null;
+    if (!matchesCaptureTypes(app, item.filename || '', url)) return null;
+    return { url };
+  }
+
+  async function interceptDownload(item: BrowserDownloadItem): Promise<boolean> {
+    const settings = await getSettings();
+    const ok = await shouldIntercept(item, settings);
+    if (!ok) return false;
+    const { url } = ok;
 
     try { await api.downloads.cancel(item.id); } catch { }
     if (IS_FIREFOX && ff) {
@@ -387,46 +454,51 @@
     try { await api.downloads.erase({ id: item.id }); } catch { }
     const filename = (item.filename ? item.filename.split(/[\\/]/).pop() : '') || '';
     const referer = await refererFor(item, url);
-    sendToApp({ url, filename, referer, kind: 'file' });
+    void sendToApp({
+      url, filename, referer, kind: 'file',
+      tabId: item.tabId, incognito: item.incognito, cookieStoreId: item.cookieStoreId,
+    });
     return true;
   }
 
   if (api.downloads?.onDeterminingFilename) {
+    // Chromium: indirme dosya adı belirlenene kadar bekletilir.
     api.downloads.onDeterminingFilename.addListener((item, suggest) => {
-      interceptDownload(item).then((took) => { if (!took) { try { suggest(); } catch { } } });
+      // Herhangi bir adım reddederse `suggest()` hiç çağrılmaz ve tarayıcı
+      // indirmesi sonsuza dek "başlatılıyor"da asılı kalır.
+      interceptDownload(item as BrowserDownloadItem)
+        .catch(() => false)
+        .then((took) => { if (!took) { try { suggest(); } catch { } } });
       return true;
     });
   } else if (api.downloads?.onCreated) {
-    // Firefox'ta onDeterminingFilename yoktur: tarayıcı indirmesi haber
-    // verildiğinde çoktan başlamıştır. Uygulamaya sorulurken indirmeyi
-    // duraklatıp, uygulama reddederse sürdürürüz.
-    api.downloads.onCreated.addListener((item) => {
-      const paused = item.state === 'in_progress'
-        ? Promise.resolve(api.downloads.pause(item.id)).then(() => true, () => false)
-        : Promise.resolve(false);
-      interceptDownload(item).then(async (took) => {
-        if (!took && (await paused)) { try { await api.downloads.resume(item.id); } catch { } }
-      });
+    // Firefox: onDeterminingFilename yoktur, indirme çoktan başlamıştır.
+    // Uygulamaya sorulurken duraklatılır, reddedilirse sürdürülür.
+    api.downloads.onCreated.addListener((raw) => {
+      const item = raw as BrowserDownloadItem;
+      void (async () => {
+        const settings = await getSettings().catch(() => DEFAULTS);
+        // Yakalama kapalıyken veya http(s) dışı indirmelerde hiç dokunma:
+        // devam ettirilemeyen (Range desteklemeyen) bir indirmeyi duraklatmak
+        // onu baştan başlatır ya da takılı bırakır.
+        if (!settings.intercept || !HTTP_URL.test(item.finalUrl || item.url) || item.byExtensionId) return;
+        let paused = false;
+        if (item.state === 'in_progress' && item.canResume !== false) {
+          try { await api.downloads.pause(item.id); paused = true; } catch { }
+        }
+        const took = await interceptDownload(item).catch(() => false);
+        if (!took && paused) { try { await api.downloads.resume(item.id); } catch { } }
+      })();
     });
   }
 
   // ---------- Media sniffing ----------
-  const mem = new Map<number, Map<string, MediaInfo>>();  // tabId -> Map(url -> info)   (storage.session yoksa yedek)
+  const mem = new Map<number, Map<string, MediaInfo>>();  // storage.session yoksa yedek
 
   /**
-   * Sekme başına yazma sırası.
-   *
-   * `addMedia` "oku → değiştir → yaz" üç adımlı bir işlem ve
-   * `webRequest.onHeadersReceived` bunu `await` etmeden çağırır. Segmentli
-   * (HLS/DASH) bir sayfa 20 paralel `.m4s` isteği attığında 20 çağrı da aynı
-   * eski listeyi okuyup üstüne yazıyordu; son yazan kazanıyor, diğer 19'u
-   * sessizce kayboluyordu. Zincir, aynı sekmenin işlemlerini sıraya alıyor.
-   *
-   * `clearMedia` de aynı zincire girer: sekme değişimi sırasında uçuşta olan
-   * eklemeler, temizlikten sonra eski sayfanın medyasını geri getiriyordu.
-   *
-   * Reddedilen bir işlem zinciri bozmaz; hat boşaldığında `mediaQueue`
-   * girdisi silinir (sınırsız büyüme olmaz).
+   * Sekme başına yazma sırası: `addMedia` "oku → değiştir → yaz" işlemidir ve
+   * webRequest onu `await` etmeden çağırır; zincir aynı sekmenin işlemlerini
+   * sıraya alır, böylece paralel segment istekleri birbirini ezmez.
    */
   const mediaQueue = new Map<number, Promise<void>>();
 
@@ -442,7 +514,7 @@
   async function readMedia(tabId: number): Promise<MediaInfo[]> {
     if (api.storage.session) {
       const key = 'media:' + tabId;
-      const r = (await api.storage.session.get(key)) as unknown as Record<string, MediaInfo[]>;
+      const r = (await api.storage.session.get(key)) as unknown as Record<string, MediaInfo[] | undefined>;
       return r[key] || [];
     }
     return Array.from((mem.get(tabId) || new Map<string, MediaInfo>()).values());
@@ -453,14 +525,14 @@
     } else {
       mem.set(tabId, new Map(list.map((m) => [m.url, m])));
     }
+    // İndirme sürerken genel rozet geçerli; sekme rozetini yazmak onu ezerdi.
+    if (badgeCache.mode !== 'perTab') return;
     try {
       await api.action.setBadgeText({ tabId, text: list.length ? String(list.length) : '' });
       await api.action.setBadgeBackgroundColor({ tabId, color: '#2f6feb' });
     } catch { }
   }
   function clearMedia(tabId: number): Promise<void> {
-    // Aynı zincire girer: temizlik, uçuşta olan eklemelerden SONRA çalışır
-    // ve eski sayfanın medyasını geri getirmez.
     return serializeMedia(tabId, async () => {
       if (api.storage.session) await api.storage.session.remove('media:' + tabId);
       mem.delete(tabId);
@@ -488,23 +560,30 @@
       const idx = list.findIndex((m) => m.key === key);
       const entry: MediaInfo = { ...info, key, name: info.name || guessName(info.url, info.type) };
       if (idx >= 0) {
-        if ((info.size || 0) > (list[idx].size || 0)) list[idx] = { ...list[idx], ...entry };
+        // Daha büyük boyut bilgisi geldiyse güncelle ve KAYDET — önceden
+        // değişiklik yalnızca bellekte yapılıp yazılmıyordu.
+        if ((info.size || 0) > (list[idx].size || 0)) {
+          list[idx] = { ...list[idx], ...entry };
+          await writeMedia(tabId, list);
+        }
         return;
       }
       list.unshift(entry);
       if (list.length > 40) list.length = 40;
       await writeMedia(tabId, list);
-      // `webRequest` bu çağrıyı `await` etmeden yapıyor; storage hatası
-      // unhandled promise rejection olmasın.
     }).catch(() => { });
   }
 
   function guessName(url: string, type: string): string {
     try {
       const u = new URL(url);
-      let n = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '') || u.hostname;
+      let n = u.hostname;
+      try { n = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '') || u.hostname; } catch { }
       if (!/\.[a-z0-9]{2,5}$/i.test(n) && type) {
-        const ext = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'video/quicktime': 'mov' }[type.toLowerCase()];
+        const map: Record<string, string> = {
+          'video/mp4': 'mp4', 'video/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'video/quicktime': 'mov',
+        };
+        const ext = map[type.toLowerCase()];
         if (ext) n += '.' + ext;
       }
       return n;
@@ -531,42 +610,45 @@
   }
 
   if (api.webRequest?.onHeadersReceived) {
-    api.webRequest.onHeadersReceived.addListener(
-      (d) => {
-        if (d.tabId < 0 || d.statusCode >= 400) return;
-        let host = '';
-        try { host = new URL(d.url).hostname; } catch { }
-        if (IGNORED_HOSTS.test(host)) return;
-        const ct = headerVal(d.responseHeaders, 'content-type');
-        const kind = classify(d.url, ct);
-        if (!kind) return;
-        let size = parseInt(headerVal(d.responseHeaders, 'content-length'), 10) || 0;
-        const cr = headerVal(d.responseHeaders, 'content-range').match(/\/(\d+)/);
-        if (cr) size = parseInt(cr[1], 10);
-        if (kind === 'media' && size > 0 && size < 300 * 1024) return;
-        addMedia(d.tabId, { url: d.url, type: ct.split(';')[0], size, kind, time: Date.now() });
-      },
-      { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object', 'main_frame'] },
-      ['responseHeaders']
-    );
+    try {
+      api.webRequest.onHeadersReceived.addListener(
+        (d) => {
+          if (d.tabId < 0 || d.statusCode >= 400) return undefined;
+          let host = '';
+          try { host = new URL(d.url).hostname; } catch { }
+          if (IGNORED_HOSTS.test(host)) return undefined;
+          const ct = headerVal(d.responseHeaders, 'content-type');
+          const kind = classify(d.url, ct);
+          if (!kind) return undefined;
+          let size = parseInt(headerVal(d.responseHeaders, 'content-length'), 10) || 0;
+          const cr = headerVal(d.responseHeaders, 'content-range').match(/\/(\d+)/);
+          if (cr) size = parseInt(cr[1], 10);
+          if (kind === 'media' && size > 0 && size < 300 * 1024) return undefined;
+          void addMedia(d.tabId, { url: d.url, type: ct.split(';')[0], size, kind, time: Date.now() });
+          return undefined;
+        },
+        { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object', 'main_frame'] },
+        ['responseHeaders'],
+      );
+    } catch {
+      // Safari bazı istek türlerini tanımaz ve kaydı reddeder; sniffing
+      // yine de content script'in DOM taramasıyla çalışmaya devam eder.
+    }
   }
 
   api.tabs.onUpdated.addListener((tabId, info) => {
-    if (info.status === 'loading' && info.url) clearMedia(tabId);
+    if (info.status === 'loading' && info.url) void clearMedia(tabId);
   });
-  api.tabs.onRemoved.addListener((tabId) => clearMedia(tabId));
+  api.tabs.onRemoved.addListener((tabId) => { void clearMedia(tabId); });
 
   // ---------- Rozetin kalıcı uzlaştırması ----------
-  // Alarm, canlı `setInterval` yokken de devam eden tek sürücüdür. Worker
-  // sonlandığında veya tarayıcı yeniden başladığında `tickProgress` yeniden
-  // tetiklenir; geçişler kalıcı durumdan okunduğu için yarım kalmış rozet
-  // kendiliğinden tamamlanır.
   api.alarms?.onAlarm.addListener((a) => {
     if (a.name === PROGRESS_ALARM) void tickProgress();
   });
 
   // ---------- Context menu ----------
-  // Firefox `contextMenus`'ü de sunar; `menus` yalnızca eskiden kalan bir yedektir.
+  // Firefox `contextMenus`'ü de sunar; `menus` eski sürümler için yedektir.
+  // Safari ve Firefox Android'de ikisi de olmayabilir.
   const menus = api.contextMenus || (api as unknown as { menus?: typeof chrome.contextMenus }).menus;
   function createMenus(): void {
     if (!menus) return;
@@ -574,51 +656,70 @@
     const create = (): void => {
       if (created) return;
       created = true;
-      // Her `create` kendi `try`si içinde: ikisi tek blokta olursa ilk
-      // çağrı hata verdiğinde (ör. `removeAll` yarışıyla eski `dm-link`
-      // kayıtlıysa "duplicate id") `catch` yutuyor ve `dm-page-video`
-      // hiç oluşmuyor. `created` zaten true olduğu için ikinci deneme de
-      // atlanıyor, kullanıcı menüyü kalıcı olarak kaybediyordu.
-      try { menus.create({ id: 'dm-link', title: t('menuDownloadLink'), contexts: ['link', 'video', 'audio', 'image'] }); } catch { }
-      try { menus.create({ id: 'dm-page-video', title: t('menuPageVideo'), contexts: ['page', 'video', 'frame', 'action'] }); } catch { }
+      // Chrome 'lastError'ı okunmayan geri çağrılar konsola uyarı yazar;
+      // her create kendi try'ı + boş geri çağrısıyla çalışır.
+      const done = (): void => { void api.runtime.lastError; };
+      try { menus.create({ id: 'dm-link', title: t('menuDownloadLink'), contexts: ['link', 'video', 'audio', 'image'] }, done); } catch { }
+      try { menus.create({ id: 'dm-page-video', title: t('menuPageVideo'), contexts: ['page', 'video', 'frame', 'action'] }, done); } catch { }
     };
-    // Chrome geri çağrı alır; Firefox'un browser.menus'ü söz döner.
+    // `browser` ad alanı söz döner (Firefox, Safari); Chromium geri çağrı alır.
     try {
-      if (IS_FIREFOX && ff) ff.menus.removeAll().then(create, create);
-      else menus.removeAll(create);
+      if (PROMISE_NS) {
+        const ns = ff?.menus ?? menus;
+        Promise.resolve(ns.removeAll()).then(create, create);
+      } else {
+        menus.removeAll(create);
+      }
     } catch { create(); }
   }
-  // Tarayıcı açılışında rozet durumu `perTab`'a dönmüş olabilir (oturum
-  // sıfırlanır) ya da yarım kalmış bir geçiş olabilir; `tickProgress`
-  // kalıcı duruma bakarak doğru kipi kendiliğinden seçer.
-  api.runtime.onInstalled.addListener(() => { createMenus(); ping(); void tickProgress(); });
-  api.runtime.onStartup?.addListener(() => { createMenus(); ping(); void tickProgress(); });
+  api.runtime.onInstalled.addListener(() => { createMenus(); void ping(); void tickProgress(); });
+  api.runtime.onStartup?.addListener(() => { createMenus(); void ping(); void tickProgress(); });
   menus?.onClicked.addListener((info, tab) => {
+    const ctx = { tabId: tab?.id, incognito: tab?.incognito, cookieStoreId: (tab as { cookieStoreId?: string } | undefined)?.cookieStoreId };
     if (info.menuItemId === 'dm-link') {
       const url = info.linkUrl || info.srcUrl;
-      if (url) sendToApp({ url, referer: info.pageUrl || tab?.url, kind: 'file' });
+      if (url) void sendToApp({ url, referer: info.pageUrl || tab?.url, kind: 'file', ...ctx });
     } else if (info.menuItemId === 'dm-page-video') {
-      const url = info.pageUrl || tab?.url;
-      if (url) sendToApp({ url, referer: url, kind: 'video' });
+      const url = info.frameUrl || info.pageUrl || tab?.url;
+      if (url) void sendToApp({ url, referer: url, kind: 'video', ...ctx });
     }
   });
 
   // ---------- Popup / content script messages ----------
   //
-  // Yetkilendirme: `sender.id` eşleşmesi kapıdır. Web sayfaları
-  // `externally_connectable` tanımlı olmadığı için zaten doğrudan
-  // `sendMessage` çağıramaz; yalnızca kendi content script'imiz (veya başka
-  // bir eklenti) mesaj gönderebilir. `sender.id` kontrolü ikisini de
-  // ayırır ve tek satırdır.
+  // Yetkilendirme: `sender.id` eşleşmesi kapıdır; `externally_connectable`
+  // tanımlı olmadığı için web sayfaları doğrudan mesaj gönderemez.
   //
-  // Ayrıca `pageMedia` girdisi doğrulanmazsa bir sayfa, kendi
-  // `<video>`'su olmadan istediği URL'yi "yakalanan medya" listesine
-  // yazabilir; kullanıcı Download'a bastığında uygulama o URL'yi **o
-  // origin'in çerezleriyle** indirir. Bu yüzden gönderen sekmenin
-  // origin'i ile medya URL'sinin origin'i eşleşmeli.
-  function sameOrigin(a: string, b: string): boolean {
-    try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
+  // İkinci katman: content script'ler potansiyel olarak ele geçirilmiş bir
+  // renderer'da çalışır. Ayarları değiştirme, indirmeleri duraklatma/iptal
+  // etme ve indirme listesini okuma yalnızca uzantı sayfalarına (popup)
+  // açıktır — `sender.tab` olmayan gönderenler.
+  //
+  // `pageMedia` için: DOM'dan bildirilen medya yalnızca gönderen ÇERÇEVENİN
+  // sitesinden kabul edilir. Başka sitedeki CDN medyası zaten webRequest
+  // ile ağ seviyesinde (sahte bildirilemez) yakalanır.
+  const MULTI_PART_SLD = /^(co|com|net|org|gov|edu|ac|or|ne|go|gob|mil)$/;
+  function siteOf(url: string): string {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (/^[\d.]+$/.test(host) || host.includes(':')) return host;
+      const parts = host.split('.');
+      if (parts.length <= 2) return host;
+      const tld = parts[parts.length - 1];
+      const sld = parts[parts.length - 2];
+      const n = tld.length === 2 && MULTI_PART_SLD.test(sld) ? 3 : 2;
+      return parts.slice(-n).join('.');
+    } catch {
+      return '';
+    }
   }
+  function sameSite(a: string | undefined, b: string): boolean {
+    if (!a) return false;
+    const sa = siteOf(a);
+    return !!sa && sa === siteOf(b);
+  }
+
+  const isExtensionPage = (sender: chrome.runtime.MessageSender): boolean => !sender.tab;
 
   api.runtime.onMessage.addListener((rawMsg, sender, sendResponse) => {
     const msg = rawMsg as ExtMessage;
@@ -638,28 +739,54 @@
             break;
           }
           case 'getMedia': {
-            // Sekme kimliği istemciden gelir; yalnızca kendi sekmesine
-            // bakabilmesi için gönderenin o sekmeye erişimi doğrulanır.
             const tabId = Number(msg.tabId);
             if (!Number.isInteger(tabId) || tabId < 0) { sendResponse([]); break; }
-            if (!sender.tab || sender.tab.id !== tabId) {
-              // Popup kendi sekmesini sorar; başka bir sekmeyi soramaz.
+            if (sender.tab) {
+              // Content script yalnızca kendi sekmesini okuyabilir.
+              if (sender.tab.id !== tabId) { sendResponse([]); break; }
+            } else {
+              // Popup: herhangi bir penceredeki etkin sekme. `currentWindow`
+              // arka plandan çağrıldığında son odaklanan pencereyi gösterir ve
+              // Firefox'ta popup penceresiyle her zaman aynı olmayabilir.
               let ok = false;
-              try { const tabs = await api.tabs.query({ active: true, currentWindow: true }); ok = tabs.some((t) => t.id === tabId); } catch { }
+              try { const tabs = await api.tabs.query({ active: true }); ok = tabs.some((tb) => tb.id === tabId); } catch { }
               if (!ok) { sendResponse([]); break; }
             }
             sendResponse(await readMedia(tabId));
             break;
           }
-          case 'downloads': sendResponse(await getDownloads()); break;
-          case 'action': sendResponse(await downloadAction(String(msg.id), String(msg.action))); break;
-          case 'download': sendResponse(await sendToApp(msg)); break;
+          case 'downloads': {
+            if (!isExtensionPage(sender)) { sendResponse([]); break; }
+            sendResponse((await fetchDownloads()) || []);
+            break;
+          }
+          case 'action': {
+            if (!isExtensionPage(sender)) { sendResponse({ ok: false, error: 'forbidden' }); break; }
+            sendResponse(await downloadAction(String(msg.id), String(msg.action)));
+            break;
+          }
+          case 'download': {
+            const url = typeof msg.url === 'string' ? msg.url : '';
+            if (!HTTP_URL.test(url)) { sendResponse({ ok: false, error: 'unsupported url' }); break; }
+            const kind = msg.kind === 'video' ? 'video' : 'file';
+            const fromTab = sender.tab;
+            // Content script yalnızca kullanıcının tıkladığı dosya bağlantısını
+            // gönderir; video (yt-dlp) akışını tetikleyemez.
+            if (fromTab && kind !== 'file') { sendResponse({ ok: false, error: 'forbidden' }); break; }
+            const tabId = fromTab ? fromTab.id : (typeof msg.tabId === 'number' ? msg.tabId : undefined);
+            sendResponse(await sendToApp({
+              url,
+              filename: typeof msg.filename === 'string' ? msg.filename.slice(0, 255) : '',
+              referer: fromTab ? (sender.url || fromTab.url) : (typeof msg.referer === 'string' ? msg.referer : ''),
+              kind,
+              tabId,
+              incognito: fromTab?.incognito,
+              cookieStoreId: (fromTab as { cookieStoreId?: string } | undefined)?.cookieStoreId,
+            }));
+            break;
+          }
           case 'setSettings': {
-            // Yalnızca popup ayar değiştirebilir; content script'ın köprü
-            // portunu değiştirmesine izin verilmez. Port ayrıca aralığa
-            // kırpılır — `popup.html`'deki `min/max` yalnızca HTML giriş
-            // doğrulamasıdır, `onchange` okunan değeri kırpmıyordu.
-            if (sender.tab) { sendResponse({ ok: false, error: 'forbidden' }); break; }
+            if (!isExtensionPage(sender)) { sendResponse({ ok: false, error: 'forbidden' }); break; }
             const p = msg.settings || {};
             const clean: Partial<Settings> = {};
             if (typeof p.intercept === 'boolean') clean.intercept = p.intercept;
@@ -671,17 +798,19 @@
             break;
           }
           case 'pageMedia': {
-            const items = Array.isArray(msg.items) ? msg.items : [];
-            if (sender.tab && sender.tab.id !== undefined && sender.tab.url) {
+            const items = Array.isArray(msg.items) ? msg.items.slice(0, 50) : [];
+            const tab = sender.tab;
+            const frameUrl = sender.url || tab?.url;
+            if (tab && tab.id !== undefined && frameUrl) {
               for (const m of items) {
                 const url = typeof m?.url === 'string' ? m.url : '';
-                if (!/^https?:/i.test(url)) continue;
-                // Yalnızca gönderen sayfanın kendi origin'inden medya kabul et.
-                if (!sameOrigin(sender.tab.url, url)) continue;
-                const kind = classify(url, typeof m.type === 'string' ? m.type : '');
+                if (!HTTP_URL.test(url)) continue;
+                if (!sameSite(frameUrl, url) && !sameSite(tab.url, url)) continue;
+                const type = typeof m.type === 'string' ? m.type : '';
+                const kind = classify(url, type);
                 if (!kind && !MEDIA_EXT.test(url)) continue;
-                await addMedia(sender.tab.id, {
-                  url, type: typeof m.type === 'string' ? m.type : '', size: 0,
+                await addMedia(tab.id, {
+                  url, type, size: 0,
                   kind: kind || 'media', time: Date.now(),
                   name: typeof m.name === 'string' ? m.name.slice(0, 120) : undefined,
                 });

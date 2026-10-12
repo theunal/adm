@@ -63,7 +63,14 @@ interface StatusResponse {
   captureExtensions: string[];
 }
 
-interface SendToAppPayload {
+/** Çerezlerin hangi depodan (normal / gizli / Firefox konteyneri) okunacağı. */
+interface CookieContext {
+  tabId?: number;
+  incognito?: boolean;
+  cookieStoreId?: string;
+}
+
+interface SendToAppPayload extends CookieContext {
   url: string;
   filename?: string;
   referer?: string;
@@ -80,13 +87,14 @@ type ExtMessage =
   | { type: 'getMedia'; tabId: number }
   | { type: 'downloads' }
   | { type: 'action'; id: string; action: string }
-  | { type: 'download'; url: string; filename?: string; referer?: string; kind?: string }
+  | { type: 'download'; url: string; filename?: string; referer?: string; kind?: string; tabId?: number }
   | { type: 'setSettings'; settings: Partial<Settings> }
   | { type: 'pageMedia'; items: PageMediaItem[] };
 
-// Firefox (ve türevleri) `browser` küresini söz (promise) döndüren yüzeyle sunar.
-// Chrome tarafı `chrome.*` tiplerinden gelir; bu arayüz yalnızca Firefox yollarında
-// kullanılan, geri çağrı yerine söz bekleyen metotları temsil eder.
+// Firefox ve Safari `browser` küresini söz (promise) döndüren yüzeyle sunar.
+// Chrome tarafı `chrome.*` tiplerinden gelir; bu arayüz yalnızca `browser`
+// yollarında kullanılan, geri çağrı yerine söz bekleyen metotları temsil eder.
+// `menus` Safari'de ve Firefox Android'de bulunmayabilir.
 interface FirefoxApi {
   runtime: {
     getURL(path: string): string;
@@ -109,7 +117,7 @@ interface FirefoxApi {
     pause(id: number): Promise<void>;
     resume(id: number): Promise<void>;
   };
-  menus: {
+  menus?: {
     create(createProperties: { id: string; title: string; contexts: string[] }): void;
     removeAll(): Promise<void>;
     onClicked: {

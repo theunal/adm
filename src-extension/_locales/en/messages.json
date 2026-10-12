@@ -51,6 +51,12 @@
   "popupOfflineBox": {
     "message": "The app is not running. Open ADM and this popup will reconnect."
   },
+  "popupPermissionBox": {
+    "message": "ADM needs access to all sites to capture media and read download cookies."
+  },
+  "popupGrantPermission": {
+    "message": "Grant access"
+  },
   "popupIntercept": {
     "message": "Send downloads to ADM"
   },

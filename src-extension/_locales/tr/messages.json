@@ -51,6 +51,12 @@
   "popupOfflineBox": {
     "message": "Uygulama çalışmıyor. ADM'yi açın; bu pencere yeniden bağlanır."
   },
+  "popupPermissionBox": {
+    "message": "ADM'nin medyayı yakalaması ve indirme çerezlerini okuması için tüm sitelere erişmesi gerekir."
+  },
+  "popupGrantPermission": {
+    "message": "Erişim ver"
+  },
   "popupIntercept": {
     "message": "İndirmeleri ADM'ye yönlendir"
   },
