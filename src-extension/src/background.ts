@@ -335,6 +335,35 @@
   }
 
   // ---------- Download interception (Chrome) ----------
+  /**
+   * İndirmeyi tetikleyen sayfanın adresi — Rust tarafında `Referer`
+   * başlığı olarak gider.
+   *
+   * Chrome `item.referrer` alanını doldurur. Firefox'ta bu alan hiç yoktur:
+   * tip `string` diyor ama çalışma zamanında `undefined`. Boş kalırsa Rust
+   * tarafı başlığı hiç eklemiyor (`commands.rs`) ve `Referer` doğrulayan
+   * CDN'ler 403 döner — Firefox'ta hotlink korumalı indirmeler bu yüzden
+   * kırılıyordu.
+   *
+   * Sıra: `item.referrer` → indirmeyi başlatan sekmenin adresi → hedefin
+   * kendi origin'i.
+   */
+  async function refererFor(item: chrome.downloads.DownloadItem, url: string): Promise<string> {
+    const direct = item.referrer;
+    if (direct) return direct;
+    // `tabId` gerçekte her iki tarayıcıda da var ama @types/chrome'da
+    // tanımlı değil; dar bir yerel bildirimle okunuyor.
+    const tabId = (item as chrome.downloads.DownloadItem & { tabId?: number }).tabId;
+    if (typeof tabId === 'number' && tabId >= 0) {
+      try {
+        const tab = await api.tabs.get(tabId);
+        if (tab.url && /^https?:/i.test(tab.url)) return tab.url;
+      } catch { }
+    }
+    try { return new URL(url).origin + '/'; } catch { }
+    return '';
+  }
+
   async function interceptDownload(item: chrome.downloads.DownloadItem): Promise<boolean> {
     const settings = await getSettings();
     if (!settings.intercept) return false;
@@ -357,7 +386,8 @@
     }
     try { await api.downloads.erase({ id: item.id }); } catch { }
     const filename = (item.filename ? item.filename.split(/[\\/]/).pop() : '') || '';
-    sendToApp({ url, filename, referer: item.referrer, kind: 'file' });
+    const referer = await refererFor(item, url);
+    sendToApp({ url, filename, referer, kind: 'file' });
     return true;
   }
 
@@ -383,6 +413,32 @@
   // ---------- Media sniffing ----------
   const mem = new Map<number, Map<string, MediaInfo>>();  // tabId -> Map(url -> info)   (storage.session yoksa yedek)
 
+  /**
+   * Sekme başına yazma sırası.
+   *
+   * `addMedia` "oku → değiştir → yaz" üç adımlı bir işlem ve
+   * `webRequest.onHeadersReceived` bunu `await` etmeden çağırır. Segmentli
+   * (HLS/DASH) bir sayfa 20 paralel `.m4s` isteği attığında 20 çağrı da aynı
+   * eski listeyi okuyup üstüne yazıyordu; son yazan kazanıyor, diğer 19'u
+   * sessizce kayboluyordu. Zincir, aynı sekmenin işlemlerini sıraya alıyor.
+   *
+   * `clearMedia` de aynı zincire girer: sekme değişimi sırasında uçuşta olan
+   * eklemeler, temizlikten sonra eski sayfanın medyasını geri getiriyordu.
+   *
+   * Reddedilen bir işlem zinciri bozmaz; hat boşaldığında `mediaQueue`
+   * girdisi silinir (sınırsız büyüme olmaz).
+   */
+  const mediaQueue = new Map<number, Promise<void>>();
+
+  function serializeMedia<T>(tabId: number, fn: () => Promise<T>): Promise<T> {
+    const prev = mediaQueue.get(tabId) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.then(() => { }, () => { });
+    mediaQueue.set(tabId, tail);
+    void tail.then(() => { if (mediaQueue.get(tabId) === tail) mediaQueue.delete(tabId); });
+    return run;
+  }
+
   async function readMedia(tabId: number): Promise<MediaInfo[]> {
     if (api.storage.session) {
       const key = 'media:' + tabId;
@@ -402,10 +458,14 @@
       await api.action.setBadgeBackgroundColor({ tabId, color: '#2f6feb' });
     } catch { }
   }
-  async function clearMedia(tabId: number): Promise<void> {
-    if (api.storage.session) await api.storage.session.remove('media:' + tabId);
-    mem.delete(tabId);
-    try { await api.action.setBadgeText({ tabId, text: '' }); } catch { }
+  function clearMedia(tabId: number): Promise<void> {
+    // Aynı zincire girer: temizlik, uçuşta olan eklemelerden SONRA çalışır
+    // ve eski sayfanın medyasını geri getirmez.
+    return serializeMedia(tabId, async () => {
+      if (api.storage.session) await api.storage.session.remove('media:' + tabId);
+      mem.delete(tabId);
+      try { await api.action.setBadgeText({ tabId, text: '' }); } catch { }
+    }).catch(() => { });
   }
 
   function normalizeKey(url: string): string {
@@ -418,21 +478,25 @@
     }
   }
 
-  async function addMedia(tabId: number, info: MediaInfo): Promise<void> {
-    if (tabId < 0) return;
-    const settings = await getSettings();
-    if (!settings.sniff) return;
-    const list = await readMedia(tabId);
-    const key = normalizeKey(info.url);
-    const idx = list.findIndex((m) => m.key === key);
-    const entry: MediaInfo = { ...info, key, name: info.name || guessName(info.url, info.type) };
-    if (idx >= 0) {
-      if ((info.size || 0) > (list[idx].size || 0)) list[idx] = { ...list[idx], ...entry };
-      return;
-    }
-    list.unshift(entry);
-    if (list.length > 40) list.length = 40;
-    await writeMedia(tabId, list);
+  function addMedia(tabId: number, info: MediaInfo): Promise<void> {
+    if (tabId < 0) return Promise.resolve();
+    return serializeMedia(tabId, async () => {
+      const settings = await getSettings();
+      if (!settings.sniff) return;
+      const list = await readMedia(tabId);
+      const key = normalizeKey(info.url);
+      const idx = list.findIndex((m) => m.key === key);
+      const entry: MediaInfo = { ...info, key, name: info.name || guessName(info.url, info.type) };
+      if (idx >= 0) {
+        if ((info.size || 0) > (list[idx].size || 0)) list[idx] = { ...list[idx], ...entry };
+        return;
+      }
+      list.unshift(entry);
+      if (list.length > 40) list.length = 40;
+      await writeMedia(tabId, list);
+      // `webRequest` bu çağrıyı `await` etmeden yapıyor; storage hatası
+      // unhandled promise rejection olmasın.
+    }).catch(() => { });
   }
 
   function guessName(url: string, type: string): string {

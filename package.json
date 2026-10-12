@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit && tsc -p src-extension/tsconfig.json --noEmit",
     "extension:build": "tsc -p src-extension/tsconfig.json && node scripts/copy-extension-assets.mjs",
     "extension:watch": "npm run extension:build && tsc -p src-extension/tsconfig.json --watch",
+    "test:extension": "node scripts/verify-badge-machine.mjs && node scripts/verify-media-queue.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
