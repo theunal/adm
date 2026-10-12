@@ -229,6 +229,50 @@ fn client() -> &'static reqwest::Client {
     &CLIENT
 }
 
+/// Tarayıcının gönderdiği ek başlıklar için (`Referer`, `User-Agent`…) geçerli
+/// bir `HeaderMap` kurar.
+///
+/// Bu başlıklar olmadan hotlink korumalı sunucular 403 döner ve indirilen
+/// dosyanın kendisi reddedilir — köprüden alınan `Referer` bu yüzden yalnızca
+/// kayda değil, gerçekten isteğin kendisine de girmek zorunda.
+///
+/// Boş liste ya da hiç geçerli başlık yoksa `None` döner; böylece varsayılan
+/// `User-Agent` bozulmaz.
+///
+/// `Range` ve `Accept-Encoding` bilinçli olarak reddedilir: motorun kendi
+/// segmentleme sözleşmesini bir tarayıcı başlığıyla çiğnamak dosyayı bozar.
+/// `Cookie` de reddedilir — çerezler alan adına süzüldüğü için ayrı bir yoldan
+/// (Netscape dosyası) iletilir; ham başlık olarak yollandığında yönlendirme
+/// başka bir sunucuya gittiğinde sızar.
+fn build_extra_headers(extra: &[(String, String)]) -> Option<reqwest::header::HeaderMap> {
+    const DENY: [&str; 6] = [
+        "range",
+        "accept-encoding",
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "cookie",
+    ];
+
+    let mut map = reqwest::header::HeaderMap::new();
+    for (k, v) in extra {
+        let name = k.trim().to_ascii_lowercase();
+        if name.is_empty() || DENY.contains(&name.as_str()) {
+            continue;
+        }
+        let Ok(name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        let Ok(value) = reqwest::header::HeaderValue::from_str(v.trim()) else {
+            continue;
+        };
+        // Aynı başlık iki kez geldiyse son değer geçerli olsun.
+        map.insert(name, value);
+    }
+
+    (!map.is_empty()).then_some(map)
+}
+
 /// `Content-Range: bytes 0-0/12345` -> `12345`
 fn parse_content_range_total(value: &str) -> Option<u64> {
     let total = value.rsplit('/').next()?.trim();
@@ -303,6 +347,7 @@ async fn send(
 /// başlığından toplam boyut öğrenilir ve `Range` desteği test edilir.
 async fn resolve_url(
     url: &str,
+    extra: Option<&reqwest::header::HeaderMap>,
     signal: &AbortSignal,
     probe: bool,
 ) -> Result<(String, ProbeInfo), EngineError> {
@@ -314,9 +359,18 @@ async fn resolve_url(
         }
 
         let mut builder = client().get(&current);
+        // `Referer` burada da gerekir: probe isteği sıradan bir indirme
+        // isteği gibi hotlink korumasına takılabilir.
+        if let Some(extra) = extra {
+            builder = builder.headers(extra.clone());
+        }
         if probe {
             builder = builder.header(reqwest::header::RANGE, "bytes=0-0");
         }
+        // Sıkıştırma, `Content-Range`'in adlandırdığı gövdeyi değiştirir:
+        // `bytes=0-0/N` gövdesi sıkıştırılmış gövdenin uzunluğunu söyleyebilir
+        // ve kanalların paylaştığı toplam boyut bu yüzden yanlış hesaplanır.
+        builder = builder.header(reqwest::header::ACCEPT_ENCODING, "identity");
 
         let resp = send(builder, signal).await?;
         let status = resp.status();
@@ -481,12 +535,17 @@ impl DownloadEngine {
         dest: &Path,
         channel_count: u32,
         resume_states: Option<&[ChannelState]>,
+        extra_headers: &[(String, String)],
         signal: AbortSignal,
         on_progress: ProgressHook,
         on_probe: ProbeHook,
     ) -> Result<Vec<ChannelState>, EngineError> {
+        // Tarayıcının gönderdiği `Referer`/`User-Agent` isteklere eklenir.
+        // Boşsa motor kendi varsayılan User-Agent'ıyla çalışır.
+        let extra = build_extra_headers(extra_headers).map(std::sync::Arc::new);
+
         // 1) Yönlendirmeleri çöz ve dosya boyutunu öğren.
-        let (final_url, probe) = resolve_url(url, &signal, true).await?;
+        let (final_url, probe) = resolve_url(url, extra.as_deref(), &signal, true).await?;
         on_probe(probe.clone());
 
         let total_bytes = probe.total_bytes;
@@ -543,6 +602,7 @@ impl DownloadEngine {
                     dest,
                     channels.clone(),
                     total_bytes,
+                    extra.clone(),
                     signal.clone(),
                     !single_stream,
                 )
@@ -644,12 +704,16 @@ impl DownloadEngine {
     }
 
     /// Kanalları eşzamanlı çalıştırır, iş hırsızlığı uygular.
+    // Her argümanın ayrı bir anlamı var; başlıkları tek bir "isteğe özel"
+    // yapıya bölmek okunurluğu artırmaz (`download` de aynı izni kullanıyor).
+    #[allow(clippy::too_many_arguments)]
     async fn run_channels(
         &self,
         url: &str,
         dest: &Path,
         channels: Vec<Arc<SharedChannel>>,
         total_bytes: u64,
+        extra: Option<std::sync::Arc<reqwest::header::HeaderMap>>,
         signal: AbortSignal,
         supports_ranges: bool,
     ) -> Result<(), EngineError> {
@@ -671,6 +735,7 @@ impl DownloadEngine {
             let signal = signal.clone();
             let handles = Arc::clone(&handles);
             let throttle = Arc::clone(&throttle);
+            let extra = extra.clone();
 
             tasks.push(tokio::spawn(async move {
                 run_channel(
@@ -680,6 +745,7 @@ impl DownloadEngine {
                     me,
                     handles,
                     throttle,
+                    extra.as_deref(),
                     signal,
                     total_bytes,
                     supports_ranges,
@@ -830,6 +896,7 @@ async fn run_channel(
     me: Arc<SharedChannel>,
     handles: Arc<Semaphore>,
     throttle: Arc<Throttle>,
+    extra: Option<&reqwest::header::HeaderMap>,
     signal: AbortSignal,
     total_bytes: u64,
     supports_ranges: bool,
@@ -863,8 +930,17 @@ async fn run_channel(
             continue;
         }
 
-        let outcome =
-            fetch_range(&url, &mut file, &me, start_byte, end_byte, &signal, ranged).await;
+        let outcome = fetch_range(
+            &url,
+            &mut file,
+            &me,
+            start_byte,
+            end_byte,
+            extra,
+            &signal,
+            ranged,
+        )
+        .await;
 
         match outcome {
             Ok(ChannelOutcome::Done) => {
@@ -947,16 +1023,23 @@ fn open_target(dest: &Path, ranged: bool) -> Result<std::fs::File, EngineError> 
 }
 
 /// Bir kanalın `[start, end]` aralığını indirir ve diske yazar.
+#[allow(clippy::too_many_arguments)]
 async fn fetch_range(
     url: &str,
     file: &mut std::fs::File,
     me: &Arc<SharedChannel>,
     start_byte: u64,
     end_byte: u64,
+    extra: Option<&reqwest::header::HeaderMap>,
     signal: &AbortSignal,
     ranged: bool,
 ) -> Result<ChannelOutcome, EngineError> {
     let mut builder = client().get(url);
+    // Ek başlıklar ÖNCE eklenir; `Range`/`Accept-Encoding` sonradan yazılır ki
+    // segmentleme sözleşmesi bir tarayıcı başlığıyla ezilmesin.
+    if let Some(extra) = extra {
+        builder = builder.headers(extra.clone());
+    }
     if ranged {
         builder = builder
             .header(
@@ -1270,6 +1353,59 @@ mod tests {
         assert_eq!(cs.len(), 1);
         assert_eq!(cs[0].start_byte, 0);
         assert_eq!(cs[0].end_byte, 999);
+    }
+
+    /// Boş ya da tamamen reddedilen bir liste `None` döner; böylece
+    /// istemcinin varsayılan `User-Agent`'ı bozulmaz.
+    #[test]
+    fn ek_baslik_yoksa_none_doner() {
+        assert!(build_extra_headers(&[]).is_none());
+
+        let denied = vec![("Range".to_string(), "bytes=0-99".to_string())];
+        assert!(
+            build_extra_headers(&denied).is_none(),
+            "yalnızca reddedilen başlıklardan oluşan liste None olmalı"
+        );
+    }
+
+    /// Segmentleme sözleşmesi ve çerez, tarayıcı başlığıyla ezilemez.
+    #[test]
+    fn ek_baslik_reddedilenleri_eler() {
+        let mixed = vec![
+            ("Referer".to_string(), "https://ornek.tv/".to_string()),
+            ("Range".to_string(), "bytes=0-99".to_string()),
+            ("Accept-Encoding".to_string(), "gzip".to_string()),
+            ("Host".to_string(), "yanlis.example".to_string()),
+            ("Cookie".to_string(), "oturum=abc".to_string()),
+        ];
+
+        let map = build_extra_headers(&mixed).expect("referer kalmalı");
+        assert_eq!(
+            map.get("referer").and_then(|v| v.to_str().ok()),
+            Some("https://ornek.tv/")
+        );
+        for denied in ["range", "accept-encoding", "host", "cookie"] {
+            assert!(
+                map.get(denied).is_none(),
+                "{denied} başlığı reddedilmedi"
+            );
+        }
+    }
+
+    /// Başlık adı büyük/küçük harf duyarsız eşleşir, değer korunur.
+    #[test]
+    fn ek_baslik_adi_kucuk_harflestirilir() {
+        let map = build_extra_headers(&[(
+            "USER-AGENT".to_string(),
+            "TarayiciUA/9.9".to_string(),
+        )])
+        .expect("başlık geçerli");
+
+        assert_eq!(
+            map.get("user-agent").and_then(|v| v.to_str().ok()),
+            Some("TarayiciUA/9.9"),
+            "değerin büyük/küçük harfi değişmemeli"
+        );
     }
 
     #[test]

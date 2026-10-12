@@ -1039,6 +1039,10 @@ impl DownloadManager {
         let url = ad.url.clone();
         let path = ad.file_path.clone();
         let engine = self.engine;
+        // Tarayıcının gönderdiği `Referer`/`User-Agent`. Motor bunları yalnızca
+        // kayda değil, indirme isteğine de ekler; aksi halde hotlink korumalı
+        // sunucular dosyayı 403 ile reddeder.
+        let extra_headers = item.headers.clone();
 
         let driver = tokio::spawn(async move {
             engine
@@ -1051,6 +1055,7 @@ impl DownloadManager {
                     } else {
                         Some(&resume_states)
                     },
+                    &extra_headers,
                     signal,
                     hook,
                     probe_hook,

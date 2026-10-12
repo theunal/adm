@@ -68,6 +68,12 @@ struct ServerOpts {
     /// **mutlak** bir adres verilir; böylece motorun başka bir host:port'a
     /// (yani başka bir kaynağa) sıçraması sınanır.
     redirect_to: Option<String>,
+    /// Sunucuya gelen ham istek başlıkları (her istek için bir satır).
+    ///
+    /// Motorun `Referer`/`User-Agent`'ı gerçekten gönderdiğini kanıtlamak için
+    /// kullanılır; `Arc` paylaşıldığı için klonlanan `ServerOpts` üzerinden de
+    /// okunur.
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl ServerOpts {
@@ -77,7 +83,14 @@ impl ServerOpts {
             throttle: None,
             truncate_count: 0,
             redirect_to: None,
+            seen: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
+    }
+
+    /// Sunucuya gelen istek başlıklarını kaydet.
+    fn recording_headers(mut self) -> Self {
+        self.seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        self
     }
 
     fn throttled(mut self, d: Duration) -> Self {
@@ -101,6 +114,7 @@ struct TestServer {
     addr: SocketAddr,
     hits: Arc<AtomicUsize>,
     shutdown: Arc<AtomicBool>,
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl TestServer {
@@ -134,6 +148,8 @@ impl TestServer {
         let h = Arc::clone(&hits);
         let s = Arc::clone(&shutdown);
         let t = Arc::clone(&truncations);
+        // `opts` aşağıda kapanışa taşınır; başlık kaydını önceden al.
+        let seen = Arc::clone(&opts.seen);
 
         std::thread::spawn(move || {
             listener.set_nonblocking(true).ok();
@@ -161,6 +177,7 @@ impl TestServer {
             addr,
             hits,
             shutdown,
+            seen,
         }
     }
 
@@ -172,6 +189,17 @@ impl TestServer {
     /// Sunucuya yapılan istek sayısı (yönlendirme ve kanallar dahil).
     fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
+    }
+
+    /// Sunucuya gelen istek başlıklarının tamamı.
+    ///
+    /// Her istek için ham başlık bloğu (satır sonları `\r\n`); `Referer` ve
+    /// `User-Agent`'ın gerçekten gönderilip gönderilmediğini sınamak için.
+    fn seen_headers(&self) -> Vec<String> {
+        self.seen
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     /// Yönlendirme hedefi (basit `/` -> `/dosya.bin` sıçraması).
@@ -248,6 +276,11 @@ fn handle(
         .unwrap_or("/")
         .to_string();
     let headers: String = lines.collect::<Vec<_>>().join("\r\n");
+
+    // Gelen başlıkları kaydet: `Referer`/`User-Agent` sınaması buradan okunur.
+    if let Ok(mut seen) = opts.seen.lock() {
+        seen.push(headers.clone());
+    }
 
     // Yönlendirme: `/yonlendir` -> `redirect_to` ya da kendi `/dosya.bin`'i.
     if path == "/yonlendir" {
@@ -476,6 +509,7 @@ async fn çok_kanallı_indirme_dosyayı_birebir_üretir() {
             &path,
             8,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -522,6 +556,7 @@ async fn tek_kanal_çok_kanallı_dosyayı_bozmaz() {
             &path,
             1,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -551,6 +586,7 @@ async fn range_desteklemeyen_sunucuda_tek_kanala_duser() {
             &path,
             16,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -583,6 +619,7 @@ async fn range_ignoren_sunucuda_tek_kanal_duser_ve_dosya_bozulmaz() {
             &path,
             8,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -621,6 +658,7 @@ async fn yoklamada_206_veri_isteginde_200_gelen_sunucu_dosyayi_bozmaz() {
             &path,
             4,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -672,7 +710,7 @@ async fn kanal_bazlı_devam_indirmeyi_tamamlar() {
 
     let first = tokio::spawn(async move {
         engine
-            .download(&url, &p, 4, None, signal2, hook, noop_probe())
+            .download(&url, &p, 4, None, &[], signal2, hook, noop_probe())
             .await
     });
 
@@ -700,7 +738,7 @@ async fn kanal_bazlı_devam_indirmeyi_tamamlar() {
     let engine2 = DownloadEngine::new();
     let p2 = path.clone();
     let resume = engine2
-        .download(&resume_url, &p2, 4, None, signal2, hook2, noop_probe())
+        .download(&resume_url, &p2, 4, None, &[], signal2, hook2, noop_probe())
         .await;
 
     assert!(
@@ -760,6 +798,7 @@ async fn devam_kanal_durumlarindan_devam_eder() {
             &path,
             2,
             Some(&states),
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -796,7 +835,7 @@ async fn iptal_kismi_dosyayi_korur() {
 
     let task = tokio::spawn(async move {
         engine
-            .download(&url, &p, 4, None, signal2, hook, noop_probe())
+            .download(&url, &p, 4, None, &[], signal2, hook, noop_probe())
             .await
     });
 
@@ -842,6 +881,7 @@ async fn is_hirsizligi_toplam_miktari_sismaz() {
             &path,
             2,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -886,6 +926,7 @@ async fn yonlendirme_elle_izlenir() {
             &path,
             4,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -914,6 +955,7 @@ async fn bulunamayan_dosya_turkce_hata_verir() {
             &path,
             4,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -956,6 +998,7 @@ async fn bos_url_hata_verir() {
             &path,
             4,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -989,6 +1032,7 @@ async fn baska_hosta_yonlendirir_ve_cok_kanalli_indirir() {
             &path,
             8,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -1043,6 +1087,7 @@ async fn tek_kanalda_yarim_akis_tekrar_deneyip_tamamlar() {
             &path,
             8,
             None,
+            &[],
             signal,
             hook,
             noop_probe(),
@@ -1099,6 +1144,7 @@ async fn cok_kanalli_indirmeler_birbirini_etkilemez() {
                 &temp_path("paralel_a.bin"),
                 4,
                 None,
+                &[],
                 signal,
                 hook,
                 noop_probe(),
@@ -1116,6 +1162,7 @@ async fn cok_kanalli_indirmeler_birbirini_etkilemez() {
                 &temp_path("paralel_b.bin"),
                 6,
                 None,
+                &[],
                 signal,
                 hook,
                 noop_probe(),
@@ -1133,4 +1180,135 @@ async fn cok_kanalli_indirmeler_birbirini_etkilemez() {
         assert_eq!(data, test_payload(), "{name} içeriği bozuk");
         let _ = std::fs::remove_file(&p);
     }
+}
+
+/// Tarayıcının gönderdiği `Referer` ve `User-Agent`, motorun **isteğine** girer.
+///
+/// Köprüden gelen bu başlıklar daha önce yalnızca kayda yazılıyordu; hotlink
+/// korumalı sunucular 403 döndüğü için indirme zaten baştan reddediliyordu.
+/// Test üç şeyi birden doğrular:
+///
+/// 1. `Referer` hem yoklama (probe) hem de kanal isteklerinde yol alır,
+/// 2. `User-Agent` istemcinin varsayılanını gerçekten ezer,
+/// 3. `Range` / `Accept-Encoding` segmentleme sözleşmesi bir tarayıcı
+///    başlığıyla ezilmez.
+#[tokio::test]
+async fn ek_basliklar_istege_girer_ve_range_korunur() {
+    let server = TestServer::with(ServerOpts::new(RangeSupport::Proper).recording_headers());
+    let path = temp_path("ek_baslik.bin");
+    let _ = std::fs::remove_file(&path);
+
+    // Köprüden gelecek biçimde: `commands.rs` bu çiftleri aynen iletir.
+    let extra = vec![
+        (
+            "Referer".to_string(),
+            "https://ornek.tv/izle/42".to_string(),
+        ),
+        ("User-Agent".to_string(), "TarayiciUA/9.9".to_string()),
+    ];
+
+    let engine = DownloadEngine::new();
+    let (_, hook) = recorder();
+    engine
+        .download(
+            &server.file_url(),
+            &path,
+            2,
+            None,
+            &extra,
+            AbortSignal::new(),
+            hook,
+            noop_probe(),
+        )
+        .await
+        .expect("indirme başarısız");
+
+    let written = std::fs::read(&path).expect("dosya okunamadı");
+    assert_eq!(written, test_payload(), "sonuç dosya sunucuyla eşleşmiyor");
+    let _ = std::fs::remove_file(&path);
+
+    let seen = server.seen_headers();
+    assert!(!seen.is_empty(), "sunucu hiç istek görmedi");
+
+    // Her istek (hem probe hem kanal) referer taşımalı.
+    let referers = seen
+        .iter()
+        .filter(|h| {
+            h.to_ascii_lowercase()
+                .contains("referer: https://ornek.tv/izle/42")
+        })
+        .count();
+    assert!(
+        referers >= 2,
+        "referer probe + kanal isteklerinde görünmeli, {referers} kez bulundu"
+    );
+
+    // UA, istemcinin varsayılanını (Chrome/120…) ezmiş olmalı.
+    let uas = seen
+        .iter()
+        .filter(|h| h.to_ascii_lowercase().contains("user-agent: tarayiciua/9.9"))
+        .count();
+    assert!(
+        uas >= 2,
+        "özel User-Agent isteğe girmemiş, {uas} kez bulundu"
+    );
+    assert!(
+        !seen.iter().any(|h| h.to_ascii_lowercase().contains("chrome/120")),
+        "istemcinin varsayılan UA'ı gönderilmiş; özel UA ezilmemiş"
+    );
+
+    // Segmentleme sözleşmesi: aralık isteği yapan her istekte
+    // `Accept-Encoding: identity` bulunmalı.
+    for (i, h) in seen.iter().enumerate() {
+        let lower = h.to_ascii_lowercase();
+        if lower.contains("range: bytes=") {
+            assert!(
+                lower.contains("accept-encoding: identity"),
+                "{i}. istek Range taşıyor ama identity taşımıyor"
+            );
+        }
+    }
+
+    // Yoklama isteği `bytes=0-0` ile yapılmış olmalı.
+    assert!(
+        seen.iter()
+            .any(|h| h.to_ascii_lowercase().contains("range: bytes=0-0")),
+        "yoklama isteği (Range: bytes=0-0) gönderilmemiş"
+    );
+}
+
+/// Ek başlık yoksa motor kendi varsayılan `User-Agent`'ıyla çalışır.
+///
+/// Boş listenin `None`'a çevrilmesi, varsayılan UA'ın sessizce kaybolmasına
+/// yol açmamalı.
+#[tokio::test]
+async fn ek_baslik_yoksa_varsayilan_ua_korunur() {
+    let server = TestServer::with(ServerOpts::new(RangeSupport::Proper).recording_headers());
+    let path = temp_path("varsayilan_ua.bin");
+    let _ = std::fs::remove_file(&path);
+
+    let engine = DownloadEngine::new();
+    let (_, hook) = recorder();
+    engine
+        .download(
+            &server.file_url(),
+            &path,
+            1,
+            None,
+            &[],
+            AbortSignal::new(),
+            hook,
+            noop_probe(),
+        )
+        .await
+        .expect("indirme başarısız");
+
+    let _ = std::fs::remove_file(&path);
+
+    let seen = server.seen_headers();
+    assert!(!seen.is_empty(), "sunucu hiç istek görmedi");
+    assert!(
+        seen.iter().any(|h| h.to_ascii_lowercase().contains("user-agent:")),
+        "hiç User-Agent gönderilmemiş"
+    );
 }
