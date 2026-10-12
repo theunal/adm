@@ -81,8 +81,70 @@
     } catch (e) { return { ok: false, error: String(e) }; }
   }
   const ACTIVE_STATES = new Set(['downloading', 'probing']);
+
+  // ---------------------------------------------------------------------
+  // Rozet durumu — MV3 service worker her an sonlanabilir.
+  //
+  // Önceden bu bilgi yalnızca global değişkende tutuluyordu. Worker
+  // sonlandığında kayboluyor, "rozet küresel mi?" sorusunun cevabı yok
+  // oluyor ve sekme rozetleri `null`'da kalıyordu; `tickProgress` onarımı
+  // yalnızca `badgeShown === true` iken çalıştığı için kendiliğinden
+  // düzelmiyordu.
+  //
+  // Çözüm: geçişin *niyetini* `storage.session`'a yaz, geçişi tembel
+  // uzlaştırma ile tamamla. Kapsam tarayıcı oturumuyla aynı — rozetin de
+  // ömrü odur. Alarm, canlı bir zamanlayıcı yokken onarımı sürdürür.
+  // ---------------------------------------------------------------------
+  const BADGE_KEY = 'badge';
+  const DONE_BADGE_MS = 4000;
+  const PROGRESS_ALARM = 'adm-progress';
+  /** Chrome'un izin verdiği en küçük periyot (30 sn). */
+  const PROGRESS_ALARM_MIN = 0.5;
+
+  type BadgeMode = 'perTab' | 'global' | 'done';
+  interface BadgeState {
+    mode: BadgeMode;
+    /** 'done' penceresinin bitişi; worker ölse bile kalan süre buradan bilinir. */
+    doneUntil: number;
+  }
+
+  let badgeCache: BadgeState = { mode: 'perTab', doneUntil: 0 };
   let progressTimer: ReturnType<typeof setInterval> | null = null;
-  let badgeShown = false;
+
+  async function loadBadge(): Promise<BadgeState> {
+    if (api.storage.session) {
+      try {
+        const r = (await api.storage.session.get(BADGE_KEY)) as unknown as Record<string, BadgeState | undefined>;
+        const v = r && r[BADGE_KEY];
+        // Bozuk/eksik veri `perTab`'a düşsün: en azından rozetler görünür kalır.
+        if (v && (v.mode === 'global' || v.mode === 'done' || v.mode === 'perTab')) return v;
+      } catch { }
+    }
+    return badgeCache;
+  }
+
+  async function saveBadge(next: BadgeState): Promise<void> {
+    badgeCache = next;
+    if (api.storage.session) {
+      try { await api.storage.session.set({ [BADGE_KEY]: next }); } catch { }
+    }
+    await syncAlarm();
+  }
+
+  /**
+   * Uzlaştırma alarmı yalnızca rozet durumu düzeltmeyi beklerken ayakta
+   * kalır; `perTab`'a dönülünce kaldırılır — boşta tur dönmesin.
+   */
+  async function syncAlarm(): Promise<void> {
+    if (!api.alarms) return;
+    try {
+      if (badgeCache.mode === 'perTab') {
+        await api.alarms.clear(PROGRESS_ALARM);
+      } else if (!(await api.alarms.get(PROGRESS_ALARM))) {
+        await api.alarms.create(PROGRESS_ALARM, { periodInMinutes: PROGRESS_ALARM_MIN });
+      }
+    } catch { }
+  }
   async function setGlobalBadge(text: string, color?: string): Promise<void> {
     try {
       await api.action.setBadgeText({ text });
@@ -94,21 +156,27 @@
   // `text: null` sekme rozetini temizleyip genel metne düşürür — chrome.action
   // tiplerinde null yoktur, bu yüzden tek noktada cast edilir.
   async function useGlobalBadgeOnAllTabs(on: boolean): Promise<void> {
-    try {
-      const tabs = await api.tabs.query({});
-      for (const tab of tabs) {
-        if (on) {
-          try { await api.action.setBadgeText({ tabId: tab.id, text: null as unknown as string }); } catch { }
-        } else {
-          const list = await readMedia(tab.id!);
-          try { await api.action.setBadgeText({ tabId: tab.id, text: list.length ? String(list.length) : '' }); } catch { }
-        }
+    let tabs: chrome.tabs.Tab[] = [];
+    try { tabs = await api.tabs.query({}); } catch { return; }
+    await Promise.all(tabs.map(async (tab) => {
+      // Sekmesi olmayan kayıtlar (devtools, panel girdileri) atlanır.
+      if (tab.id === undefined) return;
+      if (on) {
+        try { await api.action.setBadgeText({ tabId: tab.id, text: null as unknown as string }); } catch { }
+        return;
       }
-    } catch { }
+      // Bir sekmenin medya okuması patlarsa kalan sekmeler atlanmasın:
+      // geri yükleme yarım kalırsa rozetler kalıcı yanlış görünür.
+      let count = 0;
+      try { count = (await readMedia(tab.id)).length; } catch { return; }
+      try { await api.action.setBadgeText({ tabId: tab.id, text: count ? String(count) : '' }); } catch { }
+    }));
   }
   async function tickProgress(): Promise<void> {
     const list = await getDownloads();
     const active = list.filter((i) => ACTIVE_STATES.has(i.state));
+    const badge = await loadBadge();
+
     if (active.length) {
       const measurable = active.filter((i) => i.total > 0);
       let text = '…';
@@ -118,21 +186,46 @@
         const got = measurable.reduce((a, i) => a + Math.min(i.received, i.total), 0);
         text = Math.round((100 * got) / total) + '%';
       }
-      if (!badgeShown) { badgeShown = true; await useGlobalBadgeOnAllTabs(true); }
-      await setGlobalBadge(text, '#2f6feb');
-    } else {
-      stopProgress();
-      if (badgeShown) {
-        badgeShown = false;
-        await setGlobalBadge('✓', '#2ebd59');
-        setTimeout(async () => { await setGlobalBadge('', '#2f6feb'); await useGlobalBadgeOnAllTabs(false); }, 4000);
+      // Zaten küreselse sekmeleri tekrar temizlemeye gerek yok; her 1,5
+      // saniyede tüm sekmelerde yeniden yazmak boş iş olur.
+      //
+      // Sıralama önemli: her geçişte **önce yan etki, sonra durum yazılır**.
+      // Worker arada ölürse kayıt eski kipte kalır ve bir sonraki tur işi
+      // idempotent olarak tekrarlar. Tersi (önce durum) kalıcı tutarsızlık
+      // bırakırdı — "durum global diyor ama sekme rozetleri temizlenmemiş".
+      if (badge.mode !== 'global') {
+        await useGlobalBadgeOnAllTabs(true);
+        await saveBadge({ mode: 'global', doneUntil: 0 });
       }
+      await setGlobalBadge(text, '#2f6feb');
+      return;
+    }
+
+    // Etkin indirme yok: hızlı yoklama durur, onarım alarmı devralır.
+    stopProgress();
+
+    // Her geçiş kalıcı durumdan okunarak yapılır; canlı bir `setTimeout`'a
+    // güvenilmez, çünkü worker bu pencerede sonlanabilir ve o zaman onarım
+    // hiç tetiklenmezdi.
+    if (badge.mode === 'global') {
+      await setGlobalBadge('✓', '#2ebd59');
+      await saveBadge({ mode: 'done', doneUntil: Date.now() + DONE_BADGE_MS });
+      return;
+    }
+    if (badge.mode === 'done') {
+      if (Date.now() < badge.doneUntil) return;   // hâlâ tamamlandı işareti gösteriliyor
+      // Aynı sıralama kuralı: geri yükle, sonra kipi kapat.
+      await setGlobalBadge('', '#2f6feb');
+      await useGlobalBadgeOnAllTabs(false);
+      await saveBadge({ mode: 'perTab', doneUntil: 0 });
     }
   }
   function startProgress(): void {
     if (progressTimer) return;
     tickProgress();
-    progressTimer = setInterval(tickProgress, 1500);  // her fetch, iş sürerken MV3 worker'ını canlı tutar
+    // Kısa periyot yalnızca "varken" takılabilir: her fetch, iş sürerken
+    // worker'ı canlı tutar. Worker ölürse `PROGRESS_ALARM` devralır.
+    progressTimer = setInterval(tickProgress, 1500);
   }
   function stopProgress(): void {
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
@@ -355,6 +448,15 @@
   });
   api.tabs.onRemoved.addListener((tabId) => clearMedia(tabId));
 
+  // ---------- Rozetin kalıcı uzlaştırması ----------
+  // Alarm, canlı `setInterval` yokken de devam eden tek sürücüdür. Worker
+  // sonlandığında veya tarayıcı yeniden başladığında `tickProgress` yeniden
+  // tetiklenir; geçişler kalıcı durumdan okunduğu için yarım kalmış rozet
+  // kendiliğinden tamamlanır.
+  api.alarms?.onAlarm.addListener((a) => {
+    if (a.name === PROGRESS_ALARM) void tickProgress();
+  });
+
   // ---------- Context menu ----------
   // Firefox `contextMenus`'ü de sunar; `menus` yalnızca eskiden kalan bir yedektir.
   const menus = api.contextMenus || (api as unknown as { menus?: typeof chrome.contextMenus }).menus;
@@ -375,8 +477,11 @@
       else menus.removeAll(create);
     } catch { create(); }
   }
-  api.runtime.onInstalled.addListener(() => { createMenus(); ping(); });
-  api.runtime.onStartup?.addListener(() => { createMenus(); ping(); });
+  // Tarayıcı açılışında rozet durumu `perTab`'a dönmüş olabilir (oturum
+  // sıfırlanır) ya da yarım kalmış bir geçiş olabilir; `tickProgress`
+  // kalıcı duruma bakarak doğru kipi kendiliğinden seçer.
+  api.runtime.onInstalled.addListener(() => { createMenus(); ping(); void tickProgress(); });
+  api.runtime.onStartup?.addListener(() => { createMenus(); ping(); void tickProgress(); });
   menus?.onClicked.addListener((info, tab) => {
     if (info.menuItemId === 'dm-link') {
       const url = info.linkUrl || info.srcUrl;
