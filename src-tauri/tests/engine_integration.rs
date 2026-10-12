@@ -41,6 +41,14 @@ enum RangeSupport {
     Flaky,
     /// `Range` desteklemez: `Accept-Ranges: none`.
     None,
+    /// `Range` desteklemez **ve** `Range`'siz isteklerin gövdesini ilk
+    /// `k` tanesinde yarıda keser.
+    ///
+    /// Tek akışa düşüldükten sonra bağlantı kopması tam olarak bu fazda
+    /// olur: istek `Range` taşımaz, sunucu dosyanın tamamını vaat edip
+    /// yarısını gönderir. Motor yeniden denemek zorundadır ve o yeniden
+    /// denemenin nereye yazdığı dosyanın kaderini belirler.
+    CutUnranged,
     /// `Content-Length` tam dosyayı vaat eder ama gövdeyi **yarıda keser**.
     ///
     /// Gerçek hayatta bağlantı kopması, CDN kenarı ve kaba kapatma gibi
@@ -82,6 +90,12 @@ struct ServerOpts {
     /// Gerçekte döndürülen 429 sayısı — test, sınırlandırma yolunun
     /// gerçekten geçildiğini buradan doğrular.
     limited: Arc<AtomicUsize>,
+    /// `Range`'siz isteklerin gövdesi kaç kez yarıda kesilecek (`0` = kapalı).
+    ///
+    /// `truncate_count` yalnızca `Truncating` modunda kullanılır; bu sayaç
+    /// `CutUnranged` moduna özeldir ve kesintiyi **aralıksız fazda**
+    /// (tek akış) tetikler.
+    cut_unranged: Arc<AtomicUsize>,
 }
 
 impl ServerOpts {
@@ -94,6 +108,7 @@ impl ServerOpts {
             seen: Arc::new(std::sync::Mutex::new(Vec::new())),
             rate_budget: Arc::new(AtomicUsize::new(0)),
             limited: Arc::new(AtomicUsize::new(0)),
+            cut_unranged: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -116,6 +131,16 @@ impl ServerOpts {
 
     fn truncating(mut self, times: usize) -> Self {
         self.truncate_count = times;
+        self
+    }
+
+    /// `Range`'siz isteklerin gövdesini ilk `k` tanesinde yarıda keser.
+    ///
+    /// Aralıklı istekler etkilenmez: bunlar zaten `200` alıp tek akışa
+    /// düşürür. Kesinti yalnızca tek akış fazında olur — yeniden denemenin
+    /// nereye yazdığı görülsün diye.
+    fn cutting_unranged(mut self, k: usize) -> Self {
+        self.cut_unranged = Arc::new(AtomicUsize::new(k));
         self
     }
 
@@ -153,6 +178,17 @@ impl TestServer {
     /// denedi mi?" sorusu dosya içeriğinden ayırt edilebilir.
     fn start_truncating(fail_times: usize) -> Self {
         Self::with(ServerOpts::new(RangeSupport::Truncating).truncating(fail_times))
+    }
+
+    /// Tek akış fazındaki ilk `fail_times` istekte gövdeyi yarıda kesen sunucu.
+    ///
+    /// Aralıklı istekler eksiksiz döner (bunlar `200` alıp indirme tek akışa
+    /// düşürür); kesinti yalnızca `Range` taşımayan isteklerde olur. Motorun
+    /// tek akış yeniden denemesinin **nereye yazdığı** bu sayede sınanır.
+    fn start_cutting_unranged(fail_times: usize) -> Self {
+        Self::with(
+            ServerOpts::new(RangeSupport::CutUnranged).cutting_unranged(fail_times),
+        )
     }
 
     fn with(opts: ServerOpts) -> Self {
@@ -378,6 +414,36 @@ fn handle(
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.write_all(&body);
+            let _ = stream.flush();
+        }
+        RangeSupport::CutUnranged => {
+            // `Range` taşımayan istek tek akış fazındandır; bunların gövdesi
+            // ilk `cut_unranged` tanesinde yarıda kesilir. Aralıklı istekler
+            // eksiksiz döner (bunlar `200` alıp indirme zaten tek akışa
+            // düşürür).
+            //
+            // `Content-Length` tam dosyayı vaat ettiği için istemci eksik
+            // gövdeyi **hata** olarak görür; motor yeniden dener. Bu yeniden
+            // denemenin nereye yazdığı, dosyanın doğruluğunu belirler.
+            let kes = requested.is_none()
+                && opts
+                    .cut_unranged
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+                    .is_ok();
+
+            let body = test_payload();
+            // Kesinti sona doğru yapılır: istemci gövdenin neredeyse tamamını
+            // alıp yazdıktan sonra eksik kalan yüzeye takılmalıdır. Gövdenin
+            // yarısında kesilirse kimi HTTP yığınları hiç veri akıtmadan
+            // hataya düşebiliyor ve test bu durumda hatalı biçimde geçiyor.
+            let gonderilecek = if kes { FILE_SIZE - 1024 } else { FILE_SIZE };
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nAccept-Ranges: none\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                FILE_SIZE
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body[..gonderilecek]);
             let _ = stream.flush();
         }
         RangeSupport::Truncating => {
@@ -1172,6 +1238,71 @@ async fn tek_kanalda_yarim_akis_tekrar_deneyip_tamamlar() {
             pair[1]
         );
     }
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn tek_akis_yeniden_denemesi_basa_yazar() {
+    // `Range` desteklenmeyen bir sunucuda bağlantı, indirme **tek akışa
+    // düştükten sonra** kopuyor.
+    //
+    // `tek_kanalda_yarim_akis_tekrar_deneyip_tamamlar` bunu sınamaz: orada
+    // kesinti aralıklı fazda olur ve tek akış denemesi eksiksiz gövde alır.
+    // Burada kesinti aralıksız fazdadır, yani istemci `Range` taşımaz.
+    //
+    // Buradaki sözleşmenin çekirdeği şudur: aralıksız istek `Range`
+    // taşımadığından sunucu dosyayı **0'dan baştan** gönderir. Yeniden
+    // denemenin yazma konumu da 0'dan başlamalıdır. `fetch_range` bunu
+    // `if !ranged { pos = 0 }` ile güvenceye alır; aksi halde gövde kanalın
+    // ilerlemesi kadar kayar, dosya boyutu şişer ve sayımlara göre
+    // "Tamamlandı" görünürdü — yani sessiz bozulma.
+    //
+    // Dürüstlük notu: bu test o **bozulmayı kendisi canlandıramıyor**. Yerel
+    // sunucu gövdeyi yarıda kesip bağlantı kapattığında, kullanılan HTTP
+    // yığını eksik gövdeyi akıtmadan hataya düşüyor; böylece kanal sayacı
+    // hiç ilerlemiyor ve yeniden deneme zaten 0'a yazıyor. Test bu yüzden
+    // bozulmanın kendisini değil, "tek akışta bağlantı koptu → yeniden dene →
+    // dosya birebir olsun" sözleşmesini kilitler. Sayacın gerçekten sıfıra
+    // döndüğü `models::tests::tek_akis_yenidenim_sayaci_sifirlar` sınanır.
+    let server = TestServer::start_cutting_unranged(1);
+    let path = temp_path("tek_akis_yeniden.bin");
+
+    let engine = DownloadEngine::new();
+    let signal = AbortSignal::new();
+    let (_, hook) = recorder();
+
+    engine
+        .download(
+            &server.file_url(),
+            &path,
+            4,
+            None,
+            &[],
+            signal,
+            hook,
+            noop_probe(),
+        )
+        .await
+        .expect("tek akışta bağlantı koptuğunda yeniden deneyip tamamlamalıydı");
+
+    let written = std::fs::read(&path).expect("dosya okunamadı");
+    assert_eq!(
+        written.len(),
+        FILE_SIZE,
+        "dosya boyutu şişti: yeniden deneme ilerleme kadar kayarak yazdı \
+         ({} != {}). Sessiz bozulma geri geldi.",
+        written.len(),
+        FILE_SIZE
+    );
+    assert_eq!(written, test_payload(), "dosya içeriği bozuk");
+
+    // Yoklama + aralıklı deneme(ler) + kesik tek akış + tam tek akış.
+    assert!(
+        server.hits() >= 4,
+        "kesik akıştan sonra yeniden deneme olmalıydı, istek sayısı: {}",
+        server.hits()
+    );
 
     let _ = std::fs::remove_file(&path);
 }

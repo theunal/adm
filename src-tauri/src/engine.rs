@@ -1046,6 +1046,17 @@ async fn fetch_range(
     signal: &AbortSignal,
     ranged: bool,
 ) -> Result<ChannelOutcome, EngineError> {
+    // Aralıksız modda istek `Range` taşımaz, sunucu dosyayı **0'dan baştan**
+    // gönderir. Yazma konumu ile kanal sayacı da 0'dan başlamalı.
+    //
+    // `start_byte` burada kanalın ilerlemesidir; bir yeniden denemede sıfırdan
+    // büyük olur. Onu konum almak dosyanın başına ilerleme kadar boşluk
+    // sıkıştırır ve kalanı kaydırır — sonuç, sayımlara göre "Tamamlandı"
+    // görünmesine rağmen boyutu şişmiş ve içeriği kaymış bir dosyadır.
+    if !ranged {
+        me.restart_from_zero();
+    }
+
     let mut builder = client().get(url);
     // Ek başlıklar ÖNCE eklenir; `Range`/`Accept-Encoding` sonradan yazılır ki
     // segmentleme sözleşmesi bir tarayıcı başlığıyla ezilmesin.
@@ -1111,7 +1122,9 @@ async fn fetch_range(
     // Parçalar doğrudan yazılırsa çok sayıda küçük sistem çağrısı oluşur;
     // blok biriktirme bunu belirgin biçimde azaltır.
     let mut stream = resp.bytes_stream();
-    let mut pos = start_byte;
+    // Aralıksız modda gövde 0'dan gelir; `start_byte` yalnızca aralıklı modda
+    // yazma konumudur.
+    let mut pos = if ranged { start_byte } else { 0 };
     let mut got_any = false;
     let mut buf: Vec<u8> = Vec::with_capacity(CHUNK_SIZE);
     let mut base = start_byte;

@@ -207,6 +207,17 @@ impl SharedChannel {
         lock(&self.state).current_byte = pos;
     }
 
+    /// Aralıksız (tek akış) istek için kanalı başa alır.
+    ///
+    /// `ranged = false` istek `Range` başlığı taşımaz, sunucu dosyayı **0'dan
+    /// baştan** gönderir. Yazma konumu ile "indirilmiş" sayacının da 0'dan
+    /// başlaması gerekir; aksi halde veri ilerleme kadar kayar ve dosya
+    /// bozulur.
+    pub fn restart_from_zero(&self) {
+        lock(&self.state).current_byte = 0;
+        self.downloaded.store(0, Ordering::Relaxed);
+    }
+
     /// Aralık başlangıcı değiştiğinde "indirilmiş" sayacını düzeltir.
     ///
     /// İş hırsızlığı ya da kanal yeniden planlaması sonrası aralık
@@ -746,6 +757,41 @@ mod tests {
         ch.mark_finished();
         assert!(ch.snapshot().finished);
         assert_eq!(ch.remaining(), 0);
+    }
+
+    /// Aralıksız (tek akış) yeniden denemenin sayaç temizliği.
+    ///
+    /// `fetch_range`, `ranged = false` olduğunda bu yöntemi çağırır. Aralıksız
+    /// istek `Range` taşımaz, sunucu dosyayı 0'dan baştan gönderir; konumun da
+    /// sayacın da sıfırdan başlaması gerekir. Sayacın sıfırlanmadığı bir
+    /// yeniden denemede `downloaded_total`, yazılmayan baytları da sayıp
+    /// indirmeyi erken "Tamamlandı" gösterir.
+    #[test]
+    fn tek_akis_yenidenim_sayaci_sifirlar() {
+        let ch = SharedChannel::new(ChannelState {
+            id: 0,
+            start_byte: 0,
+            end_byte: 0, // aralıksız modda sınır yoktur
+            current_byte: 0,
+            finished: false,
+        });
+
+        // İlk deneme 3 MB yazdı, sonra bağlantı koptu.
+        ch.add_downloaded(3 * 1024 * 1024);
+        ch.set_current(3 * 1024 * 1024);
+        assert_eq!(ch.downloaded(), 3 * 1024 * 1024);
+
+        ch.restart_from_zero();
+
+        let st = ch.snapshot();
+        assert_eq!(st.current_byte, 0, "yazma konumu başa dönmeli");
+        assert_eq!(ch.downloaded(), 0, "sayaca eklenen baytlar da sıfırlanmalı");
+
+        // Yeniden deneme baştan yazıyor: konum ve sayaç birlikte ilerliyor.
+        ch.add_downloaded(1024);
+        ch.set_current(1024);
+        assert_eq!(ch.downloaded(), 1024);
+        assert_eq!(ch.snapshot().current_byte, 1024);
     }
 
     #[test]
