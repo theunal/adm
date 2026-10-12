@@ -41,7 +41,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../src-extension/": "extension/"
+      "../src-extension/build/": "extension/"
     },
     "windows": {
       "nsis": {

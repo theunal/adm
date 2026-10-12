@@ -6,6 +6,11 @@ dist/
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Tarayıcı eklentisinin derlenmiş çıktısı. Kaynak `src-extension/src/*.ts`
+# altındadır; `npm run extension:build` üretir. Tauri paketi ve kurulum
+# sihirbazı yalnızca bu klasörü kopyalar.
+src-extension/build/
+
 # Yerel dosyalar
 *.log
 .DS_Store

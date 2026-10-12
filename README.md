@@ -126,18 +126,28 @@ npm run tauri:build    # kurulum paketi üret (NSIS / MSI)
 
 `src-extension/` — Chrome / Edge / Brave / Firefox (MV3) köprü uzantısı.
 Kaynaklar TypeScript ile yazılır (`src/`), `npm run extension:build` ile
-derlenir; çıktı `background.js`, `content.js`, `popup.js` olarak uzantı köküne
-yazılır (`manifest.json` ve `popup.html` bu dosya adlarına baktığı için
-değişmez):
+derlenir. Çıktı `build/` altına yazılır: `background.js`, `content.js`,
+`popup.js` betikleri `tsc` tarafından üretilir; `manifest.json`, `popup.html`,
+`popup.css`, `icons/` ve `_locales/` ise
+`scripts/copy-extension-assets.mjs` tarafından kopyalanır — `tsc` yalnızca
+`.ts` girdileriyle çalışır.
 
 ```bash
-npm run extension:build   # src/*.ts -> background.js / content.js / popup.js
-npm run extension:watch   # izleme modunda derle
+npm run extension:build   # src/*.ts -> build/ (betikler + statik varlıklar)
+npm run extension:watch   # önce tam derleme, sonra izleme modu
 ```
 
-Derlenmiş çıktılar depoda tutulur; tarayıcıda "Load unpacked" ile
-`src-extension/` klasörü doğrudan yüklenebilir. `npm run typecheck` hem arayüzü
-hem uzantı tiplerini doğrular.
+`build/` eklentinin tek çalışma anı biçimidir: Tauri paketi
+(`tauri.conf.json` → `resources`) ve kurulum sihirbazı yalnızca bu klasörü
+kopyalar; `src/*.ts` kaynakları pakete girmez. Depoda yalnızca kaynaklar
+tutulur, `build/` `.gitignore`'dadır ve `npm run build` her çalıştığında
+yeniden üretilir (bayat çıktı dağıtılmaz).
+
+> `tauri dev` sırasında sihirbaz `src-extension/build/` klasörünü okur.
+> Depoyu ilk kez klonladıktan sonra `npm run extension:build` bir kez
+> çalıştırılmazsa kurulum sihirbazı "eklenti dosyaları bulunamadı" der.
+
+`npm run typecheck` hem arayüzü hem uzantı tiplerini doğrular.
 
 Uzantı, ADM'in yerel köprüsüne (`http://127.0.0.1:48213`) `X-ADM-Extension`
 başlığıyla bağlanır; tarayıcı indirmelerini, sayfalarda yakalanan medyayı
@@ -276,10 +286,12 @@ src/                     SolidJS arayüzü
 
 src-extension/            tarayıcı uzantısı (TypeScript, MV3)
 ├── manifest.json         izinler: downloads, cookies, webRequest, contextMenus…
-├── src/                  background / content / popup kayıtları
-│                         → kökteki .js dosyalarına derlenir
+├── src/                  background / content / popup + types (tek doğruluk kaynağı)
+│                         → build/ altına derlenir
 ├── _locales/{en,tr}      uzantı metinleri
-└── icons/                uzantı simgeleri
+├── icons/                uzantı simgeleri
+└── build/                derlenmiş çıktı (üretilir, depoda tutulmaz) —
+                          paketlenen ve sihirbazın kopyaladığı klasör
 
 src-tauri/src/           Rust arka planı
 ├── lib.rs         uygulama kurulumu (tray, köprü, pano, güncelleme, yaşam döngüsü)

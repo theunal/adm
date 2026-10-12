@@ -974,9 +974,14 @@ fn browser_label(browser: &str) -> Option<&'static str> {
 
 /// Kaynak eklenti klasörü.
 ///
+/// Yalnızca derlenmiş çıktı kullanılır: `build/` altında `manifest.json`,
+/// `background.js`, `content.js`, `popup.js`, `popup.html`, `popup.css`,
+/// `icons/` ve `_locales/` bulunur. `src/*.ts` kaynakları pakete girmez.
+///
 /// Önce paketlenmiş kaynaklar (`<resource>/extension`) denenir; `tauri dev`
 /// sırasında kaynaklar kopyalanmadığı için derleme zamanındaki proje köküne
-/// (`../src-extension`) düşülür.
+/// (`../src-extension/build`) düşülür. Bu klasör `npm run extension:build`
+/// ile üretilir; yoksa kurulum sihirbazı "dosyalar bulunamadı" der.
 fn extension_source(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(dir) = app.path().resource_dir() {
         let bundled = dir.join("extension");
@@ -986,7 +991,8 @@ fn extension_source(app: &AppHandle) -> Option<PathBuf> {
     }
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()?
-        .join("src-extension");
+        .join("src-extension")
+        .join("build");
     dev.is_dir().then_some(dev)
 }
 
