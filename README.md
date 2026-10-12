@@ -149,6 +149,28 @@ yeniden üretilir (bayat çıktı dağıtılmaz).
 
 `npm run typecheck` hem arayüzü hem uzantı tiplerini doğrular.
 
+### Neden `background` iki alan içeriyor?
+
+`manifest.json` içinde hem `service_worker` hem `scripts` aynı dosyayı
+gösteriyor. Bu **bilinçli** bir tekrardır, temizlik yapılmamalıdır:
+
+- **Chromium** (Chrome / Edge / Brave) MV3 arka planı yalnızca service
+  worker olarak çalıştırır → `service_worker` alanını kullanır.
+- **Firefox** `background.service_worker`'ı desteklemez**
+  ([bug 1573659](https://bugzil.la/1573659)); MV3'te event page
+  (`scripts`) kullanır. Yalnızca `service_worker` yazan bir manifest
+  Firefox'ta **sessizce** arka plan betiğini başlatmaz — eklenti yüklenir
+  ama indirme yakalama, medya koklama, sağ tık menüleri ve rozet hiç
+  çalışmaz.
+
+MDN'in önerdiği çapraz tarayıcı biçimi budur. **Not:** Chrome 121'den önce
+MV3 manifestlerinde `scripts` bulunması yüklemeyi reddeder (Ocak 2024,
+günümüzde güvenli alt sınır).
+
+`browser_specific_settings.gecko.id` Firefox / addons.mozilla.org için
+zorunludur; `strict_min_version: 109.0`, MV3'ün Firefox'ta genel kullanıma
+girdiği sürümdür.
+
 Uzantı, ADM'in yerel köprüsüne (`http://127.0.0.1:48213`) `X-ADM-Extension`
 başlığıyla bağlanır; tarayıcı indirmelerini, sayfalarda yakalanan medyayı
 (video/audio) ve bağlam menüsü isteklerini uygulamaya iletir, ilerleme durumunu
