@@ -659,6 +659,26 @@ impl DownloadManager {
             .collect())
     }
 
+    /// Açılışta yarım kalmış indirmeleri duraklatır (MC `DownloadStore.load`).
+    ///
+    /// `pause_all`'den farkı, görevlerin hiç var olmamasıdır: süreç
+    /// çöktüğünde ya da zorla kapatıldığında satır `Downloading` olarak
+    /// kalmıştır ama takip eden hiçbir görev yoktur. Bu yüzden tek bir
+    /// toplu veritabanı güncellemesi yapılır; kayıt başına olay yayılmaz,
+    /// geçmişe satır eklenmez.
+    ///
+    /// Etkilenen satır sayısını döndürür; 0 ise uygulama düzgün
+    /// kapatılmıştır.
+    pub async fn recover_interrupted(&self) -> Result<usize> {
+        let count = self.db.recover_interrupted().await?;
+        // Arayüz açılışta listeyi okumadan önce ya da sonra yüklenmiş olabilir;
+        // değişikliği her iki durumda da görsün diye tazeleme olayı gönderilir.
+        if count > 0 {
+            self.emit(DownloadEvent::ListChanged);
+        }
+        Ok(count)
+    }
+
     /// Çalışan tüm indirmeleri duraklatır; etkilenen sayıyı döner.
     pub async fn pause_all(&self) -> Result<usize> {
         let ids = self

@@ -381,6 +381,28 @@ impl Database {
         Ok(rows.iter().map(row_to_item).collect())
     }
 
+    /// Açılışta yarım kalmış indirmeleri duraklatır (MC `DownloadStore.load`).
+    ///
+    /// Görev yalnızca süreç yaşarken biter: çökme, güç kesintisi ya da
+    /// zorla kapatma hâlinde satır `Downloading`/`Queued` olarak kalır ama
+    /// artık hiçbir görev yoktur. Böyle bir satır arayüzde sonsuza dek
+    /// "İndiriliyor" görünür, kullanıcı ne devam ettirebilir ne silebilir —
+    /// ilerleme hiç artmadığı için fark edilmesi de zordur.
+    ///
+    /// Durum `Paused`a çevrilir; alınan baytlar ve kanal sınırları
+    /// korunur, yani kaldığı yerden devam edilebilir. Etkilenen satır
+    /// sayısını döndürür (0 ise hiçbir şey değişmemiştir).
+    pub async fn recover_interrupted(&self) -> Result<usize> {
+        let res = sqlx::query(
+            "UPDATE downloads SET status = 'Paused', speed_mbps = 0 \
+             WHERE status IN ('Queued', 'Downloading')",
+        )
+        .execute(&self.pool)
+        .await
+        .context(err("err.db_update_status"))?;
+        Ok(res.rows_affected() as usize)
+    }
+
     /// Tek bir kaydı siler.
     pub async fn delete(&self, id: i64) -> Result<()> {
         sqlx::query("DELETE FROM downloads WHERE id = ?")

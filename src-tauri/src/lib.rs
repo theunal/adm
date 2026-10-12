@@ -62,23 +62,31 @@ pub fn run() {
             // 3) Olay yayıncısı: manager olaylarını arayüze aktar.
             commands::forward_events(app.handle().clone(), manager.subscribe());
 
-            // 4) Paylaşılan durumlar (köprü + pano) ve manager kaydı.
+            // 4) Çökme kurtarma (MC `DownloadStore.load`): süreç yaşarken
+            //    bitememiş indirmeler duraklatılır. Görev artık yok, ama
+            //    satır hâlâ `Downloading` olduğu için arayüzde sonsuza dek
+            //    "İndiriliyor" görünür ve kullanıcı devam ettiremezdi.
+            //    `forward_events`'ten SONRA çalışmalı: kurtarma bir tazeleme
+            //    olayı yayar, ondan önce yaysa olay alıcısız kalırdı.
+            let _ = tauri::async_runtime::block_on(manager.recover_interrupted());
+
+            // 5) Paylaşılan durumlar (köprü + pano) ve manager kaydı.
             app.manage(commands::BridgeState::default());
             let clipboard = std::sync::Arc::new(commands::RuntimeState::default());
             clipboard.apply(&settings);
             app.manage(clipboard.clone());
             app.manage(manager.clone());
 
-            // 5) Tarayıcı köprüsü (MC `ServerController`).
+            // 6) Tarayıcı köprüsü (MC `ServerController`).
             commands::start_bridge(app.handle().clone(), manager.clone(), settings.server_port);
 
-            // 6) Pano izleyici (MC `ClipboardWatcher`).
+            // 7) Pano izleyici (MC `ClipboardWatcher`).
             commands::start_clipboard(app.handle().clone(), clipboard);
 
-            // 7) Tepki simgesi + kapatınca arka planda kalma (MC `AppPresence`).
+            // 8) Tepki simgesi + kapatınca arka planda kalma (MC `AppPresence`).
             commands::install_tray(app.handle())?;
 
-            // 8) Açılışta güncelleme denetimi (ayar açıksa, sessizce).
+            // 9) Açılışta güncelleme denetimi (ayar açıksa, sessizce).
             if settings.check_for_updates {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use adm_lib::db::Database;
 use adm_lib::manager::{DownloadEvent, DownloadManager, StartRequest};
-use adm_lib::models::{DownloadKind, DownloadStatus};
+use adm_lib::models::{DownloadItem, DownloadKind, DownloadStatus};
 
 /// Testler için izole veritabanı açar.
 ///
@@ -844,4 +844,143 @@ async fn video_kaydi_tur_video_olarak_saklanir() {
 
     cleanup(&manager, id).await;
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------
+// Açılışta çökme kurtarma (MC `DownloadStore.load`)
+// ---------------------------------------------------------------------
+
+/// Süreç çöktüğünde `Downloading` olarak kalan satırlar duraklatılır.
+///
+/// MC karşılığı `DownloadStore.swift:516`:
+/// `if arr[i].state.isActive || arr[i].state == .queued { arr[i].state = .paused }`.
+/// ADM'de `probing` durumu veritabanına yazılmadığı için eşdeğer küme
+/// `Queued | Downloading` olur.
+#[tokio::test]
+async fn acilista_yarim_kalan_indirmeler_duraklatilir() {
+    let db = setup("kurtarma").await;
+    let manager = DownloadManager::new(db);
+
+    // Görev hiç başlamamış gibi: satırlar eski durumunda duruyor.
+    let durumlar = [
+        DownloadStatus::Queued,
+        DownloadStatus::Downloading,
+        DownloadStatus::Paused,
+        DownloadStatus::Completed,
+        DownloadStatus::Failed,
+        DownloadStatus::Cancelled,
+    ];
+
+    let mut ids = Vec::new();
+    for (i, status) in durumlar.iter().enumerate() {
+        let item = DownloadItem {
+            url: format!("http://127.0.0.1:1/{i}.bin"),
+            file_name: format!("{i}.bin"),
+            status: *status,
+            speed_mbps: if i < 2 { 4.5 } else { 0.0 },
+            ..DownloadItem::default()
+        };
+        ids.push(
+            manager
+                .database()
+                .insert(&item)
+                .await
+                .expect("satır eklenemedi"),
+        );
+    }
+
+    // Kurtarmadan ÖNCE etkilenen kayıtlar eski hızıyla duruyor olmalı;
+    // yoksa "hız sıfırlandı" ölçümü hiçbir şeyi kanıtlamaz.
+    let ilk = manager.get(ids[1]).await.unwrap().expect("kayıt yok");
+    assert_eq!(ilk.speed_mbps, 4.5, "kurtmadan önce hız korunuyor olmalı");
+
+    let kurtarilan = manager
+        .recover_interrupted()
+        .await
+        .expect("kurtarma başarısız");
+    assert_eq!(
+        kurtarilan, 2,
+        "yalnızca Queued ve Downloading duraklatılmalı"
+    );
+
+    for (i, id) in ids.iter().enumerate() {
+        let item = manager.get(*id).await.unwrap().expect("kayıt yok");
+        let beklenen = if i < 2 {
+            DownloadStatus::Paused
+        } else {
+            durumlar[i]
+        };
+        assert_eq!(
+            item.status, beklenen,
+            "{i}. kaydın durumu beklenen gibi değil"
+        );
+    }
+
+    // Duraklatılmış kaydın hızı sıfırlanmalı: 4.5 MB/s gösteren ama hiç
+    // ilerlemeyen bir satır, çökmenin bıraktığı izi taklit eder.
+    for id in &ids[..2] {
+        let item = manager.get(*id).await.unwrap().expect("kayıt yok");
+        assert_eq!(item.speed_mbps, 0.0, "hız sıfırlanmalı");
+        assert_eq!(
+            item.downloaded_bytes, 0,
+            "alınan bayt korunmalı (kaldığı yerden devam)"
+        );
+    }
+
+    // İkinci kez çalıştırıldığında hiçbir şey yapmamalı.
+    let tekrar = manager
+        .recover_interrupted()
+        .await
+        .expect("kurtarma başarısız");
+    assert_eq!(tekrar, 0, "kurtarma yinelenemez olmalı");
+
+    for id in ids {
+        let _ = manager.delete(id, false).await;
+    }
+}
+
+/// Kurtarma arayüze tazeleme olayı yayar, yalnızca değişiklik varsa.
+///
+/// Arayüz listeyi açılışta okumadan önce ya da sonra yüklenmiş olabilir;
+/// olay olmadan "İndiriliyor" satırı ekranda donup kalırdı.
+#[tokio::test]
+async fn kurtarma_tazeleme_olayi_yayar() {
+    let db = setup("kurtarma_olay").await;
+    let manager = DownloadManager::new(db);
+    let mut rx = manager.subscribe();
+
+    // Boş veritabanında değişiklik yok: olay da olmamalı.
+    let n = manager
+        .recover_interrupted()
+        .await
+        .expect("kurtarma başarısız");
+    assert_eq!(n, 0);
+    assert!(
+        rx.try_recv().is_err(),
+        "hiçbir satır değişmediyse olay yayılmamalı"
+    );
+
+    let id = manager
+        .database()
+        .insert(&DownloadItem {
+            url: "http://127.0.0.1:1/k.bin".to_string(),
+            status: DownloadStatus::Downloading,
+            ..DownloadItem::default()
+        })
+        .await
+        .expect("satır eklenemedi");
+
+    let n = manager
+        .recover_interrupted()
+        .await
+        .expect("kurtarma başarısız");
+    assert_eq!(n, 1);
+
+    let ev = rx.try_recv().expect("tazeleme olayı gelmedi");
+    assert!(
+        matches!(ev, DownloadEvent::ListChanged),
+        "yanlış olay yayıldı: {ev:?}"
+    );
+
+    let _ = manager.delete(id, false).await;
 }
