@@ -265,13 +265,233 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ---------------------------------------------------------------------------
+  # Tarayıcı eklentisi: tarayıcıya göre kurulum dosyaları
+  #
+  # Üretilenler: extension.crx (kendi anahtarınla imzalı), extension-firefox.xpi
+  # (AMO'da unlisted imzalı), update.xml / updates.json (otomatik güncelleme),
+  # Setup-ADM-Extension-<sürüm>.exe (Windows kurulumu) ve imzasız Safari
+  # uygulaması (deneysel).
+  #
+  # Gerekli secret'lar ve sınırlar için README > "Tarayıcı eklentisi sürümü".
+  # ---------------------------------------------------------------------------
+  extension:
+    name: Browser extension packages
+    runs-on: ubuntu-latest
+    env:
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      ext_id: ${{ steps.id.outputs.ext_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Resolve extension version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extension version: $VERSION"
+
+      # The key is fixed forever: losing it changes the extension ID and breaks
+      # both the force-install policy and the update chain.
+      - name: Write CRX signing key
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CRX_PRIVATE_KEY}" ]; then
+            echo "::error::CRX_PRIVATE_KEY secret is not set - see README > 'Tarayici eklentisi surumu'."
+            exit 1
+          fi
+          mkdir -p keys
+          printf '%s\n' "$CRX_PRIVATE_KEY" > keys/extension.pem
+
+      - name: Build per-browser packages
+        env:
+          EXT_VERSION: ${{ steps.ver.outputs.version }}
+        run: npm run extension:dist
+
+      # The manifest declares gecko.update_url, which addons-linter flags for
+      # store-listed add-ons. Self-hosted (unlisted) distribution needs it, so
+      # lint output is informational only.
+      - name: Lint Firefox package
+        run: npx web-ext lint --source-dir src-extension/dist/firefox || true
+
+      - name: Pack CRX and compute extension ID
+        id: id
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run extension:crx
+          EXT_ID=$(node scripts/extension-id.mjs)
+          echo "ext_id=$EXT_ID" >> "$GITHUB_OUTPUT"
+          echo "Chromium extension ID: $EXT_ID"
+
+      - name: Generate update manifests
+        env:
+          EXT_VERSION: ${{ steps.ver.outputs.version }}
+          EXT_ID: ${{ steps.id.outputs.ext_id }}
+        run: npm run extension:update-files
+
+      # AMO signs unlisted add-ons for free; without credentials the step is
+      # skipped and the release ships without extension-firefox.xpi.
+      - name: Sign Firefox XPI (AMO, unlisted)
+        if: ${{ env.AMO_JWT_ISSUER != '' && env.AMO_JWT_SECRET != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx web-ext sign \
+            --source-dir src-extension/dist/firefox \
+            --artifacts-dir firefox-signed \
+            --channel unlisted \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET"
+          cp firefox-signed/*.xpi src-extension/release/extension-firefox.xpi
+
+      - name: Upload extension packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-release
+          path: src-extension/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  extension-windows-installer:
+    name: Windows extension installer
+    needs: extension
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Rebuilt here on purpose: shipping the unpacked Chromium payload as its
+      # own artifact would also drop it into the GitHub release.
+      - name: Build per-browser packages
+        env:
+          EXT_VERSION: ${{ needs.extension.outputs.version }}
+        run: npm run extension:dist
+
+      - name: Download signed packages
+        uses: actions/download-artifact@v8
+        with:
+          name: extension-release
+          path: src-extension/release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cfg = Get-Content src-extension/extension.config.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          $updateUrl = 'https://github.com/${{ github.repository }}/releases/latest/download/update.xml'
+          & $iscc `
+            "/DAppName=$($cfg.name)" `
+            "/DAppVersion=${{ needs.extension.outputs.version }}" `
+            "/DExtId=${{ needs.extension.outputs.ext_id }}" `
+            "/DUpdateUrl=$updateUrl" `
+            src-extension\installer\windows\extension.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-windows-installer
+          path: src-extension/installer-out/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # Experimental: unsigned Safari app. Without an Apple Developer certificate it
+  # only runs with Safari > Develop > "Allow Unsigned Extensions" enabled.
+  extension-safari:
+    name: Safari extension (unsigned, experimental)
+    needs: extension
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Chromium package
+        env:
+          EXT_VERSION: ${{ needs.extension.outputs.version }}
+        run: npm run extension:dist
+
+      - name: Convert and build unsigned app
+        shell: bash
+        run: |
+          set -euo pipefail
+          SLUG=$(node -p "require('./src-extension/extension.config.json').slug")
+          xcrun safari-web-extension-converter src-extension/dist/chromium \
+            --project-location safari-project \
+            --app-name "$SLUG" \
+            --bundle-identifier "com.unal.adm.browserextension" \
+            --macos-only --no-open --no-prompt --copy-resources
+          xcodebuild -project "safari-project/$SLUG/$SLUG.xcodeproj" \
+            -scheme "$SLUG" -configuration Release \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/safari-build" build
+          ditto -c -k --keepParent "safari-build/$SLUG.app" "safari-unsigned-macos.zip"
+
+      - name: Upload Safari app
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-safari
+          path: safari-unsigned-macos.zip
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, extension, extension-windows-installer, extension-safari]
+    # The Safari job is experimental and may fail without blocking the release.
+    if: ${{ always() && needs.build.result == 'success' && needs.extension.result == 'success' && needs.extension-windows-installer.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all installers
+      - name: Download all release artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-assets

@@ -11,6 +11,18 @@ src-tauri/gen/schemas/
 # sihirbazı yalnızca bu klasörü kopyalar.
 src-extension/build/
 
+# Tarayıcı eklentisi dağıtım çıktıları.
+# `npm run extension:dist` -> dist/, ardından crx/release ve Inno Setup çıktısı.
+# Bunlar GitHub Actions'ta üretilir; depoda yalnızca kaynak tutulur.
+src-extension/dist/
+src-extension/release/
+src-extension/installer-out/
+
+# CRX imza anahtarı. Depoya girerse eklenti kimliği herkese açık olur ve
+# kaybedilirse kimlik kalıcı olarak değişir. GitHub secret olarak saklanır.
+keys/
+*.pem
+
 # Yerel dosyalar
 *.log
 .DS_Store

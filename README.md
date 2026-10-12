@@ -168,8 +168,10 @@ MV3 manifestlerinde `scripts` bulunması yüklemeyi reddeder (Ocak 2024,
 günümüzde güvenli alt sınır).
 
 `browser_specific_settings.gecko.id` Firefox / addons.mozilla.org için
-zorunludur; `strict_min_version: 109.0`, MV3'ün Firefox'ta genel kullanıma
-girdiği sürümdür.
+zorunludur. `build/manifest.json` içindeki `strict_min_version: 115.0` geliştirme
+içindir; sürüm paketinde (`npm run extension:dist`) Firefox hedefi **140.0**'a
+çekilir, çünkü AMO yeni gönderimlerde `data_collection_permissions` beyanını
+zorunlu tutar ve bu anahtar Firefox 140 ile gelir.
 
 Uzantı, ADM'in yerel köprüsüne (`http://127.0.0.1:48213`) `X-ADM-Extension`
 başlığıyla bağlanır; tarayıcı indirmelerini, sayfalarda yakalanan medyayı
@@ -197,6 +199,75 @@ değiştirilebilir. Port değişince köprü yeniden başlatılır ve uzantını
 bağlanması gerekir. Windows güvenlik duvarı ilk çalıştırmada yerel bağlantı için
 izin isteyebilir; Chrome'un Private Network Access preflight'i için gereken CORS
 başlıkları sunucu tarafında verilir.
+
+### Sürüm paketleme (GitHub Actions)
+
+`v*` etiketi atıldığında `.github/workflows/release.yml` hem masaüstü kurulum
+paketlerini hem tarayıcı eklentisi kurulum dosyalarını üretir ve aynı GitHub
+Release'ine yükler.
+
+| Dosya | Ne işe yarar |
+|---|---|
+| `Setup-ADM-Extension-<sürüm>.exe` | Windows kurulumu: Chrome / Edge / Brave / Chromium'a zorunlu kurulum politikası yazar, isteğe bağlı Firefox |
+| `extension.crx` | Chromium için kendi anahtarınla imzalı paket (politikanın kurduğu dosya) |
+| `extension-firefox.xpi` | Mozilla (AMO) tarafından *unlisted* imzalanmış paket |
+| `update.xml` / `updates.json` | Otomatik güncelleme manifestleri (Chromium / Firefox) |
+| `safari-unsigned-macos.zip` | Deneysel, imzasız Safari uygulaması |
+
+Yerelde aynı zincir:
+
+```bash
+npm run extension:dist        # build/ -> dist/chromium + dist/firefox
+openssl genrsa -out keys/extension.pem 2048    # bir kez; kaybetmeyin
+npm run extension:crx         # dist/chromium -> release/extension.crx
+npm run extension:id          # Chromium eklenti kimliği
+EXT_ID=<id> npm run extension:update-files     # update.xml + updates.json
+npm run extension:lint:firefox                 # web-ext lint (bilgilendirici)
+```
+
+`dist/chromium` ve `dist/firefox` manifestleri `build/manifest.json`'dan
+türetilir: `scripts/build-extension-dist.mjs` her tarayıcıya yalnızca kendi
+alanlarını verir (`service_worker` / `scripts`, `update_url`,
+`browser_specific_settings`). `build/` klasörü değişmez — Tauri paketi ve
+kurulum sihirbazı onu kullanmaya devam eder.
+
+#### Gerekli secret'lar
+
+| Secret | Zorunlu | Ne için |
+|---|---|---|
+| `CRX_PRIVATE_KEY` | Evet | `keys/extension.pem` dosyasının içeriği. Yoksa sürüm işi hata verir. |
+| `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` | Hayır | [AMO API anahtarı](https://addons.mozilla.org/developers/addon/api/key/). Yoksa Firefox adımı atlanır ve `.xpi` üretilmez. |
+
+`extension.pem` **asla depoya girmez** (`.gitignore`). Kaybederseniz eklenti
+kimliği değişir; zorunlu kurulum politikası ve güncelleme zinciri kopar.
+
+Depo public olmalı: `update.xml` / `updates.json` adresleri
+`releases/latest/download` üzerinden herkese açık olmalıdır.
+
+#### Tarayıcıya göre sınırlar (dürüst özet)
+
+Tarayıcılar mağaza dışı eklentiyi "çift tıkla kur" diye kurmaz; bu bir güvenlik
+kuralıdır.
+
+- **Firefox:** en sorunsuz yol. AMO'da *unlisted* imzalanan `.xpi` her Firefox'a
+  kurulur, mağazada listelenmez.
+- **Chrome / Edge / Brave:** kurulum programı kayıt defterine zorunlu kurulum
+  politikası yazar. Bu **kurumsal / yönetilen** makinelerde çalışır; yönetilmeyen
+  ev bilgisayarlarında Chrome ve Edge mağaza dışı zorunlu kurulumu reddedebilir.
+  Yedek yol: kurulumun bıraktığı `chromium-unpacked` klasörünü
+  `chrome://extensions` > Geliştirici modu > "Paketlenmemiş öğe yükle" ile açın.
+- **Opera / Vivaldi:** politika yazılmaz; `chromium-unpacked` klasörünü
+  geliştirici modu ile yükleyin.
+- **Safari:** Apple imzası ve notarization olmadan normal kurulum yoktur.
+  Otomatik üretilen imzasız uygulama yalnızca Safari > Geliştirici >
+  "İmzasız Uzantılara İzin Ver" açıkken çalışır.
+- **Windows SmartScreen:** imzasız `.exe` ilk açılışta uyarı verir; kaldırmak
+  için kod imzalama sertifikası gerekir.
+
+Firefox hedefi `strict_min_version: 140.0` kullanır. Daha eski Firefox'ları
+desteklemek isterseniz `src-extension/extension.config.json` içindeki
+`geckoMinVersion` değerini düşürebilirsiniz — ancak AMO imzalaması bu durumda
+reddedilebilir.
 
 ## Video indirme (yt-dlp)
 
@@ -308,12 +379,16 @@ src/                     SolidJS arayüzü
 
 src-extension/            tarayıcı uzantısı (TypeScript, MV3)
 ├── manifest.json         izinler: downloads, cookies, webRequest, contextMenus…
+├── extension.config.json ad, slug, geckoId, tarayıcı sürüm alt sınırları, depo
 ├── src/                  background / content / popup + types (tek doğruluk kaynağı)
 │                         → build/ altına derlenir
 ├── _locales/{en,tr}      uzantı metinleri
 ├── icons/                uzantı simgeleri
-└── build/                derlenmiş çıktı (üretilir, depoda tutulmaz) —
-                          paketlenen ve sihirbazın kopyaladığı klasör
+├── installer/windows/    Inno Setup betiği (zorunlu kurulum politikası + .crx)
+├── build/                derlenmiş çıktı (üretilir, depoda tutulmaz) —
+│                         paketlenen ve sihirbazın kopyaladığı klasör
+├── dist/{chromium,firefox}  tarayıcıya özel paketler (üretilir, tutulmaz)
+└── release/              .crx / .xpi / update manifestleri (üretilir, tutulmaz)
 
 src-tauri/src/           Rust arka planı
 ├── lib.rs         uygulama kurulumu (tray, köprü, pano, güncelleme, yaşam döngüsü)

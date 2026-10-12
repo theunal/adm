@@ -1,0 +1,10 @@
+{
+  "name": "ADM İndirme Yöneticisi",
+  "slug": "ADM",
+  "description": "Tarayıcı indirmelerini ADM uygulamasına yönlendirir ve sayfalardaki videoları yakalar.",
+  "geckoId": "adm@com.unal.adm",
+  "geckoMinVersion": "140.0",
+  "geckoAndroidMinVersion": "142.0",
+  "firefoxSelfHostedUpdates": false,
+  "repo": "theunal/adm"
+}

@@ -11,6 +11,11 @@
     "typecheck": "tsc --noEmit && tsc -p src-extension/tsconfig.json --noEmit",
     "extension:build": "tsc -p src-extension/tsconfig.json && node scripts/copy-extension-assets.mjs",
     "extension:watch": "npm run extension:build && tsc -p src-extension/tsconfig.json --watch",
+    "extension:dist": "npm run extension:build && node scripts/build-extension-dist.mjs",
+    "extension:crx": "node scripts/pack-crx.mjs",
+    "extension:id": "node scripts/extension-id.mjs",
+    "extension:update-files": "node scripts/make-extension-update-files.mjs",
+    "extension:lint:firefox": "web-ext lint --source-dir src-extension/dist/firefox",
     "test:extension": "node scripts/verify-badge-machine.mjs && node scripts/verify-media-queue.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -27,8 +32,10 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.2",
     "@types/chrome": "^0.3.5",
+    "crx3": "^2.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "vite-plugin-solid": "^2.11.12"
+    "vite-plugin-solid": "^2.11.12",
+    "web-ext": "^10.7.0"
   }
 }
