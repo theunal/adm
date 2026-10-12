@@ -508,12 +508,29 @@ jobs:
       - name: List assets
         run: find release-assets -type f -printf '%f (%s bytes)\n' | sort
 
+      # Creating the release plus uploading ~10 assets is a burst of API calls,
+      # which can trip GitHub's secondary rate limit. The action is idempotent
+      # (it creates or updates the release and overwrites assets), so one retry
+      # after a pause is enough to make the step self-healing.
       - name: Create GitHub Release
+        id: gh-release
+        continue-on-error: true
         uses: softprops/action-gh-release@v3
-        with:
+        with: &release-config
           tag_name: ${{ github.ref_name }}
           name: ADM ${{ github.ref_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
             release-assets/**/*
+
+      - name: Wait before retrying the release
+        if: ${{ steps.gh-release.outcome == 'failure' }}
+        run: |
+          echo "::warning::Release creation failed - most likely a transient secondary API rate limit. Retrying in 90s."
+          sleep 90
+
+      - name: Create GitHub Release (retry)
+        if: ${{ steps.gh-release.outcome == 'failure' }}
+        uses: softprops/action-gh-release@v3
+        with: *release-config
