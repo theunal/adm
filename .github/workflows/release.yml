@@ -238,10 +238,20 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
+          # ONLY the installers themselves - never the bundle directories.
+          # Tauri leaves the AppImage's unpacked payload (usr/, data/, ~200
+          # .so files) and the macOS .app bundle sitting next to the installers
+          # under bundle/appimage and bundle/macos. Globbing the whole
+          # directory uploaded those as release assets too: the first release
+          # shipped 461 assets and the burst of REST calls tripped GitHub's
+          # secondary rate limit mid-upload.
           # --target universal-apple-darwin writes to target/<triple>/release/bundle
           path: |
-            src-tauri/target/release/bundle/**/*
-            src-tauri/target/*/release/bundle/**/*
+            src-tauri/target/**/bundle/**/*.exe
+            src-tauri/target/**/bundle/**/*.msi
+            src-tauri/target/**/bundle/**/*.deb
+            src-tauri/target/**/bundle/**/*.AppImage
+            src-tauri/target/**/bundle/**/*.dmg
           if-no-files-found: error
           retention-days: 7
 
@@ -472,11 +482,42 @@ jobs:
         run: |
           set -euo pipefail
           SLUG=$(node -p "require('./src-extension/extension.config.json').slug")
+          # `--bundle-identifier` must be the APP's own identifier. The
+          # converter turns it into "<flag>.Extension" for the appex and builds
+          # the macOS app as "<flag minus last component>.<app name>". With
+          # "com.unal.adm.browserextension" that produced parent
+          # com.unal.adm.ADM / child com.unal.adm.browserextension.Extension,
+          # and ValidateEmbeddedBinary - which only runs after several minutes
+          # of compiling - rejects it because the parent does not prefix the
+          # child.
+          APP_ID="com.unal.adm.$SLUG"
           xcrun safari-web-extension-converter src-extension/dist/chromium \
             --project-location safari-project \
             --app-name "$SLUG" \
-            --bundle-identifier "com.unal.adm.browserextension" \
+            --bundle-identifier "$APP_ID" \
             --macos-only --no-open --no-prompt --copy-resources
+
+          # Fail fast (and self-heal) instead of compiling for ten minutes to
+          # reach the same validation error. Whatever rule the converter uses to
+          # derive the two identifiers, the extension must sit under the app.
+          PBX="safari-project/$SLUG/$SLUG.xcodeproj/project.pbxproj"
+          ids=$(grep -oE 'PRODUCT_BUNDLE_IDENTIFIER = "?[A-Za-z0-9.-]+"?;' "$PBX" \
+                | sed -E 's/.*= "?([A-Za-z0-9.-]+)"?;.*/\1/' | sort -u)
+          echo "Generated bundle identifiers:"; printf '  %s\n' $ids
+          GEN_APP=$(printf '%s\n' "$ids" | grep -v '\.Extension$' | head -n1)
+          GEN_EXT=$(printf '%s\n' "$ids" | grep '\.Extension$' | head -n1)
+          if [[ -z "${GEN_APP:-}" || -z "${GEN_EXT:-}" ]]; then
+            echo "::error::Could not read the app/extension bundle identifiers from $PBX"
+            exit 1
+          fi
+          if [[ "$GEN_EXT" != "$GEN_APP".* ]]; then
+            NEW_EXT="$GEN_APP.Extension"
+            echo "::warning::Extension bundle identifier '$GEN_EXT' is not prefixed by app '$GEN_APP'; rewriting to '$NEW_EXT'"
+            sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = \"$GEN_EXT\";/PRODUCT_BUNDLE_IDENTIFIER = \"$NEW_EXT\";/" "$PBX"
+            sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = $GEN_EXT;/PRODUCT_BUNDLE_IDENTIFIER = $NEW_EXT;/" "$PBX"
+            grep -n 'PRODUCT_BUNDLE_IDENTIFIER' "$PBX" || true
+          fi
+
           xcodebuild -project "safari-project/$SLUG/$SLUG.xcodeproj" \
             -scheme "$SLUG" -configuration Release \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
@@ -508,10 +549,12 @@ jobs:
       - name: List assets
         run: find release-assets -type f -printf '%f (%s bytes)\n' | sort
 
-      # Creating the release plus uploading ~10 assets is a burst of API calls,
-      # which can trip GitHub's secondary rate limit. The action is idempotent
-      # (it creates or updates the release and overwrites assets), so one retry
-      # after a pause is enough to make the step self-healing.
+      # Creating the release plus uploading the assets is a burst of API calls,
+      # which can trip GitHub's secondary rate limit. The first release tried to
+      # ship 461 assets (the AppImage payload and .app bundle were being globbed
+      # in) and the limit hit mid-upload. The action is idempotent (it creates or
+      # updates the release and overwrites assets), so one retry after a pause
+      # is enough to make the step self-healing for whatever remains.
       - name: Create GitHub Release
         id: gh-release
         continue-on-error: true
