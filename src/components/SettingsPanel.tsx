@@ -28,11 +28,11 @@ import {
 import {
   checkForUpdate,
   clearSiteCookies,
+  installExtension,
   installTool,
   openPluginFolder,
   openSiteLogin,
   pickFolder,
-  prepareBrowserFiles,
   saveSiteLoginCookies,
   siteLoginStatus,
   toolStatus,
@@ -790,9 +790,13 @@ function BrowsersTab(props: TabProps) {
   /** Eklenti dosyalarının hazırlandığı klasörler (tarayıcı → yol). */
   const [folders, setFolders] = createSignal<Record<string, string>>({});
 
-  async function prepare(browser: BrowserId) {
+  /**
+   * Tek düğmeli kurulum — dosyaları hazırla, tarayıcının uzantı sayfasını
+   * aç ve klasörü dosya yöneticisinde seçili göster (Rust tarafında).
+   */
+  async function install(browser: BrowserId) {
     await guard(async () => {
-      const dir = await prepareBrowserFiles(browser);
+      const dir = await installExtension(browser);
       setFolders((prev) => ({ ...prev, [browser]: dir }));
       pushFeedback("success", t("log.browser_files_ready", { path: dir }));
     }, "settings.err.save");
@@ -857,11 +861,11 @@ function BrowsersTab(props: TabProps) {
               <span class="browser-actions">
                 <button
                   type="button"
-                  class="btn btn-ghost"
+                  class="btn"
                   disabled={saving()}
-                  onClick={() => void prepare(browser)}
+                  onClick={() => void install(browser)}
                 >
-                  {t("wizard.action.prepare")}
+                  {t("wizard.install")}
                 </button>
                 <Show when={folders()[browser]}>
                   <button

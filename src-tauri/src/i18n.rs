@@ -648,6 +648,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "The browser extension files were not found",
     ),
     (
+        "err.browser_not_found",
+        "{0} tarayıcısı bulunamadı. Kurulu değil ya da taşınabilir bir sürüm kullanıyor olabilirsiniz; klasörü elle açıp uzantı sayfasını tarayıcıdan açabilirsiniz",
+        "{0} could not be found. It may not be installed, or a portable build may be in use; open the folder manually and the extensions page from the browser",
+    ),
+    (
         "log.browser_files_ready",
         "Tarayıcı eklenti dosyaları hazırlandı: {0}",
         "Browser extension files are ready: {0}",

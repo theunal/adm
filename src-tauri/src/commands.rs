@@ -1093,64 +1093,16 @@ pub async fn check_for_update(app: AppHandle) -> Res<()> {
 // Tarayıcı eklenti dosyaları
 // ---------------------------------------------------------------------
 
-/// Desteklenen tarayıcılar ve uzantı sayfası adresleri.
-const BROWSERS: &[(&str, &str)] = &[
-    ("chrome", "chrome://extensions"),
-    ("edge", "edge://extensions"),
-    ("brave", "brave://extensions"),
-    ("firefox", "about:debugging#/runtime/this-firefox"),
-];
-
-/// Eklenti dosyalarının kopyalandığı klasör: `%LOCALAPPDATA%\ADM\Browser Plugins`.
-fn browser_plugins_dir() -> PathBuf {
-    crate::db::db_dir().join("Browser Plugins")
-}
-
-/// Tarayıcı adı → klasör adı (marka yazımıyla).
-fn browser_label(browser: &str) -> Option<&'static str> {
-    match browser {
-        "chrome" => Some("Chrome"),
-        "edge" => Some("Edge"),
-        "brave" => Some("Brave"),
-        "firefox" => Some("Firefox"),
-        _ => None,
-    }
-}
-
-/// Kaynak eklenti klasörü.
-///
-/// Yalnızca derlenmiş çıktı kullanılır: `build/` altında `manifest.json`,
-/// `background.js`, `content.js`, `popup.js`, `popup.html`, `popup.css`,
-/// `icons/` ve `_locales/` bulunur. `src/*.ts` kaynakları pakete girmez.
-///
-/// Önce paketlenmiş kaynaklar (`<resource>/extension`) denenir; `tauri dev`
-/// sırasında kaynaklar kopyalanmadığı için derleme zamanındaki proje köküne
-/// (`../src-extension/build`) düşülür. Bu klasör `npm run extension:build`
-/// ile üretilir; yoksa kurulum sihirbazı "dosyalar bulunamadı" der.
-fn extension_source(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(dir) = app.path().resource_dir() {
-        let bundled = dir.join("extension");
-        if bundled.is_dir() {
-            return Some(bundled);
-        }
-    }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()?
-        .join("src-extension")
-        .join("build");
-    dev.is_dir().then_some(dev)
-}
-
 /// Desteklenen tarayıcıların listesi (sihirbaz için).
 ///
-/// `BROWSERS` dosya kopyalanan paketlerdir ve her platformda listelenir.
+/// `browser_list` dosya kopyalanan paketlerdir ve her platformda listelenir.
 /// Safari **yalnızca macOS'ta** eklenir: uzantı `.appex` olduğu için dosya
 /// kopyalanarak kurulamaz, indirilen ayrı bir `.app` içinde gelir. Bu yüzden
-/// `prepare_browser_files` / `open_plugin_folder` Safari'yi tanımaz ve
+/// `install_extension` / `open_plugin_folder` Safari'yi tanımaz ve
 /// `err.unknown` döner — sihirbaz onları çağırmaz.
 #[tauri::command]
 pub fn browser_list() -> Res<Vec<String>> {
-    let mut names: Vec<String> = BROWSERS
+    let mut names: Vec<String> = crate::extension::BROWSERS
         .iter()
         .map(|(name, _)| (*name).to_string())
         .collect();
@@ -1160,21 +1112,39 @@ pub fn browser_list() -> Res<Vec<String>> {
     Ok(names)
 }
 
+/// Eklentiyi **tek düğmeyle** kurar.
+///
+/// Üç adımı sırayla çalıştırır (`extension::install_extension`):
+/// 1. eklenti dosyalarını tarayıcı klasörüne kopyalar,
+/// 2. tarayıcının uzantı sayfasını açar,
+/// 3. hazırlanan klasörü dosya yöneticisinde seçili gösterir.
+///
+/// Arayüzdeki "Eklentiyi Yükle" düğmesi bu komuta bağlıdır; başarılı olursa
+/// klasörün yolunu döner (kullanıcıya gösterilir).
+#[tauri::command]
+pub fn install_extension(app: AppHandle, browser: String) -> Res<String> {
+    let path = crate::extension::install_extension(&app, &browser).map_err(tr)?;
+    let text = path.to_string_lossy().to_string();
+    emit_log(&app, "info", i18n::t("log.browser_files_ready", &[&text]));
+    Ok(text)
+}
+
 /// Eklenti dosyalarını tarayıcı klasörüne kopyalar ve `README.txt` yazar.
 ///
 /// Arayüzdeki kurulum sihirbazı bu klasörü "paketlenmemiş öğe" olarak
-/// yükletir.
+/// yükletir. `install_extension` da aynı mantığı kullanır.
 #[tauri::command]
 pub fn prepare_browser_files(app: AppHandle, browser: String) -> Res<String> {
-    let Some(label) = browser_label(&browser) else {
+    let Some(label) = crate::extension::browser_label(&browser) else {
         return Err(i18n::t("err.unknown", &[]));
     };
-    let Some(source) = extension_source(&app) else {
+    let Some(source) = crate::extension::extension_source(&app) else {
         return Err(i18n::t("err.browser_plugin_missing", &[]));
     };
 
-    let target = browser_plugins_dir().join(label);
-    copy_dir(&source, &target).map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
+    let target = crate::extension::browser_plugins_dir().join(label);
+    crate::extension::copy_dir(&source, &target)
+        .map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
 
     let readme = i18n::t("browser.readme", &[label]);
     std::fs::write(target.join("README.txt"), readme)
@@ -1188,10 +1158,11 @@ pub fn prepare_browser_files(app: AppHandle, browser: String) -> Res<String> {
 /// Eklenti klasörünü dosya yöneticisinde açar.
 #[tauri::command]
 pub fn open_plugin_folder(browser: String) -> Res<()> {
-    let label = browser_label(&browser).unwrap_or("Chrome");
-    let path = browser_plugins_dir().join(label);
+    let Some(path) = crate::extension::plugin_folder(&browser) else {
+        return Err(i18n::t("err.unknown", &[]));
+    };
     std::fs::create_dir_all(&path).map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
-    open_path_internal(&path.to_string_lossy()).map_err(tr)
+    crate::extension::reveal_path(&path).map_err(tr)
 }
 
 /// Tarayıcının uzantı yönetimi sayfasını açar.
@@ -1199,28 +1170,7 @@ pub fn open_plugin_folder(browser: String) -> Res<()> {
 /// Tarayıcı adı bilinmiyorsa varsayılan tarayıcıda açılır.
 #[tauri::command]
 pub fn open_browser_extensions_page(browser: String) -> Res<()> {
-    let url = BROWSERS
-        .iter()
-        .find(|(name, _)| *name == browser)
-        .map(|(_, url)| *url)
-        .unwrap_or("chrome://extensions");
-    open_path_internal(url).map_err(tr)
-}
-
-/// Klasörü (alt klasörleriyle) hedefe kopyalar; hedef varsa üzerine yazar.
-fn copy_dir(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(target)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = target.join(entry.file_name());
-        if from.is_dir() {
-            copy_dir(&from, &to)?;
-        } else {
-            std::fs::copy(&from, &to)?;
-        }
-    }
-    Ok(())
+    crate::extension::open_extensions_page(&browser).map_err(tr)
 }
 
 // ---------------------------------------------------------------------

@@ -332,7 +332,22 @@ export function openReleasePage(): Promise<void> {
 }
 
 /**
- * Eklenti dosyalarını tarayıcı klasörüne kopyalar.
+ * Eklentiyi **tek düğmeyle** kurar.
+ *
+ * Rust tarafı (`extension::install_extension`) üç adımı sırayla yapar:
+ * eklenti dosyalarını `%LOCALAPPDATA%\ADM\Browser Plugins\<Tarayıcı>`
+ * altına kopyalar, tarayıcının uzantı sayfasını açar (`brave://extensions`
+ * vb.) ve klasörü dosya yöneticisinde **seçili** gösterir.
+ *
+ * Dönen değer hazırlanan klasörün yoludur. Tarayıcı bulunamazsa (taşınabilir
+ * kurulum) reddeder; çağıran hata metnini gösterir ve kullanıcıyı elle
+ * yönlendirir.
+ */
+export function installExtension(browser: BrowserId): Promise<string> {
+  return invoke<string>("install_extension", { browser });
+}
+
+/** Eklenti dosyalarını tarayıcı klasörüne kopyalar.
  *
  * Dönen değer, "paketlenmemiş öğe yükle" için seçilecek klasörün yoludur.
  */

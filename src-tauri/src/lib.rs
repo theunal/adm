@@ -22,6 +22,7 @@ pub mod clipboard;
 pub mod commands;
 pub mod db;
 pub mod engine;
+pub mod extension;
 pub mod i18n;
 pub mod manager;
 pub mod models;
@@ -199,6 +200,7 @@ pub fn run() {
             commands::clear_site_cookies,
             commands::check_for_update,
             commands::browser_list,
+            commands::install_extension,
             commands::prepare_browser_files,
             commands::open_plugin_folder,
             commands::open_browser_extensions_page,

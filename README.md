@@ -185,20 +185,29 @@ progress through the badge and the popup.
 
 ### Install steps
 
-ADM prepares the extension files from Settings → **Browsers**:
+**One button.** Settings → **Browsers** → **"Install the extension"**
+(or the same button in the setup wizard) does everything:
 
-1. Pick a browser and press **"Prepare files"** — the extension is copied
-   to `%LocalAppData%\ADM\Browser Plugins\<Browser>` with a `README.txt`
-   next to it.
-2. Press **"Open extension page"** (e.g. `edge://extensions`).
-3. Turn on **Developer mode** (top right).
-4. Choose **Load unpacked** and select the prepared folder.
-5. Click the extension icon and press **"Connect to ADM"** — the bridge
-   indicator in the menu header / settings panel turns green.
+1. copies the extension files to
+   `%LocalAppData%\ADM\Browser Plugins\<Browser>` (with a `README.txt`
+   next to them),
+2. launches the browser binary on its extensions page
+   (`brave://extensions`, `chrome://extensions`, `edge://extensions`) —
+   these schemes are not registered OS protocols, so the browser itself
+   has to be started with the address,
+3. shows that folder **selected** in Explorer / Finder.
 
-For Firefox, use **Load Temporary Add-on** on
-`about:debugging#/runtime/this-firefox` and pick `manifest.json` (an
-unsigned xpi).
+All that is left is turning on **Developer mode** on the page that opens
+and picking the revealed folder with **"Load unpacked"**. Clicking the
+extension icon and pressing **"Connect to ADM"** finishes it — the bridge
+indicator in the menu header / settings panel turns green.
+
+Firefox is the same flow with `about:debugging#/runtime/this-firefox`
+(**"Load Temporary Add-on…"** → `manifest.json`).
+
+If the browser binary cannot be found (portable install), ADM reports it
+and you can finish by hand: open the extensions page from the browser and
+load the folder the wizard shows.
 
 **Bridge port.** The default is `48213`, changeable in Settings →
 Browsers. Changing the port restarts the bridge and the extension has to
