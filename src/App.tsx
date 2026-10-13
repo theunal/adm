@@ -7,16 +7,24 @@
  * TitleBar   logo · uygulama adı · pencere düğmeleri · TR/EN
  * ── app-body ────────────────────────────────────────────────
  * Sidebar    Tümü · 7 kategori (rozetli) · Biten / Bitmeyen
- * content    Toolbar + Tablo (+ AltDock)  |  Ayarlar paneli
+ * content    Toolbar + Tablo  |  Ayarlar paneli
  * ────────────────────────────────────────────────────────────
- * StatusBar  ana anahtar · hız · kalite · boş alan · bitmeyen ·
- *            köprü göstergesi · seçili ad · ▾
+ * StatusBar  ana anahtar · hız · geçici mesaj
  * ```
  *
  * Kenar çubuğu MC düzeninin sol sütunudur; görev filtrelerinin tamamı ve
  * menüler araç çubuğundaki açılır listeye / ≡ paneline taşındı. Tüm durum
  * `src/lib/store.ts` üzerinden yönetilir; klavye kısayolları da burada
  * toplanır.
+ *
+ * **Ayarlar tuzağı:** `settingsOpen` yalnızca `content` alanını değiştirir,
+ * kenar çubuğu görünür kalır. Bu yüzden `selectTask` / `selectCategory`
+ * (`store.ts`) ayarları kapatır; aksi halde kenar çubuğuna tıklamak yalnızca
+ * görünmez bir filtre değiştirir ve kullanıcı liste dönemez.
+ *
+ * Ayrıntı penceresi **ayrı bir OS penceresidir** (`DetailWindow.tsx`, Rust
+ * tarafında `detail-<id>` etiketiyle açılır); buradaki `DownloadDetailDialog`
+ * ise satır bağlam menüsünden açılan uçtan uca modal hâlidir.
  */
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { initStore, selectedItems, toggleSelectAll } from "./lib/store";
@@ -27,14 +35,10 @@ import {
   addDialogOpen,
   aboutOpen,
   contextMenu,
-  graphOpen,
-  logOpen,
   propertiesItem,
   setAboutOpen,
   setAddDialogOpen,
   setContextMenu,
-  setGraphOpen,
-  setLogOpen,
   setPropertiesItem,
   setSettingsOpen,
   settingsOpen,
@@ -46,7 +50,6 @@ import TitleBar from "./components/TitleBar";
 import Toolbar from "./components/Toolbar";
 import DownloadTable from "./components/DownloadTable";
 import Sidebar from "./components/Sidebar";
-import BottomDock from "./components/BottomDock";
 import StatusBar from "./components/StatusBar";
 import SettingsPanel from "./components/SettingsPanel";
 import RowContextMenu from "./components/RowContextMenu";
@@ -158,14 +161,6 @@ export default function App() {
             event.preventDefault();
             toggleSelectAll();
             break;
-          case "g":
-            event.preventDefault();
-            setGraphOpen(!graphOpen());
-            break;
-          case "l":
-            event.preventDefault();
-            setLogOpen(!logOpen());
-            break;
           case "s":
             event.preventDefault();
             setSettingsOpen(!settingsOpen());
@@ -209,10 +204,6 @@ export default function App() {
             {/* Ayarlar menüsü tablonun yerini alır. */}
             <Show when={!settingsOpen()} fallback={<SettingsPanel />}>
               <DownloadTable />
-
-              <Show when={graphOpen() || logOpen()}>
-                <BottomDock />
-              </Show>
             </Show>
           </main>
         </div>

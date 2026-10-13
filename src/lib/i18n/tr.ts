@@ -51,8 +51,7 @@ export const tr = {
   "menu.item.delete_record": "Kaydı Sil",
   "menu.item.delete_download": "İndirmeyi Sil",
   "menu.item.properties": "Özellikler…",
-  "menu.item.speed_graph": "Hız Grafiği",
-  "menu.item.event_log": "Olay Günlüğü",
+  "menu.item.detail_window": "Ayrı Pencerede Aç",
   "menu.item.settings": "Ayarlar…",
   "menu.item.browser_setup": "Tarayıcı Eklentisi…",
   "menu.item.about": "ADM Hakkında",
@@ -156,6 +155,7 @@ export const tr = {
   "row.select_title": "Kaydı seç (Shift/Ctrl ile çoklu)",
   "row.more_title": "İşlemler",
   "row.channels_title": "{count} kanal",
+  "row.channels_rich": "Kanallar: {list}",
 
   // -----------------------------------------------------------------
   // Satır eylemleri (DownloadRow.tsx)
@@ -214,43 +214,18 @@ export const tr = {
   "about.ok": "Tamam",
 
   // -----------------------------------------------------------------
-  // Hız grafiği (SpeedGraph.tsx)
+  // Durum çubuğu mesajları (log paneli kaldırıldı)
   // -----------------------------------------------------------------
-  "graph.title": "Hız Grafiği",
-  "graph.empty": "Henüz hız verisi yok.",
-  "graph.axis_time": "Zaman",
-  "graph.peak": "Tepe hız",
-  "graph.average": "Ortalama hız",
-  "graph.now": "Anlık",
-  "graph.samples": "Örnek",
-
-  // -----------------------------------------------------------------
-  // Log paneli (LogPanel.tsx) ve grafik (Sparkline.tsx)
-  // -----------------------------------------------------------------
-  "log.aria": "Olay günlüğü",
-  "log.title": "Olay Günlüğü",
-  "log.clear": "Temizle",
-  "log.empty": "Henüz olay yok.",
-  "log.to_bottom": "En alta git",
   "log.channels_changed": "{name} kanal sayısı {count} olarak ayarlandı",
-  "spark.empty_title": "Hız geçmişi oluşuyor",
 
   // -----------------------------------------------------------------
   // Durum çubuğu (StatusBar.tsx)
   // -----------------------------------------------------------------
-  "sb.disk_free": "Disk boş",
   "sb.speed": "Anlık hız",
   "sb.on": "AÇIK",
   "sb.off": "KAPALI",
   "sb.master_title": "Tüm indirmeleri duraklat / sürdür",
-  "sb.free": "boş",
-  "sb.quality_title": "Ölçülen bağlantı hızına göre kalite kademesi",
-  "sb.quality.ok": "YÜKSEK",
-  "sb.quality.warn": "ORTA",
-  "sb.quality.idle": "DÜŞÜK",
   "sb.selected_many": "{count} kayıt seçili",
-  "sb.dock_show": "Hız grafiğini aç",
-  "sb.dock_hide": "Alt paneli kapat",
 
   // -----------------------------------------------------------------
   // Ayarlar (SettingsPanel.tsx)
@@ -295,6 +270,14 @@ export const tr = {
   },
   "log.status_line": "{name}: {status}",
   "bulk.deleted": "{count} kayıt silindi",
+  "bulk.done.paused": "{count} indirme duraklatıldı",
+  "bulk.done.resumed": "{count} indirme başlatıldı",
+  "bulk.done.cleared": "{count} kayıt temizlendi",
+  "bulk.done.cancelled": "{count} indirme iptal edildi",
+  "bulk.none.paused": "Duraklatılacak çalışan indirme yok",
+  "bulk.none.resumed": "Sürdürülebilir indirme yok",
+  "bulk.none.cleared": "Temizlenecek kayıt yok",
+  "bulk.none.cancelled": "İptal edilecek çalışan indirme yok",
 
   // -----------------------------------------------------------------
   // Biçimlendirme (format.ts)
@@ -407,21 +390,11 @@ export const tr = {
   "detail.conn.info": "Bilgi",
   "detail.conn.finished": "Bitti",
   "detail.conn.percent": "%{percent}",
+  "detail.err.open": "Ayrıntı penceresi açılamadı: {error}",
   "detail.log.empty": "Henüz yt-dlp çıktısı yok.",
   "detail.close_on_finish": "İndirme bitince bu pencereyi kapat",
   "detail.open": "Dosyayı Aç",
   "detail.show_in_folder": "Klasörde Göster",
-
-  // -----------------------------------------------------------------
-  // MC portu — durum çubuğu köprü göstergesi (StatusBar.tsx)
-  // -----------------------------------------------------------------
-  "sb.bridge_on": "Köprü açık",
-  "sb.bridge_off": "Köprü kapalı",
-  "sb.bridge_title": "Tarayıcı köprüsü 127.0.0.1:{port}",
-  "sb.bridge_none": "Henüz tarayıcı bağlanmadı",
-  "sb.bridge_browsers": "Bağlı: {browsers}",
-  "sb.unfinished": "Bitmeyen: {count}",
-  "sb.unfinished_title": "Tamamlanmayan indirme sayısı",
 
   // -----------------------------------------------------------------
   // MC portu — yeni indirme penceresi (NewDownloadDialog.tsx)
@@ -476,7 +449,7 @@ export const tr = {
   "settings.notify_hint": "İndirme bittiğinde Windows bildirimi gösterilir.",
   "settings.show_detail": "İndirme başlarken ayrıntı penceresini aç",
   "settings.show_detail_hint":
-    "Video indirmelerinde yt-dlp çıktısını hemen görmek için kullanışlıdır.",
+    "IDM tarzı küçük bir pencere açılır; ilerleme, hız ve kanal yüzdeleri orada izlenir. Elle açmak için satır bağlam menüsünden “Ayrı Pencerede Aç” seçin.",
   "settings.auto_close_detail": "Ayrıntı penceresini tamamlanınca kapat",
   "settings.auto_close_detail_hint":
     "Ayrıntı penceresindeki “bitince kapat” kutusunun varsayılanı budur.",

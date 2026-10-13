@@ -22,6 +22,7 @@ import { errorText, pushFeedback } from "../lib/useFeedback";
 import { formatBytes, formatNumber } from "../lib/format";
 import { t } from "../lib/i18n";
 import DownloadRow from "./DownloadRow";
+import Tip from "./Tip";
 
 export default function DownloadTable() {
   const items = createMemo(() => visibleItems());
@@ -35,9 +36,14 @@ export default function DownloadTable() {
   /** Listede temizlenecek kayıt var mı? */
   const canClear = () => counts().completed + counts().failed + counts().cancelled > 0;
 
+  /** Silinen kayıt sayısı, alt bilgi çubuğunda gösterilir. */
   async function onClear() {
     try {
-      await clearFinished();
+      const count = await clearFinished();
+      pushFeedback(
+        count > 0 ? "success" : "info",
+        t(count > 0 ? "bulk.done.cleared" : "bulk.none.cleared", { count }),
+      );
     } catch (e) {
       pushFeedback("error", t("list.err.clear", { error: errorText(e) }));
     }
@@ -49,7 +55,7 @@ export default function DownloadTable() {
           sayısıyla (9) birebir aynı olmalıdır; bir hücre eksikse tüm
           başlıklar bir sütun sola kayar. */}
       <div class="dlg-head" role="row">
-        <div class="dlg-head-cell dlg-head-cell-center" title={t("col.idx")}>
+        <div class="dlg-head-cell dlg-head-cell-center">
           {t("col.idx")}
         </div>
         <div class="dlg-head-cell dlg-head-cell-center" />
@@ -122,24 +128,27 @@ export default function DownloadTable() {
 
       {/* Alt bilgi çubuğu: başarısız uyarısı + temizle */}
       <Show when={failedBytes() > 0}>
-        <div class="table-foot" title={t("list.failed_hint_title")}>
+        <Tip
+          target="div"
+          class="table-foot"
+          label={t("list.failed_hint_title")}
+        >
           {t("list.failed_hint", {
             count: formatNumber(counts().failed),
             bytes: formatBytes(failedBytes()),
           })}
-        </div>
+        </Tip>
       </Show>
 
       <Show when={canClear()}>
         <div class="table-clear">
-          <button
-            type="button"
+          <Tip
             class="btn"
-            title={t("list.clear_title")}
+            label={t("list.clear_title")}
             onClick={() => void onClear()}
           >
             {t("list.clear")}
-          </button>
+          </Tip>
         </div>
       </Show>
     </div>

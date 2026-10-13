@@ -34,6 +34,7 @@ import {
 } from "../lib/format";
 import { t } from "../lib/i18n";
 import SegmentBar from "./SegmentBar";
+import Tip from "./Tip";
 
 /** Günlüğün gösterilen son satır sayısı (MC: son ~6000 karakter). */
 const LOG_TAIL = 40;
@@ -152,9 +153,9 @@ export default function DownloadDetailDialog() {
             <div class="modal-body detail-body">
               {/* Başlık: ad + kategori + yol */}
               <div class="detail-head">
-                <div class="modal-name" title={row().fileName}>
+                <Tip target="div" class="modal-name" label={row().fileName}>
                   {row().fileName}
-                </div>
+                </Tip>
                 <div class="detail-tags">
                   <span class={`cat-tag cat-tag-${categoryOf(row().fileName)}`}>
                     {categoryLabel(categoryOf(row().fileName))}
@@ -166,9 +167,9 @@ export default function DownloadDetailDialog() {
                     {statusLabel(row().status)}
                   </span>
                 </div>
-                <span class="modal-path" title={row().finalPath ?? row().filePath}>
+                <Tip target="span" class="modal-path" label={row().finalPath ?? row().filePath}>
                   {row().finalPath ?? row().filePath}
-                </span>
+                </Tip>
               </div>
 
               {/* İlerleme */}
@@ -216,9 +217,9 @@ export default function DownloadDetailDialog() {
                 <h4>{t("detail.section.info")}</h4>
                 <div class="detail-grid">
                   <span class="modal-meta-key">{t("detail.field.url")}</span>
-                  <span class="modal-meta-value props-url" title={row().url}>
+                  <Tip target="span" class="modal-meta-value props-url" label={row().url}>
                     {row().url}
-                  </span>
+                  </Tip>
 
                   <span class="modal-meta-key">{t("detail.field.kind")}</span>
                   <span class="modal-meta-value">
@@ -250,13 +251,17 @@ export default function DownloadDetailDialog() {
                   <Show when={row().headers.length > 0}>
                     <span class="modal-meta-key">{t("detail.field.headers")}</span>
                     <span class="modal-meta-value detail-headers">
-                      <For each={row().headers}>
-                        {([name, value]) => (
-                          <span class="detail-header-row" title={`${name}: ${value}`}>
-                            <b>{name}</b>: {value}
-                          </span>
-                        )}
-                      </For>
+                        <For each={row().headers}>
+                          {([name, value]) => (
+                            <Tip
+                              target="span"
+                              class="detail-header-row"
+                              label={`${name}: ${value}`}
+                            >
+                              <b>{name}</b>: {value}
+                            </Tip>
+                          )}
+                        </For>
                     </span>
                   </Show>
                 </div>

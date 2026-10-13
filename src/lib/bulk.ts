@@ -15,6 +15,7 @@
 import {
   cancelAllDownloads,
   cancelDownload,
+  closeDetailWindow,
   deleteDownload,
   pauseAllDownloads,
   pauseDownload,
@@ -44,10 +45,19 @@ async function runOne(
   }
 }
 
-/** Çalışan tüm indirmeleri duraklatır. */
+/**
+ * Çalışan tüm indirmeleri duraklatır.
+ *
+ * Dönen sayı kullanıcıya gösterilir; 0 ise "durdurulacak çalışan indirme
+ * yok" bilgisi verilir, aksi halde düğmeye basıldığında hiçbir iz kalmaz.
+ */
 export async function bulkPause(): Promise<void> {
   try {
-    await pauseAllDownloads();
+    const count = await pauseAllDownloads();
+    pushFeedback(
+      count > 0 ? "success" : "info",
+      t(count > 0 ? "bulk.done.paused" : "bulk.none.paused", { count }),
+    );
   } catch (e) {
     pushFeedback("error", t("act.failed", { action: t("act.pause"), error: errorText(e) }));
   }
@@ -56,7 +66,11 @@ export async function bulkPause(): Promise<void> {
 /** Sürdürülebilir tüm indirmeleri sürdürür. */
 export async function bulkResume(): Promise<void> {
   try {
-    await resumeAllDownloads();
+    const count = await resumeAllDownloads();
+    pushFeedback(
+      count > 0 ? "success" : "info",
+      t(count > 0 ? "bulk.done.resumed" : "bulk.none.resumed", { count }),
+    );
   } catch (e) {
     pushFeedback("error", t("act.failed", { action: t("act.resume"), error: errorText(e) }));
   }
@@ -65,7 +79,11 @@ export async function bulkResume(): Promise<void> {
 /** Çalışan tüm indirmeleri iptal eder. */
 export async function bulkCancel(): Promise<void> {
   try {
-    await cancelAllDownloads();
+    const count = await cancelAllDownloads();
+    pushFeedback(
+      count > 0 ? "success" : "info",
+      t(count > 0 ? "bulk.done.cancelled" : "bulk.none.cancelled", { count }),
+    );
   } catch (e) {
     pushFeedback("error", t("act.failed", { action: t("act.cancel"), error: errorText(e) }));
   }
@@ -90,6 +108,7 @@ export async function bulkDelete(
   for (const item of items) {
     const ok = await runOne(item.id, label, async () => {
       await deleteDownload(item.id, deleteFile);
+      await closeDetailWindow(item.id);
     });
     if (ok) removed += 1;
   }
@@ -126,9 +145,12 @@ export async function deleteItem(
   deleteFile: boolean,
 ): Promise<void> {
   const label = deleteFile ? t("act.delete") : t("act.delete_record");
-  await runOne(item.id, label, async () => {
+  const ok = await runOne(item.id, label, async () => {
     await deleteDownload(item.id, deleteFile);
   });
+  // Kayıt gittiyse açık popup'un da gitmesi gerekir; aksi halde "kayıt yok"
+  // diye boş bir pencere ekranda kalır.
+  if (ok) await closeDetailWindow(item.id).catch(() => undefined);
 }
 
 /** Seçili kayıtları siler (araç çubuğu kısayolu). */

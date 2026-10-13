@@ -9,7 +9,7 @@
  * konteynerinin `overflow` değeri onu kırpamaz.
  */
 import { Show, createEffect, createSignal, onCleanup } from "solid-js";
-import { changeChannelCount, confirm, openFolder, openPath } from "../lib/api";
+import { changeChannelCount, confirm, openDetailWindow, openFolder, openPath } from "../lib/api";
 import {
   cancelItem,
   deleteItem,
@@ -73,6 +73,15 @@ export default function RowContextMenu() {
     } catch (e) {
       pushFeedback("error", t("act.failed", { action: label, error: errorText(e) }));
     }
+  }
+
+  /** IDM tarzı küçük ayrı pencereyi açar (aynı indirme için tek örnek). */
+  async function onOpenWindow() {
+    const item = contextMenu()?.item;
+    if (!item) return;
+    await run(t("menu.item.detail_window"), async () => {
+      await openDetailWindow(item.id, item.fileName);
+    });
   }
 
   /** Kaydı (ve istenirse dosyasını) onaylayarak siler. */
@@ -257,6 +266,15 @@ export default function RowContextMenu() {
               }}
             >
               {t("menu.item.properties")}
+            </button>
+
+            {/* IDM tarzı küçük ayrı pencere. */}
+            <button
+              type="button"
+              class="menu-item"
+              onClick={() => void onOpenWindow()}
+            >
+              {t("menu.item.detail_window")}
             </button>
           </div>
         </div>

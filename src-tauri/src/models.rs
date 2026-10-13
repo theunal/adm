@@ -207,6 +207,24 @@ impl SharedChannel {
         lock(&self.state).current_byte = pos;
     }
 
+    /// Kanalın aralık sonunu ayarlar.
+    ///
+    /// Boyut bilinmeyen indirmelerde kanal planı `end_byte = 0` ile kurulur;
+    /// `mark_finished` bunu `1`'e çektiği için `total_from_channels` 1 döner
+    /// ve kayıt "1 B" tamamlanmış görünür. Tamamlanma anında hem aralık
+    /// sonu hem yazma konumu gerçek dosya boyutuna hizalanır; böylece
+    /// `finalize` ve arayüzdeki kanal tablosu doğru değeri görür.
+    ///
+    /// Yalnızca **tek kanallı** bilinmeyen boyutlu indirmelerde çağrılır
+    /// (`plan_channels(0, n)` her zaman tek kanal döner); bu yüzden "gerçek
+    /// boyut" tüm aralığa uygulanabilir.
+    pub fn align_to_total(&self, total: u64) {
+        let mut st = lock(&self.state);
+        st.end_byte = total.saturating_sub(1);
+        st.current_byte = total;
+        st.finished = true;
+    }
+
     /// Aralıksız (tek akış) istek için kanalı başa alır.
     ///
     /// `ranged = false` istek `Range` başlığı taşımaz, sunucu dosyayı **0'dan

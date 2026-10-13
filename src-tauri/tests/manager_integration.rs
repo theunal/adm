@@ -414,7 +414,8 @@ async fn gecmisi_temizle_yalnizca_bitmisleri_siler() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    manager.clear_finished().await.expect("temizlenemedi");
+    let silinen = manager.clear_finished().await.expect("temizlenemedi");
+    assert_eq!(silinen, 1, "silinen kayıt sayısı dönmeliydi");
     assert!(
         manager.get(id).await.unwrap().is_none(),
         "bitmiş kayıt temizlenmeliydi"
@@ -729,6 +730,230 @@ async fn sinir_sifirsa_indirme_baslamaz() {
     );
 
     cleanup(&manager, id).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn auto_start_kapaliyken_kuyruk_yine_baslatilir() {
+    let db = setup("kuyruk_oto_surdur").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    // `auto_start` = "yeni indirmeler hemen başlasın"; kullanıcının "Kuyruğu
+    // Başlat" düğmesini ya da satır devam ettirmesini engellememelidir.
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.auto_start = false;
+    manager.save_settings(&settings).await.expect("ayarlar yazılamadı");
+
+    let dir = cikti_klasoru("kuyruk_oto_surdur");
+    let mut req = StartRequest::simple("http://127.0.0.1:1/b.bin".to_string(), None, 1);
+    req.file_path = Some(dir.join("oto_surdur.bin").to_string_lossy().to_string());
+
+    let id = manager.start(req).await.expect("kayıt oluşturulamadı");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        manager.get(id).await.unwrap().unwrap().status,
+        DownloadStatus::Queued,
+        "auto_start kapalıyken kayıt kuyrukta beklemeli"
+    );
+
+    // Elle "Kuyruğu Başlat": görev `Queued`'dan çıkıp denemeye girmeli.
+    let etkilenen = manager.resume_all().await.expect("kuyruk başlatılamadı");
+    assert_eq!(etkilenen, 1, "kuyruktaki kayıt hedeflenmeliydi");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let durum = manager.get(id).await.unwrap().unwrap().status;
+        if durum != DownloadStatus::Queued && durum != DownloadStatus::Downloading {
+            assert_ne!(
+                durum,
+                DownloadStatus::Paused,
+                "kuyruk başlatıldığında kayıt Paused'a dönmemeliydi"
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "kuyruk başlatma sonrası kayıt kuyrukta takılı kaldı: {durum:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    cleanup(&manager, id).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn kuyruktaki_kayit_toplu_duraklat_ile_durur() {
+    let db = setup("kuyruk_surdur").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    // Eşzamanlılık 1, `auto_start` kapalı: kayıt `Queued` kalır ve çalışan
+    // görevi yoktur. "Tümünü Durdur" yine de durdurmalıdır; aksi halde
+    // `pause` `err.running_not_found` verir ve hata `bulk_each` içinde yutulur.
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.max_concurrent = 1;
+    settings.auto_start = false;
+    manager.save_settings(&settings).await.expect("ayarlar yazılamadı");
+
+    let dir = cikti_klasoru("kuyruk_surdur");
+    let mut ids = Vec::new();
+    for i in 0..2 {
+        let mut req = StartRequest::simple(
+            format!("http://127.0.0.1:1/c_{i}.bin"),
+            None,
+            1,
+        );
+        req.file_path =
+            Some(dir.join(format!("kuyruk_surdur_{i}.bin")).to_string_lossy().to_string());
+        ids.push(manager.start(req).await.expect("kayıt oluşturulamadı"));
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    for id in &ids {
+        assert_eq!(
+            manager.get(*id).await.unwrap().unwrap().status,
+            DownloadStatus::Queued,
+            "kayıt kuyrukta olmalıydı"
+        );
+    }
+
+    let etkilenen = manager.pause_all().await.expect("toplu duraklat hata verdi");
+    assert_eq!(etkilenen, ids.len(), "kuyruktaki kayıtlar hedeflenmeliydi");
+
+    for id in &ids {
+        assert_eq!(
+            manager.get(*id).await.unwrap().unwrap().status,
+            DownloadStatus::Paused,
+            "kuyruktaki kayıt duraklatılmamıştı"
+        );
+    }
+
+    for id in &ids {
+        cleanup(&manager, *id).await;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn calismayan_kayit_toplu_duraklat_hata_verir() {
+    let db = setup("calismayan_duraklat").await;
+    let manager = DownloadManager::new(db);
+
+    // Hiç görev yok: `Queued` da değil, dolayısıyla `detach_queued` da
+    // devreye girmemeli ve çağıran hata almalı.
+    let req = StartRequest::simple("http://127.0.0.1:1/d.bin".to_string(), None, 1);
+    let id = match manager.start(req).await {
+        Ok(id) => id,
+        Err(_) => return,
+    };
+
+    for _ in 0..80 {
+        if let Some(i) = manager.get(id).await.unwrap()
+            && i.status == DownloadStatus::Failed
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // `Failed` sürdürülebilir ama duraklatılabilir değil.
+    assert!(
+        manager.pause(id).await.is_err(),
+        "çalışmayan kayıt duraklatıldı diye hata vermemeli"
+    );
+
+    cleanup(&manager, id).await;
+}
+
+#[tokio::test]
+async fn es_zamanli_sinir_doluysa_baslatilanlar_kuyruga_alinir() {
+    // Eşzamanlılık 1, 3 görev. "Kuyruğu Başlat" yalnızca birini başlatabilir;
+    // diğerleri `Paused`/`Failed` durumunda kalırsa `pump_queue` (yalnızca
+    // `Queued` bakar) onları asla devreye sokmaz ve kuyruk donup kalır.
+    let db = setup("kuyruk_dolu").await;
+    let manager = DownloadManager::new(db);
+    let _guard = manager.clone();
+
+    let mut settings = manager.settings().await.expect("ayarlar okunamadı");
+    settings.max_concurrent = 1;
+    settings.auto_start = false;
+    manager.save_settings(&settings).await.expect("ayarlar yazılamadı");
+
+    let dir = cikti_klasoru("kuyruk_dolu");
+    let sunucu = YavasSunucu::baslat(3 * 1024 * 1024);
+
+    let mut ids: Vec<i64> = Vec::new();
+    for i in 0..3 {
+        let mut req = StartRequest::simple(sunucu.url(&format!("dolu_{i}.bin")), None, 1);
+        req.file_path = Some(dir.join(format!("dolu_{i}.bin")).to_string_lossy().to_string());
+        ids.push(manager.start(req).await.expect("kayıt oluşturulamadı"));
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Üçü de kuyrukta (auto_start kapalı, kullanıcı henüz serbest bırakmadı).
+    for id in &ids {
+        assert_eq!(
+            manager.get(*id).await.unwrap().unwrap().status,
+            DownloadStatus::Queued,
+            "kayıt kuyrukta olmalıydı"
+        );
+    }
+
+    let etkilenen = manager.resume_all().await.expect("kuyruk başlatılamadı");
+    assert_eq!(etkilenen, ids.len());
+
+    // Tamamlanana kadar her kayıt ya indiriliyor ya da kuyrukta olmalı;
+    // `Failed`/`Paused`a düşen olursa kuyruk akmıyor demektir.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let hepsi = manager.list_all().await.unwrap();
+        let ilgili: Vec<_> = hepsi.iter().filter(|i| ids.contains(&i.id)).collect();
+
+        let biten = ilgili
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i.status,
+                    DownloadStatus::Completed
+                        | DownloadStatus::Failed
+                        | DownloadStatus::Cancelled
+                )
+            })
+            .count();
+        if biten == ids.len() {
+            break;
+        }
+
+        for i in &ilgili {
+            // `Completed` da bu turda geçerli: yukarıdaki sayaç yalnızca
+            // hepsi bittiğinde çıkar. Asıl reddedilen durum, kuyruğun
+            // donmasına yol açan `Paused` / `Failed` / `Cancelled`.
+            assert!(
+                matches!(
+                    i.status,
+                    DownloadStatus::Queued
+                        | DownloadStatus::Downloading
+                        | DownloadStatus::Completed
+                ),
+                "kuyruktaki kayıt kuyrukta kalmalıydı, gördüğümüz: {:?} ({:?})",
+                i.status,
+                i.error_message
+            );
+        }
+
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "kuyruk zamanında boşalmadı: {:?}",
+            ilgili.iter().map(|i| (i.id, i.status)).collect::<Vec<_>>()
+        );
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+
+    for id in &ids {
+        cleanup(&manager, *id).await;
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

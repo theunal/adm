@@ -26,6 +26,7 @@ import { CHANNEL_PRESETS, MAX_CHANNELS, MIN_CHANNELS, settings } from "../lib/se
 import { addDialogOpen, setAddDialogOpen } from "../lib/ui";
 import { checkDownloadUrl, type DownloadKind } from "../lib/format";
 import { t } from "../lib/i18n";
+import Tip from "./Tip";
 
 /** Tür seçicisinin sırası. */
 const KINDS: { id: DownloadKind; label: string; hint: string }[] = [
@@ -280,20 +281,21 @@ export default function NewDownloadDialog() {
                 <Show when={target()}>
                   <div class="add-meta-row">
                     <span class="add-meta-key">{t("add.save_to")}</span>
-                    <span class="add-meta-value" title={target()}>
+                    <Tip target="span" class="add-meta-value" label={target()}>
                       {target()}
-                    </span>
+                    </Tip>
                   </div>
                 </Show>
 
                 <Show when={dbPath()}>
                   <div class="add-meta-row">
-                    <span
+                    <Tip
+                      target="span"
                       class="add-meta-value"
-                      title={t("form.db_title", { path: dbPath() })}
+                      label={t("form.db_title", { path: dbPath() })}
                     >
                       {t("form.db_hint")}
-                    </span>
+                    </Tip>
                   </div>
                 </Show>
               </div>

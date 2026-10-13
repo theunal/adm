@@ -172,15 +172,6 @@ export type DownloadEvent =
     }
   | ({ kind: "clipboard" } & ClipboardPrompt);
 
-/** Log satırı. */
-export interface LogEntry {
-  id: number;
-  level: "info" | "success" | "warn" | "error";
-  message: string;
-  downloadId: number | null;
-  time: string;
-}
-
 /**
  * Durumun etkin dildeki etiketini döner.
  *

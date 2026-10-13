@@ -683,6 +683,11 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "The site login window is not open",
     ),
     (
+        "err.detail_open",
+        "Ayrıntı penceresi açılamadı: {0}",
+        "Could not open the detail window: {0}",
+    ),
+    (
         "err.autostart",
         "Otomatik başlatma kaydı yazılamadı: {0}",
         "Could not write the automatic start entry: {0}",

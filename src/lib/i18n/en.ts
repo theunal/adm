@@ -46,8 +46,7 @@ export const en: Dict = {
   "menu.item.delete_record": "Delete from List",
   "menu.item.delete_download": "Delete Download",
   "menu.item.properties": "Properties…",
-  "menu.item.speed_graph": "Speed Graph",
-  "menu.item.event_log": "Events Log",
+  "menu.item.detail_window": "Open in Separate Window",
   "menu.item.settings": "Settings…",
   "menu.item.browser_setup": "Browser Extension…",
   "menu.item.about": "About ADM",
@@ -150,6 +149,7 @@ export const en: Dict = {
   "row.select_title": "Select the record (Shift/Ctrl for multiple)",
   "row.more_title": "Actions",
   "row.channels_title": "{count} channels",
+  "row.channels_rich": "Channels: {list}",
 
   // -----------------------------------------------------------------
   // Satır eylemleri (DownloadRow.tsx)
@@ -208,43 +208,18 @@ export const en: Dict = {
   "about.ok": "OK",
 
   // -----------------------------------------------------------------
-  // Hız grafiği (SpeedGraph.tsx)
+  // Status bar messages (the log panel was removed)
   // -----------------------------------------------------------------
-  "graph.title": "Speed Graph",
-  "graph.empty": "No speed data yet.",
-  "graph.axis_time": "Time",
-  "graph.peak": "Peak speed",
-  "graph.average": "Average speed",
-  "graph.now": "Current",
-  "graph.samples": "Samples",
-
-  // -----------------------------------------------------------------
-  // Log paneli (LogPanel.tsx) ve grafik (Sparkline.tsx)
-  // -----------------------------------------------------------------
-  "log.aria": "Events log",
-  "log.title": "Events Log",
-  "log.clear": "Clear",
-  "log.empty": "No events yet.",
-  "log.to_bottom": "Go to bottom",
   "log.channels_changed": "{name} channel count set to {count}",
-  "spark.empty_title": "Building the speed history",
 
   // -----------------------------------------------------------------
   // Durum çubuğu (StatusBar.tsx)
   // -----------------------------------------------------------------
-  "sb.disk_free": "Free space",
   "sb.speed": "Current speed",
   "sb.on": "ON",
   "sb.off": "OFF",
   "sb.master_title": "Pause / resume all downloads",
-  "sb.free": "free",
-  "sb.quality_title": "Quality tier derived from the measured speed",
-  "sb.quality.ok": "HIGH",
-  "sb.quality.warn": "MEDIUM",
-  "sb.quality.idle": "LOW",
   "sb.selected_many": "{count} records selected",
-  "sb.dock_show": "Open the speed graph",
-  "sb.dock_hide": "Hide the bottom panel",
 
   // -----------------------------------------------------------------
   // Ayarlar (SettingsPanel.tsx)
@@ -289,6 +264,14 @@ export const en: Dict = {
   },
   "log.status_line": "{name}: {status}",
   "bulk.deleted": "{count} records deleted",
+  "bulk.done.paused": "{count} downloads paused",
+  "bulk.done.resumed": "{count} downloads started",
+  "bulk.done.cleared": "{count} records cleared",
+  "bulk.done.cancelled": "{count} downloads cancelled",
+  "bulk.none.paused": "No running downloads to pause",
+  "bulk.none.resumed": "No resumable downloads",
+  "bulk.none.cleared": "No records to clear",
+  "bulk.none.cancelled": "No running downloads to cancel",
 
   // -----------------------------------------------------------------
   // Biçimlendirme (format.ts)
@@ -405,17 +388,7 @@ export const en: Dict = {
   "detail.close_on_finish": "Close this window when the download finishes",
   "detail.open": "Open File",
   "detail.show_in_folder": "Show in Folder",
-
-  // -----------------------------------------------------------------
-  // MC port — status bar bridge indicator (StatusBar.tsx)
-  // -----------------------------------------------------------------
-  "sb.bridge_on": "Bridge on",
-  "sb.bridge_off": "Bridge off",
-  "sb.bridge_title": "Browser bridge on 127.0.0.1:{port}",
-  "sb.bridge_none": "No browser has connected yet",
-  "sb.bridge_browsers": "Connected: {browsers}",
-  "sb.unfinished": "Unfinished: {count}",
-  "sb.unfinished_title": "Number of downloads that are not complete",
+  "detail.err.open": "Could not open the detail window: {error}",
 
   // -----------------------------------------------------------------
   // MC port — new download dialog (NewDownloadDialog.tsx)
@@ -470,7 +443,7 @@ export const en: Dict = {
   "settings.notify_hint": "A Windows notification is shown when a download completes.",
   "settings.show_detail": "Open the detail window when a download starts",
   "settings.show_detail_hint":
-    "Useful for watching the yt-dlp output of a video download.",
+    "Opens a small IDM-style popup where progress, speed and per-channel percentages can be watched. Open it manually from the row context menu with “Open in Separate Window”.",
   "settings.auto_close_detail": "Close the detail window when finished",
   "settings.auto_close_detail_hint":
     "This is the default of the “close on finish” checkbox in the detail window.",

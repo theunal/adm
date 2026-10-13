@@ -17,6 +17,7 @@ import {
 } from "../lib/api";
 import { changeLang, settings } from "../lib/settings";
 import { t, type Locale } from "../lib/i18n";
+import Tip from "./Tip";
 import logoUrl from "../assets/adm-logo-128.png";
 
 /** Dil anahtarındaki seçenekler. */
@@ -55,25 +56,17 @@ export default function TitleBar() {
           </For>
         </div>
 
-        <button
-          type="button"
-          class="win-btn"
-          title={t("title.win.minimize")}
+        <Tip label={t("title.win.minimize")} class="win-btn"
           aria-label={t("title.win.minimize")}
-          onClick={() => void minimizeWindow()}
-        >
+          onClick={() => void minimizeWindow()}>
           <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
             <rect x="2" y="5.5" width="8" height="1" fill="currentColor" />
           </svg>
-        </button>
+        </Tip>
 
-        <button
-          type="button"
-          class="win-btn"
-          title={t("title.win.maximize")}
+        <Tip label={t("title.win.maximize")} class="win-btn"
           aria-label={t("title.win.maximize_aria")}
-          onClick={() => void toggleMaximizeWindow()}
-        >
+          onClick={() => void toggleMaximizeWindow()}>
           <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
             <rect
               x="2.5"
@@ -85,15 +78,11 @@ export default function TitleBar() {
               stroke-width="1.2"
             />
           </svg>
-        </button>
+        </Tip>
 
-        <button
-          type="button"
-          class="win-btn win-btn-close"
-          title={t("title.win.close")}
+        <Tip label={t("title.win.close")} class="win-btn win-btn-close"
           aria-label={t("title.win.close")}
-          onClick={() => void closeWindow()}
-        >
+          onClick={() => void closeWindow()}>
           <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
             <path
               d="M3 3 L9 9 M9 3 L3 9"
@@ -102,7 +91,7 @@ export default function TitleBar() {
               stroke-linecap="round"
             />
           </svg>
-        </button>
+        </Tip>
       </div>
     </header>
   );

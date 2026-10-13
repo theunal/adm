@@ -13,6 +13,10 @@
  * Köprü durumu, araç kurulumu, güncelleme ve pano sorması da burada tutulur:
  * hepsi `download://event` kanalından gelir ve birden fazla bileşen
  * (durum çubuğu, ayarlar sekmeleri, sorma penceresi) tarafından okunur.
+ *
+ * **Log paneli yok.** Hız grafiği ve olay günlüğü kaldırıldı; Rust'un
+ * bildirdiği mesajlar yalnız uyarı/hata seviyesinde durum çubuğunun geçici
+ * mesaj yuvasına düşer (`pushFeedback`).
  */
 import { createStore, produce } from "solid-js/store";
 import { createSignal } from "solid-js";
@@ -20,6 +24,7 @@ import {
   bridgeStatus as readBridgeStatus,
   listDownloads,
   onDownloadEvent,
+  openDetailWindow,
 } from "./api";
 import { onLocaleChange, t } from "./i18n";
 import {
@@ -32,13 +37,11 @@ import {
   type DownloadEvent,
   type DownloadItem,
   type DownloadStatus,
-  type LogEntry,
-  type SpeedSample,
   type UpdateInfo,
 } from "./format";
 import { pushFeedback } from "./useFeedback";
 import { settings } from "./settings";
-import { setPropertiesItem } from "./ui";
+import { setSettingsOpen } from "./ui";
 
 /* -----------------------------------------------------------------
    Görünüm (kenar çubuğu filtreleri)
@@ -111,8 +114,6 @@ interface DownloadState {
   byId: Record<number, DownloadItem>;
   /** Ekranda gösterilecek sıra. */
   order: number[];
-  /** Canlı hız geçmişi (yalnızca bellekte tutulur). */
-  speedHistory: Record<number, SpeedSample[]>;
   /** İlerleme olayından gelen anlık hız. */
   speed: Record<number, number>;
   /** Aynı id için işlem bekleyen mi? (çift tıklama koruması). */
@@ -124,40 +125,11 @@ interface DownloadState {
 const [state, setState] = createStore<DownloadState>({
   byId: {},
   order: [],
-  speedHistory: {},
   speed: {},
   busy: {},
   selected: {},
 });
 
-const [logs, setLogs] = createStore<{ entries: LogEntry[] }>({ entries: [] });
-let logSeq = 0;
-
-/**
- * Depoya bir log satırı ekler (bellek sınırlı kalsın).
- *
- * En eski satır silinir; `MAX_LOGS` üst sınır aşıldığında baştaki entries
- * çıkarılır.
- */
-const MAX_LOGS = 300;
-export function pushLog(
-  level: "info" | "success" | "warn" | "error",
-  message: string,
-  downloadId: number | null = null,
-) {
-  const entry: LogEntry = {
-    id: ++logSeq,
-    level,
-    message,
-    downloadId,
-    time: new Date().toLocaleTimeString(undefined, { hour12: false }),
-  };
-  setLogs("entries", (prev) => {
-    const next = [...prev, entry];
-    if (next.length > MAX_LOGS) next.splice(0, next.length - MAX_LOGS);
-    return next;
-  });
-}
 const [view, setView] = createSignal<View>({ kind: "task", value: "all" });
 const [ready, setReady] = createSignal(false);
 
@@ -204,14 +176,23 @@ export function setSearch(value: string) {
   writeSearch(value);
 }
 
-/** Görev filtresini seçer (kategori seçimini de değiştirir). */
+/**
+ * Görev filtresini seçer (kategori seçimini de değiştirir).
+ *
+ * Ayar paneli açıkken kenar çubuğu ya da filtre açılır listesi tıklanırsa
+ * ayarlar kapanır: kenar çubuğu ayarlar açıkken de görünür, ama tıklama
+ * yalnızca görünmez bir filtre değiştirir ve kullanıcı "hiçbir şey olmadı"
+ * sanar. Panel, **indirme listesinden dönülemez bir yol** olmamalıdır.
+ */
 export function selectTask(value: TaskFilter) {
+  setSettingsOpen(false);
   setView({ kind: "task", value });
   clearSelection();
 }
 
 /** Kategori filtresini seçer (görev seçimini de değiştirir). */
 export function selectCategory(value: CategoryKey) {
+  setSettingsOpen(false);
   setView({ kind: "category", value });
   clearSelection();
 }
@@ -250,11 +231,6 @@ export function itemById(id: number): DownloadItem | undefined {
 /** Anlık hız (MB/s). */
 export function itemSpeed(id: number): number {
   return state.speed[id] ?? 0;
-}
-
-/** Hız geçmişi (sparkline). */
-export function itemHistory(id: number): SpeedSample[] {
-  return state.speedHistory[id] ?? [];
 }
 
 /** Bir kayıt şu an işlemde mi? */
@@ -463,7 +439,7 @@ export function selectedItems(): DownloadItem[] {
  *
  * TS, `Record<number, boolean>` yoluna `undefined` atamayı reddeder; bu
  * yüzden kod içi standart olan `undefined as unknown as T` kalıbı kullanılır
- * (aynı kalıp `speed` / `speedHistory` temizliğinde de var).
+ * (aynı kalıp `speed` temizliğinde de var).
  */
 function dropSelection(id: number) {
   setState("selected", id, undefined as unknown as boolean);
@@ -571,48 +547,27 @@ export function itemElapsed(item: DownloadItem): number {
 }
 
 export interface Totals {
-  /** Tamamlanan + süren kayıtların indirdiği toplam bayt. */
-  totalDownloaded: number;
   /** Çalışan kayıtların anlık toplam hızı (MB/s). */
   totalSpeed: number;
   /** Çalışan kayıt sayısı (sırada + indiriliyor). */
   activeCount: number;
-  /** Tamamlanan kayıt sayısı. */
-  completedCount: number;
-  /** Tüm kayıtların geçen süre toplamı (saniye). */
-  totalSeconds: number;
 }
 
-/** Genel özet: toplam indirilen bayt, anlık toplam hız ve süreler. */
+/** Genel özet: anlık toplam hız ve çalışan indirme sayısı. */
 export function totals(): Totals {
-  let totalDownloaded = 0;
   let totalSpeed = 0;
   let activeCount = 0;
-  let completedCount = 0;
-  let totalSeconds = 0;
 
   for (const id of state.order) {
     const item = state.byId[id];
     if (!item) continue;
-
-    if (item.status === "Completed") {
-      completedCount += 1;
-    }
     if (isRunning(item)) {
       activeCount += 1;
       totalSpeed += state.speed[id] ?? 0;
     }
-    totalDownloaded += item.downloadedBytes;
-    totalSeconds += itemElapsed(item);
   }
 
-  return {
-    totalDownloaded,
-    totalSpeed,
-    activeCount,
-    completedCount,
-    totalSeconds,
-  };
+  return { totalSpeed, activeCount };
 }
 
 /* -----------------------------------------------------------------
@@ -638,6 +593,11 @@ function upsert(item: DownloadItem) {
  * `showDetailOnStart` (Ayarlar ▸ Genel): indirme **başlarken** ayrıntı
  * penceresini açar.
  *
+ * IDM davranışı: indirme başlayınca küçük bir **ayrı OS penceresi** açılır
+ * (Rust `open_detail_window`), görev bitince ayarlardaki `auto_close_detail`
+ * değerine göre kendiliğinden kapanır. Satırın kendi içindeki ayrıntı modalı
+ * bundan etkilenmez; o hâlâ bağlam menüsünden açılır.
+ *
  * Yalnızca durum `Downloading`'a *geçtiği* anda etkindir; ilerleme turları bu
  * fonksiyonu ~500 ms'de bir çağırsa da pencere bir kez açılır ve odağı
  * kullanıcıdan çalmaz. Kayıt henüz listeye düşmemişse (`itemById` boş dönerse)
@@ -654,7 +614,10 @@ function maybeOpenDetailOnStart(
   if (previous === next || next !== "Downloading") return;
   if (!settings.showDetailOnStart) return;
   const item = itemById(id);
-  if (item) setPropertiesItem(item);
+  if (!item) return;
+  void openDetailWindow(id, item.fileName).catch((e: unknown) => {
+    pushFeedback("error", t("detail.err.open", { error: errorText(e) }), id);
+  });
 }
 
 /** İlerleme olayını uygular. */
@@ -664,10 +627,9 @@ function applyProgress(ev: Extract<DownloadEvent, { kind: "progress" }>) {
   // Saat her ilerleme turunda ilerler (süre metinleri canlı kalsın).
   setClock(Date.now());
 
-  // Hız geçmişini güncelle (yalnızca bellekte).
-  if (ev.speedHistory.length > 0) {
-    setState("speedHistory", ev.id, [...ev.speedHistory]);
-  }
+  // `ev.speedHistory` bilerek yoksayılır: hız grafiği kaldırıldı, dolayısıyla
+  // arayüzde tutulacak bir hız geçmişi yok. Rust hâlâ gönderiyor (60 örneklik
+  // halka, maliyeti önemsiz); tel formatı değişmediği için kabul ediliyor.
   setState("speed", ev.id, ev.speedMbps);
 
   if (!existing) {
@@ -722,7 +684,7 @@ function applyCompleted(ev: Extract<DownloadEvent, { kind: "completed" }>) {
     }),
   );
 
-  pushLog(
+  pushFeedback(
     ev.status === "Completed" ? "success" : "info",
     t("log.status_line", {
       name: itemName(ev.id),
@@ -737,7 +699,7 @@ function itemName(id: number): string {
 }
 
 /** Yükleme tamamlandı mı? */
-export { ready, logs, state };
+export { ready, state };
 
 /* -----------------------------------------------------------------
    Köprü · araç kurulumu · güncelleme · pano (MC portu)
@@ -837,7 +799,14 @@ export async function initStore(): Promise<void> {
         void reloadList();
         break;
       case "log":
-        pushLog(normalizeLevel(ev.level), ev.message, ev.downloadId);
+        // Alt dock kaldırıldığı için log paneli yok; Rust'un bildirdiği
+        // mesajlar **yalnız uyarı ve hata** seviyesinde durum çubuğuna
+        // düşer. `info` atılır: her duraklatma/sürdürme bir `log` üretir ve
+        // 4 saniyelik mesaj yuvası kullanıcının gerçek bildirimleriyle
+        // birbirini ezerdi.
+        if (ev.level === "warn" || ev.level === "error") {
+          pushFeedback(normalizeLevel(ev.level), ev.message, ev.downloadId);
+        }
         break;
       case "bridge":
         setBridge((prev) => ({
@@ -845,7 +814,7 @@ export async function initStore(): Promise<void> {
           port: ev.port,
           browsers: prev.browsers,
         }));
-        if (ev.error) pushLog("error", ev.error, null);
+        if (ev.error) pushFeedback("error", ev.error, null);
         break;
       case "bridgeConnection":
         setBridge((prev) =>
@@ -853,14 +822,14 @@ export async function initStore(): Promise<void> {
             ? prev
             : { ...prev, browsers: [...prev.browsers, ev.browser] },
         );
-        pushLog("info", t("log.bridge_connection", { browser: ev.browser }), null);
+        pushFeedback("info", t("log.bridge_connection", { browser: ev.browser }), null);
         break;
       case "tool":
         applyToolEvent(ev);
         break;
       case "update":
         setUpdateInfo(ev);
-        pushLog(
+        pushFeedback(
           ev.error ? "error" : ev.latest ? "info" : "success",
           ev.error
             ? t("log.update_failed", { error: ev.error })
@@ -902,13 +871,17 @@ function applyToolEvent(ev: Extract<DownloadEvent, { kind: "tool" }>) {
       setToolProgress(ev.tool, undefined as unknown as number);
       setToolMessage(ev.tool, t("tool.installed", { version: ev.version }));
       setToolRevision((n) => n + 1);
-      pushLog("success", t("log.tool_installed", { tool: ev.tool, version: ev.version }), null);
+      pushFeedback(
+        "success",
+        t("log.tool_installed", { tool: ev.tool, version: ev.version }),
+        null,
+      );
       break;
     case "failed":
       setToolProgress(ev.tool, undefined as unknown as number);
       setToolMessage(ev.tool, ev.error);
       setToolRevision((n) => n + 1);
-      pushLog("error", t("tool.failed", { error: ev.error }), null);
+      pushFeedback("error", t("tool.failed", { error: ev.error }), null);
       break;
   }
 }
@@ -942,7 +915,6 @@ async function reloadList(): Promise<void> {
     for (const id of Object.keys(state.speed)) {
       if (!seen.has(Number(id))) {
         setState("speed", Number(id), undefined as unknown as number);
-        setState("speedHistory", Number(id), undefined as unknown as SpeedSample[]);
       }
     }
     // `selected` ayrıca taranmalı: bir kayıt hiç hız kaydı tutulmamış
@@ -972,4 +944,4 @@ export function errorText(e: unknown): string {
 
 /** Durumun etkin dildeki etiketi (şablonlarda kullanılır). */
 export { statusLabel };
-export type { DownloadItem, DownloadStatus, LogEntry };
+export type { DownloadItem, DownloadStatus };

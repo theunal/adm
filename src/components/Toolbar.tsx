@@ -29,9 +29,10 @@ import {
   view,
   type SortKey,
 } from "../lib/store";
-import { setAddDialogOpen, setSettingsOpen } from "../lib/ui";
+import { setAddDialogOpen, setSettingsOpen, settingsOpen } from "../lib/ui";
 import { t } from "../lib/i18n";
 import MenuBar from "./MenuBar";
+import Tip from "./Tip";
 import { categoryLabel } from "../lib/format";
 import { clearFinished, pauseAllDownloads, resumeAllDownloads } from "../lib/api";
 import { errorText, pushFeedback } from "../lib/useFeedback";
@@ -49,6 +50,20 @@ const SORTS: { key: SortKey; label: string }[] = [
 /** Hangi açılır liste açık (`null` ise hiçbiri). */
 type OpenList = "filter" | "sort" | null;
 
+/** Toplu eylem → "N kayıt etkilendi" sözlük anahtarı. */
+const BULK_DONE_KEY = {
+  pause: "bulk.done.paused",
+  resume: "bulk.done.resumed",
+  clear: "bulk.done.cleared",
+} as const;
+
+/** Toplu eylem → "hiçbir şey etkilenmedi" sözlük anahtarı. */
+const BULK_NONE_KEY = {
+  pause: "bulk.none.paused",
+  resume: "bulk.none.resumed",
+  clear: "bulk.none.cleared",
+} as const;
+
 export default function Toolbar() {
   const [open, setOpen] = createSignal<OpenList>(null);
 
@@ -58,15 +73,30 @@ export default function Toolbar() {
     return c.completed + c.failed + c.cancelled > 0;
   });
 
-  /** Araç çubuğundan toplu eylem (≡ menüsüyle aynı yollar). */
+  /**
+   * Araç çubuğundan toplu eylem (≡ menüsüyle aynı yollar).
+   *
+   * Dönen sayı kullanıcıya gösterilir: `pause_all` / `resume_all` /
+   * `clear_finished` hepsi etkilenen kayıt sayısını döner. Bu geri bildirim
+   * olmadan "Kuyruğu Başlat"a basmak hiçbir şey olmadı gibi görünür — özellikle
+   * `auto_start` kapalıyken ya da eşzamanlılık sınırı doluyken.
+   */
   async function runBulk(action: "pause" | "resume" | "clear") {
     try {
-      if (action === "pause") await pauseAllDownloads();
-      else if (action === "resume") await resumeAllDownloads();
-      else await clearFinished();
+      const count =
+        action === "pause"
+          ? await pauseAllDownloads()
+          : action === "resume"
+            ? await resumeAllDownloads()
+            : await clearFinished();
+
+      if (count > 0) {
+        pushFeedback("success", t(BULK_DONE_KEY[action], { count }));
+      } else {
+        pushFeedback("info", t(BULK_NONE_KEY[action]));
+      }
     } catch (e) {
-      const key =
-        action === "clear" ? "list.err.clear" : "bulk.err.action";
+      const key = action === "clear" ? "list.err.clear" : "bulk.err.action";
       pushFeedback("error", t(key, { error: errorText(e) }));
     }
   }
@@ -229,38 +259,26 @@ export default function Toolbar() {
 
       {/* MC eylem düğmeleri: Kuyruğu Başlat · Tümünü Durdur · Bitenleri
           Temizle. Toplu eylemler ≡ menüsünde ve bağlam menüsünde de var;
-          buradakiler MC'nin araç çubuğu düzeniyle aynı yerde dursun. */}
-      <button
-        type="button"
-        class="tb-btn"
-        title={t("tb.start_queue_title")}
-        onClick={() => void runBulk("resume")}
-      >
+          buradakiler MC'nin araç çubuğu düzeniyle aynı yerde dursun.
+          Kısayollar `App.tsx` içindeki işleyicide tanımlı. */}
+      <Tip label={t("tb.start_queue_title")} keys="Ctrl+R" class="tb-btn"
+        onClick={() => void runBulk("resume")}>
         <svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true">
           <path d="M3 2 L12 7 L3 12 Z" fill="currentColor" />
         </svg>
         {t("tb.start_queue")}
-      </button>
+      </Tip>
 
-      <button
-        type="button"
-        class="tb-btn"
-        title={t("tb.stop_all_title")}
-        onClick={() => void runBulk("pause")}
-      >
+      <Tip label={t("tb.stop_all_title")} keys="Ctrl+P" class="tb-btn"
+        onClick={() => void runBulk("pause")}>
         <svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true">
           <path d="M3 2.5 h3 v9 h-3 z M8 2.5 h3 v9 h-3 z" fill="currentColor" />
         </svg>
         {t("tb.stop_all")}
-      </button>
+      </Tip>
 
-      <button
-        type="button"
-        class="tb-btn"
-        title={t("tb.clear_done_title")}
-        disabled={!canClear()}
-        onClick={() => void runBulk("clear")}
-      >
+      <Tip label={t("tb.clear_done_title")} class="tb-btn" disabled={!canClear()}
+        onClick={() => void runBulk("clear")}>
         <svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true">
           <path
             d="M2.5 3.5 h9 M5.5 3.5 V2.2 h3 v1.3 M3.6 3.5 l0.6 8 h5.6 l0.6-8"
@@ -272,14 +290,12 @@ export default function Toolbar() {
           />
         </svg>
         {t("tb.clear_done")}
-      </button>
+      </Tip>
 
-      <button
-        type="button"
-        class="tb-btn"
-        title={t("tb.settings_title")}
-        onClick={() => setSettingsOpen(true)}
-      >
+      <Tip label={t("tb.settings_title")} keys="Ctrl+S"
+        class={`tb-btn ${settingsOpen() ? "tb-btn-active" : ""}`}
+        aria-pressed={settingsOpen()}
+        onClick={() => setSettingsOpen(!settingsOpen())}>
         <svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true">
           <circle cx="7" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3" />
           <path
@@ -290,21 +306,17 @@ export default function Toolbar() {
           />
         </svg>
         {t("tb.settings")}
-      </button>
+      </Tip>
 
       <span class="tb-sep" aria-hidden="true" />
 
-      <button
-        type="button"
-        class="tb-add"
-        title={t("tb.add_title")}
-        onClick={() => setAddDialogOpen(true)}
-      >
+      <Tip label={t("tb.add_title")} keys="Ctrl+N" class="tb-add"
+        onClick={() => setAddDialogOpen(true)}>
         <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
           <path d="M7 2.5 V11.5 M2.5 7 H11.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
         {t("tb.add")}
-      </button>
+      </Tip>
 
       {/* Arama */}
       <div class="tb-search">

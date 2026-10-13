@@ -55,6 +55,14 @@ enum RangeSupport {
     /// durumlarda görülür. `Range` desteklenmediği için motor tek kanala
     /// düşer; akış beklenenden erken kapanır.
     Truncating,
+    /// **Boyut bildirilmez:** ne `Content-Length` ne `Transfer-Encoding`
+    /// gönderilir; gövde bağlantının kapanmasıyla sınırlanır
+    /// (`Accept-Ranges: none`).
+    ///
+    /// Motor `total_bytes = 0` görmeli. Arayüz bu durumda "Boyut bilinmiyor"
+    /// yazar; daha önce `total = indirilen` fallback'i uygulanıyordu ve
+    /// yüzde her zaman %100 görünüyordu.
+    UnknownLength,
 }
 
 /// Kaç baytlık veri üreteceği.
@@ -405,6 +413,28 @@ fn handle(
     }
 
     match range {
+        RangeSupport::UnknownLength => {
+            // Hiçbir uzunluk başlığı yok; gövde bağlantı kapanınca biter.
+            // `throttle` verildiyse gövde parçalar halinde, aralarda bekleterek
+            // yazılır — testin indirme **sürerken** ara ilerleme örneği
+            // toplayabilmesi için (yerel bağlantıda 4 MB anında biter).
+            let body = test_payload();
+            let response =
+                "HTTP/1.1 200 OK\r\nAccept-Ranges: none\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(response.as_bytes());
+            if let Some(delay) = throttle {
+                for piece in body.chunks(64 * 1024) {
+                    if stream.write_all(piece).is_err() {
+                        return;
+                    }
+                    let _ = stream.flush();
+                    std::thread::sleep(delay);
+                }
+            } else {
+                let _ = stream.write_all(&body);
+            }
+            let _ = stream.flush();
+        }
         RangeSupport::None => {
             // Tek kanal: `Accept-Ranges: none`, `Range` yok sayılır.
             let body = test_payload();
@@ -746,6 +776,121 @@ async fn range_ignoren_sunucuda_tek_kanal_duser_ve_dosya_bozulmaz() {
 
     let written = std::fs::read(&path).expect("dosya okunamadı");
     assert_eq!(written, test_payload(), "dosya içeriği bozuk");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn bilinmeyen_boyutta_toplam_sifir_yayinlanir() {
+    // Sunucu hiçbir uzunluk başlığı göndermiyor. Motor indirme sürerken
+    // `total_bytes = 0` bildirmeli; daha önce `total = indirilen` fallback'i
+    // uygulanıyordu ve arayüzde yüzde her zaman %100, çubuk hep dolu
+    // görünüyordu.
+    //
+    // Sunucu yavaştır: yerel bağlantıda 4 MB anında biter ve ara örnek
+    // üretilmez, yalnızca tamamlanma anlık görüntüsü kaydedilir.
+    let server = TestServer::start(
+        RangeSupport::UnknownLength,
+        Some(Duration::from_millis(20)),
+    );
+    let path = temp_path("bilinmeyen_boyut.bin");
+
+    let engine = DownloadEngine::new();
+    let signal = AbortSignal::new();
+    let (log, hook) = recorder();
+
+    engine
+        .download(
+            &server.file_url(),
+            &path,
+            8,
+            None,
+            &[],
+            signal,
+            hook,
+            noop_probe(),
+        )
+        .await
+        .expect("boyut bilinmese de indirme başarılı olmalı");
+
+    let written = std::fs::read(&path).expect("dosya okunamadı");
+    assert_eq!(written, test_payload(), "dosya içeriği bozuk");
+
+    let ornekler = log.lock().unwrap().clone();
+    assert!(
+        ornekler.len() > 1,
+        "yavaş sunucuda ara ilerleme örnekleri beklenir, alınan: {ornekler:?}"
+    );
+
+    // Ara örneklerin hepsi toplamı 0 bildirmeli (boyut hâlâ bilinmiyor).
+    let ara: Vec<_> = ornekler
+        .iter()
+        .filter(|(indirilen, _)| *indirilen < FILE_SIZE as u64)
+        .collect();
+    assert!(
+        !ara.is_empty(),
+        "yavaş sunucuda en az bir ara örnek beklenir: {ornekler:?}"
+    );
+    for (indirilen, toplam) in ara {
+        assert_eq!(
+            *toplam, 0,
+            "boyut bilinmiyorken toplam 0 olmalıydı (indirilen {indirilen})"
+        );
+        assert!(
+            *indirilen < FILE_SIZE as u64,
+            "ara örnek tamamlanmış görünmemeli: {indirilen}"
+        );
+    }
+
+    // Son örnek ise boyutu çözmüş olmalı.
+    let (_, son_toplam) = ornekler.last().expect("en az bir örnek");
+    assert_eq!(
+        *son_toplam,
+        FILE_SIZE as u64,
+        "tamamlanma anında toplam gerçek boyuta çözülmeliydi"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn bilinmeyen_boyutta_tamamlanma_gercek_dosya_boyutunu_yazar() {
+    // Tek akışa düşen bilinmeyen boyutlu indirmede kanal `end_byte` 0 ile
+    // planlanır ve `mark_finished` onu 1'e çekerdi; `total_from_channels` 1
+    // döner ve kayıt "1 B" tamamlanmış görünürdü. Motor tamamlanma anında
+    // aralığı gerçek boyuta hizalamalı.
+    let server = TestServer::start(RangeSupport::UnknownLength, None);
+    let path = temp_path("bilinmeyen_boyut_tamamla.bin");
+
+    let engine = DownloadEngine::new();
+    let signal = AbortSignal::new();
+    let (_, hook) = recorder();
+
+    let states = engine
+        .download(
+            &server.file_url(),
+            &path,
+            4,
+            None,
+            &[],
+            signal,
+            hook,
+            noop_probe(),
+        )
+        .await
+        .expect("indirme başarılı olmalı");
+
+    let gercek = std::fs::metadata(&path).unwrap().len();
+    assert_eq!(
+        adm_lib::manager::total_from_channels(&states),
+        gercek,
+        "kanal aralığı gerçek dosya boyutuna hizalanmalıydı"
+    );
+    assert_eq!(
+        adm_lib::manager::downloaded_from_channels(&states),
+        gercek,
+        "indirilen miktar gerçek dosya boyutuna eşit olmalıydı"
+    );
 
     let _ = std::fs::remove_file(&path);
 }

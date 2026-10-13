@@ -23,6 +23,7 @@ import { clipboardPrompt, setClipboardPrompt } from "../lib/store";
 import { errorText, pushFeedback } from "../lib/useFeedback";
 import type { DownloadKind } from "../lib/format";
 import { t } from "../lib/i18n";
+import Tip from "./Tip";
 
 /** Pencerede gösterilen en fazla bağlantı sayısı. */
 const MAX_SHOWN = 4;
@@ -114,9 +115,9 @@ export default function ClipboardPromptDialog() {
               <ul class="clip-list">
                 <For each={shown()}>
                   {(url) => (
-                    <li class="clip-item" title={url}>
+                    <Tip target="div" class="clip-item" label={url}>
                       {t("clip.url_hint", { url })}
-                    </li>
+                    </Tip>
                   )}
                 </For>
                 <Show when={hidden() > 0}>

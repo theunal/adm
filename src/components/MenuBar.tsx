@@ -42,18 +42,15 @@ import {
 import { errorText, pushFeedback } from "../lib/useFeedback";
 import {
   addDialogOpen,
-  graphOpen,
-  logOpen,
   setAboutOpen,
   openBrowserSetup,
   setAddDialogOpen,
-  setGraphOpen,
-  setLogOpen,
   setSettingsOpen,
   settingsOpen,
 } from "../lib/ui";
 import { t } from "../lib/i18n";
 import { CATEGORY_ORDER, type CategoryKey, type DownloadItem } from "../lib/format";
+import Tip from "./Tip";
 
 /**
  * Alt menü girdisi.
@@ -280,21 +277,6 @@ const MENUS: MenuRoot[] = [
         key: "menu.item.browser_setup",
         run: () => openBrowserSetup("chrome"),
       },
-      { kind: "sep" },
-      {
-        kind: "item",
-        key: "menu.item.speed_graph",
-        accel: "Ctrl+G",
-        checked: () => graphOpen(),
-        run: () => setGraphOpen(!graphOpen()),
-      },
-      {
-        kind: "item",
-        key: "menu.item.event_log",
-        accel: "Ctrl+L",
-        checked: () => logOpen(),
-        run: () => setLogOpen(!logOpen()),
-      },
     ],
   },
   {
@@ -349,10 +331,9 @@ export default function MenuBar() {
 
   return (
     <div class="menu-anchor" ref={bar}>
-      <button
-        type="button"
+      <Tip
         class={`tb-icon ${open() ? "tb-icon-open" : ""}`}
-        title={t("menu.file")}
+        label={t("menu.file")}
         aria-haspopup="menu"
         aria-expanded={open()}
         aria-label={t("menu.file")}
@@ -367,7 +348,7 @@ export default function MenuBar() {
           />
           <path d="M11.6 6.4 L14.2 8 L11.6 9.6 Z" fill="currentColor" />
         </svg>
-      </button>
+      </Tip>
 
       <Show when={open()}>
         <div class="menu-panel" role="menu">

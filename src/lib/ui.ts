@@ -73,13 +73,3 @@ export const [statusMessage, setStatusMessage] = createSignal<StatusMessage | nu
  * açar. Pencere `Escape` ile de kapanır (`App.tsx` genel işleyicisi).
  */
 export const [addDialogOpen, setAddDialogOpen] = createSignal(false);
-
-/**
- * Alt panel (hız grafiği / olayaily) açık mı?
- *
- * Durum çubuğundaki ▾ düğmesi ve ≡ menüsündeki "Hız Grafiği" /
- * "Olay Günlüğü" girdileri bu sinyalleri değiştirir. İkisi birden kapalıysa
- * alt dock çizilmez.
- */
-export const [graphOpen, setGraphOpen] = createSignal(false);
-export const [logOpen, setLogOpen] = createSignal(false);

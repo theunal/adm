@@ -39,6 +39,7 @@ import {
 import { closeBrowserSetup, browserSetupBrowser } from "../lib/ui";
 import { t } from "../lib/i18n";
 import { errorText, pushFeedback } from "../lib/useFeedback";
+import Tip from "./Tip";
 
 /** Sihirbaz adımları (sırayla). */
 const STEPS = ["prepare", "open", "load", "connect"] as const;
@@ -347,7 +348,9 @@ export default function BrowserSetupDialog() {
                       : t("wizard.hint.load")}
                   </p>
                   <div class="wizard-path">
-                    <code title={folder() ?? ""}>{folder() ?? "—"}</code>
+                    <Tip target="span" label={folder() ?? ""}>
+                      <code>{folder() ?? "—"}</code>
+                    </Tip>
                     <button type="button" class="btn" onClick={doOpenFolder}>
                       {t("wizard.action.open_folder")}
                     </button>

@@ -90,6 +90,13 @@ const STEAL_THRESHOLD_BYTES: u64 = 20 * 1024 * 1024;
 /// Sparkline için saklanan hız örneği sayısı.
 const SPEED_HISTORY_LEN: usize = 60;
 
+/// Anlık hızın üstel hareketli ortalama katsayısı.
+///
+/// Ham örnek tek bir 500 ms penceresinden gelir ve çok kanallı indirmede
+/// (görev çalma, yeniden deneme) ani sıçramalar yapar. `0.35` bir titreşimi
+/// ~3 turda söndürürken yanıtı hâlâ birkaç saniyenin altında tutar.
+const SPEED_SMOOTHING: f64 = 0.35;
+
 /// Motor tarafından üretilen hata.
 ///
 /// `Failed` **kanonik** bir metin taşır (bkz. `i18n::canon`): veritabanına
@@ -629,12 +636,24 @@ impl DownloadEngine {
         outcome?;
 
         // 6) Tamamlanma doğrulaması: her bayt yazıldı mı?
-        let states = snapshot_all(&channels);
         let done = downloaded_total(&channels);
-        let complete = states.iter().all(|c| c.finished);
+        let complete = channels.iter().all(|c| c.bounds().2);
 
         if complete && (total_bytes == 0 || done >= total_bytes) {
             let total = if total_bytes > 0 { total_bytes } else { done };
+
+            // Boyut bilinmeyen indirmede kanal planı `end_byte = 0` ile kurulur
+            // ve `mark_finished` onu `1`'e çeker. Aralığı gerçek dosya boyutuna
+            // hizalamazsak `total_from_channels` 1 döner ve kayıt "1 B" olarak
+            // tamamlanmış görünür (hem `finalize` hem de arayüzdeki kanal
+            // tablosu bu değeri kullanır).
+            //
+            // `plan_channels(0, n)` tek kanal döndürdüğü için hizalama güvenli.
+            if total_bytes == 0 && total > 0 && channels.len() == 1 {
+                channels[0].align_to_total(total);
+            }
+
+            let states = snapshot_all(&channels);
             on_progress(EngineSnapshot {
                 total_bytes: total,
                 downloaded_bytes: total,
@@ -832,7 +851,12 @@ async fn progress_publisher(
     let mut last_bytes = downloaded_total(&channels);
     let mut last_time = Instant::now();
     let mut history: VecDeque<SpeedSample> = VecDeque::with_capacity(SPEED_HISTORY_LEN);
-    let mut elapsed_ms: u64 = 0;
+    // Hız grafiğinin x ekseni gerçek geçen süreyi göstermeli; `t` nominal
+    // değil, başlangıçtan itibaren ölçülen milisaniye.
+    let started = Instant::now();
+    // Yumuşatılmış hız. İlk turda ham örnekle tohumlanır (sıfırdan başlamak
+    // yerine), sonraki turlarda ağırlıklı ortalama.
+    let mut smoothed: Option<f64> = None;
 
     loop {
         if signal.is_aborted() {
@@ -852,16 +876,25 @@ async fn progress_publisher(
 
         let now_bytes = downloaded_total(&channels);
         let elapsed = last_time.elapsed().as_secs_f64();
-        let speed = if elapsed > 0.0 {
+        let raw = if elapsed > 0.0 {
             let delta = now_bytes.saturating_sub(last_bytes) as f64;
             delta / (1024.0 * 1024.0) / elapsed
         } else {
             0.0
         };
 
-        elapsed_ms += PROGRESS_INTERVAL.as_millis() as u64;
+        // Tek bir 500 ms penceresi çok gürültülüdür: kanal görev çalma
+        // sınırlarında `raw` sıfıra düşüp bir sonraki turda ikiye çıkar; bu da
+        // satırdaki hız ve "kalan süre" metni titretir. Üstel hareketli
+        // ortalama titreşimi söner, tepkiyi birkaç tur geciktirir.
+        let speed = match smoothed {
+            None => raw,
+            Some(prev) => prev + SPEED_SMOOTHING * (raw - prev),
+        };
+        smoothed = Some(speed);
+
         history.push_back(SpeedSample {
-            t: elapsed_ms,
+            t: started.elapsed().as_millis() as u64,
             speed_mbps: speed,
         });
         while history.len() > SPEED_HISTORY_LEN {

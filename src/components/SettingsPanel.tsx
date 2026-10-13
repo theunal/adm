@@ -62,6 +62,7 @@ import { t, type Locale } from "../lib/i18n";
 import { openBrowserSetup, setSettingsOpen } from "../lib/ui";
 import { bridge, toolMessage, toolProgress, toolRevision, updateInfo } from "../lib/store";
 import { errorText, pushFeedback } from "../lib/useFeedback";
+import Tip from "./Tip";
 
 /** Sekme kimlikleri. */
 type TabId = "general" | "types" | "browsers" | "video" | "interface";
@@ -135,15 +136,14 @@ export default function SettingsPanel() {
     <div class="settings-panel">
       <div class="settings-head">
         <h2 class="settings-head-title">{t("menu.item.settings")}</h2>
-        <button
-          type="button"
+        <Tip
           class="settings-close"
-          onClick={() => setSettingsOpen(false)}
-          title={t("props.close")}
+          label={t("props.close")}
           aria-label={t("props.close")}
+          onClick={() => setSettingsOpen(false)}
         >
           {t("props.close")}
-        </button>
+        </Tip>
       </div>
 
       <div class="settings-tabs" role="tablist" aria-label={t("menu.item.settings")}>
@@ -442,16 +442,15 @@ function GeneralTab(props: TabProps & {
                   {t("form.browse")}
                 </button>
                 <Show when={settings[row.key]}>
-                  <button
-                    type="button"
+                  <Tip
                     class="btn btn-ghost btn-icon"
-                    title={t("settings.dir.reset")}
+                    label={t("settings.dir.reset")}
                     aria-label={t("settings.dir.reset")}
                     disabled={saving()}
                     onClick={() => save({ [row.key]: null })}
                   >
                     ↺
-                  </button>
+                  </Tip>
                 </Show>
               </div>
               <p class="settings-hint">{t(row.hint)}</p>
@@ -594,10 +593,9 @@ function GeneralTab(props: TabProps & {
         />
 
         <div class="settings-row settings-row-wrap">
-          <button
-            type="button"
+          <Tip
             class="btn"
-            title={t("settings.check_now_title")}
+            label={t("settings.check_now_title")}
             disabled={props.checking()}
             onClick={() => {
               props.setChecking(true);
@@ -608,7 +606,7 @@ function GeneralTab(props: TabProps & {
             }}
           >
             {props.checking() ? t("settings.checking") : t("settings.check_now")}
-          </button>
+          </Tip>
           <UpdateStatus />
         </div>
       </section>
@@ -807,11 +805,15 @@ function BrowsersTab(props: TabProps) {
           {(browser) => (
             <div class="browser-row">
               <span class="browser-name">{BROWSER_LABEL[browser]}</span>
-              <span class="settings-hint browser-path" title={folders()[browser] ?? ""}>
+              <Tip
+                target="span"
+                class="settings-hint browser-path"
+                label={folders()[browser] ?? ""}
+              >
                 {folders()[browser]
                   ? t("settings.browser_ready")
                   : t("settings.browser_missing")}
-              </span>
+              </Tip>
               <span class="browser-actions">
                 <button
                   type="button"
@@ -985,12 +987,16 @@ function VideoTab(props: TabProps & {
                     </span>
                   </Show>
                 </span>
-                <span class="tool-note settings-hint" title={toolMessage[tool] ?? ""}>
+                <Tip
+                  target="span"
+                  class="tool-note settings-hint"
+                  label={toolMessage[tool] ?? ""}
+                >
                   <Show when={busy() && fraction() !== undefined}>
                     {formatNumber(Math.round(fraction() * 100))}%
                   </Show>
                   <Show when={!busy() && toolMessage[tool]}>{toolMessage[tool]}</Show>
-                </span>
+                </Tip>
                 <button
                   type="button"
                   class="btn btn-ghost"

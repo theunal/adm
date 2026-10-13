@@ -135,7 +135,11 @@ pub fn run() {
         })
         .on_window_event(|window, event| match event {
             // Pencere kapatılırken aktif indirmeleri nazikçe iptal et.
-            tauri::WindowEvent::Destroyed => {
+            //
+            // **Yalnızca ana pencere için.** IDM tarzı ayrıntı popup'ları da
+            // `Destroyed` üretir; sınır konmasaydı bir popup'u kapatmak tüm
+            // indirmeleri iptal edip uygulamayı kapatırdı.
+            tauri::WindowEvent::Destroyed if window.label() == "main" => {
                 let app = window.app_handle();
                 if let Some(manager) = app.try_state::<manager::DownloadManager>() {
                     let manager = manager.inner().clone_for_shutdown();
@@ -144,9 +148,11 @@ pub fn run() {
                     });
                 }
             }
-            // "Kapatınca tepsiye küçült" açıksa pencere gizlenir.
+            // "Kapatınca tepsiye küçült" açıksa pencere gizlenir. Popup'lar
+            // bu davranışı istemez: onlar gerçekten kapanmalı.
             tauri::WindowEvent::CloseRequested { api, .. }
-                if commands::close_to_tray(window.app_handle()) =>
+                if window.label() == "main"
+                    && commands::close_to_tray(window.app_handle()) =>
             {
                 api.prevent_close();
                 let _ = window.hide();
@@ -186,6 +192,8 @@ pub fn run() {
             commands::install_tool,
             commands::site_login_status,
             commands::open_site_login,
+            commands::open_detail_window,
+            commands::close_detail_window,
             commands::save_site_login_cookies,
             commands::save_site_cookies,
             commands::clear_site_cookies,

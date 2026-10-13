@@ -46,6 +46,10 @@
   --warn: #e0a63c;
   --danger: #e05252;
   --danger-soft: rgba(224, 82, 82, 0.14);
+  /* `--danger`'ın kısa adı. `SegmentBar.tsx` ve tablo satırları `--err`
+     diye okuyor; değişken tanımlı değilse `var(--err)` geçersiz değere
+     düşer ve renk özellikleri tamamen yok olur (sessiz hata). */
+  --err: var(--danger);
   --idle: #7a7a7a;
 
   /* --- Köşe --- */
@@ -479,8 +483,12 @@ body {
 .dlg-head,
 .dlg-row {
   display: grid;
+  /* Boyut sütunu iki satır (indirilen / toplam) gösterecek kadar geniş;
+     durum sütunu kanal şeritlerini barındırır. Sabit sütunların toplamı
+     600px; "Ad" `minmax(180px, 1fr)` ile daralır, böylece en dar pencerede
+     bile yatay taşma olmaz. */
   grid-template-columns:
-    34px 30px minmax(180px, 1fr) 92px 130px 30px 96px 78px 78px;
+    34px 30px minmax(180px, 1fr) 104px 150px 30px 96px 78px 78px;
   align-items: stretch;
 }
 
@@ -856,32 +864,33 @@ body {
   color: var(--text-faint);
 }
 
-.sb-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 9px;
-  border-radius: var(--r-sm);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-.sb-badge-ok {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-.sb-badge-warn {
-  background: rgba(224, 166, 60, 0.14);
-  color: var(--warn);
-}
-.sb-badge-idle {
-  background: var(--bg-raise);
-  color: var(--text-faint);
-}
-
 .sb-spacer {
   flex: 1;
+}
+
+/* Geçici mesaj — eylem sonucunun tek görünür kanıtı. `pushFeedback` hem
+   hataları hem de arka planda olmuş bitmişleri (indirme tamamlandı, yeni
+   sürüm mevcut, tarayıcı bağlandı) buraya yazar; alt panel kaldırıldığı için
+   bu alan uygulamanın tek bildirim kanalı. */
+.sb-message {
+  max-width: 55%;
+  padding: 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+}
+.sb-message-info {
+  color: var(--text-dim);
+}
+.sb-message-success {
+  color: var(--ok);
+}
+.sb-message-warn {
+  color: var(--warn);
+}
+.sb-message-error {
+  color: var(--err);
 }
 
 .sb-current {
@@ -890,23 +899,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sb-collapse {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-.sb-collapse:hover {
-  background: var(--bg-raise-hover);
-  color: var(--text);
 }
 
 /* ==========================================================================
@@ -951,6 +943,19 @@ body {
 .btn-danger:hover:not(:disabled) {
   border-color: var(--danger);
   color: var(--danger);
+}
+/* Hayalet düğme — dolgu ve kenarlık yok, yalnızca metin rengi değişir.
+   `SettingsPanel`'de "Gözat" / "↺" gibi ikincil eylemlerde kullanılır; dolu
+   `.btn` ile yarışmamalıdır. */
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-raise);
+  border-color: var(--border-mid);
+  color: var(--text);
 }
 .btn-block {
   width: 100%;
@@ -1305,75 +1310,13 @@ body {
 }
 
 /* ==========================================================================
-   Alt dock (grafik / günlük)
+   Modal başlık kapatma düğmesi (AboutDialog, DownloadDetailDialog,
+   NewDownloadDialog, ClipboardPromptDialog, BrowserSetupDialog)
+
+   Eski adı `.dock-close`: alt panel kaldırıldığında bu düğme modal
+   başlıklarında kaldığı için sınıf adı değiştirilmedi.
    ========================================================================== */
 
-.dock {
-  display: flex;
-  flex-direction: column;
-  height: 180px;
-  flex-shrink: 0;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
-}
-.dock-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 8px;
-  background: var(--bg-bar);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.dock-tab {
-  height: 22px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-dim);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  cursor: pointer;
-}
-.dock-tab:hover {
-  background: var(--bg-raise-hover);
-  color: var(--text);
-}
-.dock-tab-active,
-.dock-tab-active:hover {
-  background: var(--accent-soft);
-  border-color: var(--border-strong);
-  color: var(--accent);
-}
-.dock-actions {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-}
-.dock-mini {
-  min-width: 44px;
-  height: 22px;
-  padding: 0 8px;
-  background: var(--bg-raise);
-  border: 1px solid var(--border-mid);
-  border-radius: var(--r-sm);
-  color: var(--text-dim);
-  font-family: var(--font-ui);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.dock-mini:hover {
-  background: var(--bg-raise-hover);
-  color: var(--text);
-}
-.dock-mini[aria-pressed="true"] {
-  background: var(--accent-soft);
-  border-color: var(--border-strong);
-  color: var(--accent);
-}
 .dock-close {
   display: grid;
   place-items: center;
@@ -1390,151 +1333,6 @@ body {
 .dock-close:hover {
   background: var(--danger);
   color: #fff;
-}
-.dock-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-.graph-wrap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 200px;
-  height: 100%;
-  min-height: 0;
-}
-.graph-canvas {
-  position: relative;
-  min-width: 0;
-  padding: 10px 12px;
-}
-.graph-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.graph-grid-line {
-  stroke: #202020;
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-.graph-axis {
-  stroke: var(--border-mid);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-.graph-area {
-  fill: url(#graphGradient);
-}
-.graph-line {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.8;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-.graph-label {
-  fill: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 9px;
-}
-.graph-empty {
-  display: grid;
-  place-items: center;
-  height: 100%;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.graph-side {
-  border-left: 1px solid var(--border);
-  background: var(--bg-sunken);
-  padding: 8px 11px;
-  overflow-y: auto;
-}
-.graph-stat {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 0;
-  border-bottom: 1px dashed var(--border);
-  font-size: 12px;
-}
-.graph-stat:last-child {
-  border-bottom: none;
-}
-.graph-stat-label {
-  color: var(--text-dim);
-}
-.graph-stat-value {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  color: var(--text-strong);
-}
-
-.log-panel-inner {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-.log-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.log-toolbar .btn {
-  height: 22px;
-  padding: 0 10px;
-  font-size: 11.5px;
-}
-.log-count {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-faint);
-}
-.log-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 6px 10px 8px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.65;
-}
-.log-row {
-  display: flex;
-  gap: 10px;
-  padding: 1px 0;
-}
-.log-time {
-  flex-shrink: 0;
-  color: var(--text-faint);
-}
-.log-message {
-  color: var(--text-dim);
-  word-break: break-word;
-}
-.log-info .log-message {
-  color: #93c5fd;
-}
-.log-success .log-message {
-  color: var(--ok);
-}
-.log-warn .log-message {
-  color: var(--warn);
-}
-.log-error .log-message {
-  color: var(--danger);
-}
-.log-empty {
-  margin: 8px 0;
-  color: var(--text-faint);
-  font-family: var(--font-ui);
 }
 
 /* ==========================================================================
@@ -1562,6 +1360,38 @@ body {
   font-size: 18px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* Ayarlar panelinden indirme listesine dönüş düğmesi.
+   Panel listeden açıldığı için "Kapat" her zaman görünen tek çıkış yoludur;
+   stil yoksa düz HTML butonu olarak çizilir. */
+.settings-close {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-md);
+  background: var(--bg-raise);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t), color var(--t);
+}
+.settings-close:hover {
+  background: var(--bg-raise-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.settings-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.settings-close:active {
+  background: var(--bg-raise-active);
 }
 .settings-section {
   display: flex;
@@ -1660,9 +1490,6 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
-.sparkline {
-  display: block;
-}
 
 /* ==========================================================================
    Yükleniyor
@@ -1703,7 +1530,7 @@ body {
   /* Kalan süre düşer (9 → 8 sütun). */
   .dlg-head,
   .dlg-row {
-    grid-template-columns: 30px 28px minmax(150px, 1fr) 84px 118px 28px 90px 76px;
+    grid-template-columns: 30px 28px minmax(150px, 1fr) 94px 138px 28px 90px 76px;
   }
   .dlg-col-eta {
     display: none;
@@ -1714,7 +1541,7 @@ body {
   /* Eklenme tarihi de düşer (8 → 7 sütun). */
   .dlg-head,
   .dlg-row {
-    grid-template-columns: 28px 26px minmax(130px, 1fr) 78px 108px 26px 84px;
+    grid-template-columns: 28px 26px minmax(130px, 1fr) 88px 126px 26px 84px;
   }
   .dlg-col-date {
     display: none;
@@ -1725,7 +1552,12 @@ body {
   /* Durum metni daralır; ad kalan genişliği alır. */
   .dlg-head,
   .dlg-row {
-    grid-template-columns: 26px 24px minmax(110px, 1fr) 70px 92px 24px 76px;
+    grid-template-columns: 26px 24px minmax(110px, 1fr) 80px 108px 24px 76px;
+  }
+  /* Çok kanallı kayıtlarda kanal şeridi sütun genişliğine sığmaz; şerit
+     gizlenir, toplam yüzde ve çubuk kalır. */
+  .channel-strip {
+    display: none;
   }
   .status-pct {
     display: none;
@@ -1834,6 +1666,15 @@ body {
 
 .wizard-step.done {
   color: var(--ok);
+}
+
+/* Adım metni: numara rozetinden kalan alanı kaplar. Taşma durumunda
+   kısaltılır (sihirbaz paneli sabit genişliktedir). */
+.wizard-step-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wizard-step-no {
@@ -2069,6 +1910,370 @@ body {
   text-overflow: ellipsis;
 }
 
+/* --- Boyut sütunu: indirilen / toplam (DownloadRow.tsx) ---
+   Üst satır indirilen miktar (vurgulu), alt satır toplam (soluk). Tek satırda
+   yalnızca toplam gösterilirken ilerleme yalnızca yüzdeden okunuyordu. */
+.size-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.25;
+}
+.size-got {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.size-total {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* --- Kanal başına ilerleme şeridi (ChannelStrip.tsx) ---
+   8 kanalda toplam yüzde hangi kanalın geride kaldığını göstermez. Kanal
+   numarası + ince çubuk + yüzde, tek satırda. */
+.channel-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 5px;
+  margin-top: 1px;
+  overflow: hidden;
+}
+.ch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-faint);
+}
+.ch-no {
+  min-width: 8px;
+  text-align: right;
+}
+.ch-bar {
+  width: 18px;
+  height: 3px;
+  background: var(--border-mid);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.ch-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s linear;
+}
+.ch-pct {
+  min-width: 20px;
+}
+.ch-active .ch-fill {
+  background: var(--accent);
+}
+.ch-paused .ch-fill {
+  background: var(--warn);
+}
+.ch-failed .ch-fill {
+  background: var(--err);
+}
+.ch-done .ch-fill {
+  background: var(--ok);
+}
+.ch-done .ch-pct {
+  color: var(--ok);
+}
+
+/* ==========================================================================
+   Stilli tooltip (Tip.tsx — Kobalte Tooltip üzerine ince katman)
+   ========================================================================== */
+
+.tip {
+  z-index: 60;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 6px 9px;
+  background: var(--bg-raise);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.45;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.45);
+  /* Konum ok ucundan hesaplanır; ölçek animasyonu buradan başlar. */
+  transform-origin: var(--kb-tooltip-content-transform-origin);
+  animation: tip-hide 120ms ease-in forwards;
+}
+.tip[data-expanded] {
+  animation: tip-show 130ms ease-out;
+}
+@keyframes tip-show {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes tip-hide {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.tip-label {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.tip-arrow {
+  fill: var(--bg-raise);
+}
+
+/* Klavye kısayolu rozeti — menü çubuğundaki `accel` metniyle aynı bilgiyi
+   düğmenin üzerinde gösterir. */
+.tip-key {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 5px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-mid);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   IDM tarzı ayrıntı penceresi (DetailWindow.tsx)
+   ========================================================================== */
+
+.dw {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  color: var(--text);
+}
+
+.dw-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 8px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.dw-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dw-status {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.dw-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10px;
+  cursor: pointer;
+}
+.dw-close:hover {
+  background: var(--bg-raise-hover);
+  color: var(--text);
+}
+
+.dw-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.dw-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.dw-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.dw-size {
+  color: var(--text-dim);
+}
+.dw-sep {
+  color: var(--text-faint);
+}
+.dw-speed {
+  margin-left: auto;
+  color: var(--accent);
+}
+.dw-eta {
+  color: var(--text-faint);
+  min-width: 34px;
+  text-align: right;
+}
+
+.dw-bar {
+  height: 6px;
+  background: var(--border-mid);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.dw-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s linear;
+}
+.dw-fill-done {
+  background: var(--ok);
+}
+
+.dw-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 6px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+.dw-ch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.dw-ch-no {
+  min-width: 9px;
+  text-align: right;
+}
+.dw-ch-bar {
+  width: 22px;
+  height: 3px;
+  background: var(--border-mid);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.dw-ch-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.dw-ch-done .dw-ch-fill {
+  background: var(--ok);
+}
+.dw-ch-done .dw-ch-pct {
+  color: var(--ok);
+}
+.dw-ch-pct {
+  min-width: 22px;
+}
+
+.dw-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-bar);
+  flex-shrink: 0;
+}
+.dw-locale {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+  margin-right: auto;
+}
+.dw-msg {
+  flex: 1;
+  min-width: 0;
+  margin-right: auto;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dw-msg-info {
+  color: var(--text-dim);
+}
+.dw-msg-success {
+  color: var(--ok);
+}
+.dw-msg-warn {
+  color: var(--warn);
+}
+.dw-msg-error {
+  color: var(--err);
+}
+.dw-btn {
+  height: 21px;
+  padding: 0 9px;
+  background: var(--bg-raise);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+.dw-btn:hover:not(:disabled) {
+  background: var(--bg-raise-hover);
+}
+.dw-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dw-btn-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ==========================================================================
    MC portu — araç çubuğu düğmeleri (Toolbar.tsx)
    ========================================================================== */
@@ -2100,6 +2305,19 @@ body {
   cursor: default;
 }
 
+/* Etkin (basılı) durum — Ayarlar düğmesi panel açıkken. Kullanıcı hangi
+   "sayfada" olduğunu görebilmeli; düğme toggle olduğu için bu geri bildirim
+   zorunlu. */
+.tb-btn-active,
+.tb-btn-active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+.tb-btn-active svg {
+  color: var(--accent);
+}
+
 .tb-btn svg {
   color: var(--text-dim);
 }
@@ -2109,37 +2327,6 @@ body {
   height: 20px;
   margin: 0 3px;
   background: var(--border-mid);
-}
-
-/* ==========================================================================
-   MC portu — durum çubuğu köprü göstergesi (StatusBar.tsx)
-   ========================================================================== */
-
-.sb-bridge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 6px;
-  color: var(--text-dim);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.bridge-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-radius: 50%;
-  background: var(--idle);
-}
-
-.bridge-dot-on {
-  background: var(--ok);
-  box-shadow: 0 0 5px var(--ok);
-}
-
-.bridge-dot-off {
-  background: var(--idle);
 }
 
 /* ==========================================================================

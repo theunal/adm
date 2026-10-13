@@ -85,9 +85,12 @@ pub async fn delete_download(
         .map_err(tr)
 }
 
-/// Tamamlanmış / iptal edilmiş kayıtları temizler.
+/// Tamamlanmış / iptal edilmiş kayıtları temizler; silinen sayıyı döner.
+///
+/// Dönen sayı araç çubuğunda kullanıcıya gösterilir: `Res<()>` olsaydı
+/// düğmeye basıldığında hiçbir görünür geri bildirim kalmazdı.
 #[tauri::command]
-pub async fn clear_finished(manager: State<'_, DownloadManager>) -> Res<()> {
+pub async fn clear_finished(manager: State<'_, DownloadManager>) -> Res<usize> {
     manager.clear_finished().await.map_err(tr)
 }
 
@@ -204,6 +207,128 @@ pub fn database_path() -> Res<String> {
 fn main_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
     app.get_webview_window("main")
         .ok_or_else(|| i18n::t("err.main_window", &[]))
+}
+
+/* -----------------------------------------------------------------
+   İndirme ayrıntı penceresi (IDM tarzı küçük popup)
+   ----------------------------------------------------------------- */
+
+/// Ayrıntı pencerelerinin etiket öneki (`detail-<id>`).
+const DETAIL_LABEL_PREFIX: &str = "detail-";
+
+/// Bir indirme için ayrıntı penceresinin etiketi.
+fn detail_label(id: i64) -> String {
+    format!("{DETAIL_LABEL_PREFIX}{id}")
+}
+
+/// Açık ayrıntı pencerelerinin etiketlerini döndürür.
+fn open_detail_labels(app: &AppHandle) -> Vec<String> {
+    app.webview_windows()
+        .keys()
+        .filter(|label| label.starts_with(DETAIL_LABEL_PREFIX))
+        .cloned()
+        .collect()
+}
+
+/**
+ * IDM tarzı ayrıntı penceresini açar (yoksa) ya da öne getirir.
+ *
+ * Pencere aynı arayüzü (`index.html`) yükler; konusunu **etiketinden** okur
+ * (`detail-42` → 42), böylece sorgu dizesi taşımaya gerek kalmaz ve pencere
+ * adresi platforma göre değişmez. `src/index.tsx` etiketi okuyup tam ekran
+ * yerine kompakt popup kabuğunu çizer.
+ *
+ * Aynı indirme için ikinci bir pencere açılmaz — yeniden tıklamak mevcut
+ * pencereyi öne getirir.
+ *
+ * **Neden senkron komut?** `open_site_login` ile aynı gerekçe: Tauri'de
+ * `async` olmayan komutlar IPC işleyicisinde, yani ana iş parçacığında
+ * çalışır ve pencere oluşturmak da ana iş parçacığını ister.
+ */
+#[tauri::command]
+pub fn open_detail_window(app: AppHandle, id: i64, file_name: String) -> Res<()> {
+    let label = detail_label(id);
+    let title = format!("{} — {}", file_name, i18n::t("detail.title", &[]));
+
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    // Pencereler üst üste binmesin: açık son pencerenin sağına kaydır.
+    let (x, y) = next_detail_position(&app);
+
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::default())
+        .title(title)
+        .inner_size(380.0, 132.0)
+        .min_inner_size(320.0, 108.0)
+        .position(x, y)
+        .decorations(false)
+        .resizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(true)
+        .build()
+        .map(|_| ())
+        .map_err(|e| i18n::t("err.detail_open", &[&e.to_string()]))
+}
+
+/**
+ * Bir indirmenin ayrıntı penceresini kapatır.
+ *
+ * Görev bittiğinde `auto_close_detail` ayarına uyarak çağrılır. Pencere
+ * zaten kapanmışsa hata değildir.
+ */
+#[tauri::command]
+pub fn close_detail_window(app: AppHandle, id: i64) -> Res<()> {
+    if let Some(window) = app.get_webview_window(&detail_label(id)) {
+        let _ = window.close();
+    }
+    Ok(())
+}
+
+/**
+ * Yeni ayrıntı penceresinin sol üst köşesini hesaplar.
+ *
+ * Açık son pencere bulunamazsa ekranın sağ altına yaslanır; bulunursa 24 px
+ * sağa kaydırılır. Sağ kenar taşarsa sıfırlanır, böylece çok sayıda eşzamanlı
+ * indirmede pencereler ekran dışına kaymaz.
+ */
+fn next_detail_position(app: &AppHandle) -> (f64, f64) {
+    const STEP: f64 = 24.0;
+    const WIDTH: f64 = 380.0;
+    const MARGIN: f64 = 24.0;
+
+    let monitor = app.primary_monitor().ok().flatten();
+    let (screen_w, screen_h) = monitor
+        .as_ref()
+        .map(|m| (m.size().width as f64, m.size().height as f64))
+        .unwrap_or((1920.0, 1080.0));
+
+    // `Iterator::max` `Ord` ister; `f64` yalnız `PartialOrd` uygular, bu
+    // yüzden katlama ile en büyük konum aranır.
+    let last_x = open_detail_labels(app)
+        .iter()
+        .filter_map(|label| app.get_webview_window(label))
+        .filter_map(|w| w.outer_position().ok())
+        .map(|p| p.x as f64)
+        .fold(None, |acc: Option<f64>, x| Some(acc.map_or(x, |a| a.max(x))));
+
+    let base_x = screen_w - WIDTH - MARGIN;
+    let base_y = MARGIN;
+
+    let Some(last_x) = last_x else {
+        return (base_x, base_y);
+    };
+
+    let next = last_x + STEP;
+    if next + WIDTH + MARGIN > screen_w {
+        (base_x, base_y)
+    } else {
+        (next, base_y.min((screen_h - 132.0 - MARGIN).max(MARGIN)))
+    }
 }
 
 /// Dosyayı sistemde açar (varsayılan uygulamayla).

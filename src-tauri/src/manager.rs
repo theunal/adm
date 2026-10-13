@@ -197,6 +197,13 @@ pub struct DownloadManager {
     engine: DownloadEngine,
     active: Arc<DashMap<i64, Arc<ActiveDownload>>>,
     events: broadcast::Sender<DownloadEvent>,
+    /// Kullanıcı kuyruğu elle serbest bıraktı mı?
+    ///
+    /// `auto_start` kapalıyken yeni indirmeler kuyrukta bekler; o hâlde
+    /// "Kuyruğu Başlat" (`resume_all`) bu bayrağı kaldırır ve `pump_queue`
+    /// eşzamanlılık sınırı boşaldıkça bekleyen görevleri devreye sokar.
+    /// "Tümünü Durdur" (`pause_all`) bayrağı geri alır.
+    queue_released: Arc<AtomicBool>,
 }
 
 /// Tarayıcı uzantısının beklediği indirme kaydı.
@@ -266,6 +273,7 @@ impl DownloadManager {
             engine: DownloadEngine::new(),
             active: Arc::new(DashMap::new()),
             events,
+            queue_released: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -403,7 +411,8 @@ impl DownloadManager {
         );
         self.emit(DownloadEvent::ListChanged);
 
-        self.spawn(id).await?;
+        // Yeni indirme: `auto_start` ayarına uyar.
+        self.spawn(id, false).await?;
         Ok(id)
     }
 
@@ -455,15 +464,25 @@ impl DownloadManager {
     // Devam ettirme
     // -----------------------------------------------------------------
 
-    /// Duraklatılmış / başarısız indirmeyi kanal durumlarıyla devam ettirir.
+    /// Duraklatılmış / başarısız / kuyruktaki indirmeyi sürdürür.
+    ///
+    /// `Queued` kayıt da kabul edilir: `auto_start` kapalıyken yeni indirme
+    /// kuyrukta bekler ve "Kuyruğu Başlat" düğmesi onu başlatmak için tek
+    /// yoldur (araç çubuğu ipucu da bunu vaat eder).
     pub async fn resume(&self, id: i64) -> Result<()> {
         let Some(item) = self.db.get(id).await? else {
             anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
         };
 
-        if !item.status.is_resumable() {
+        let startable = item.status.is_resumable() || item.status == DownloadStatus::Queued;
+        if !startable {
             anyhow::bail!(t("err.not_restartable", &[]));
         }
+
+        // Tek bir kaydı elle başlatmak da "kuyruğu çalıştır" demektir: aksi
+        // halde `max_concurrent` boşaldığında `pump_queue` bekleyen görevleri
+        // devreye sokmaz ve kuyruk donup kalır.
+        self.queue_released.store(true, Ordering::SeqCst);
 
         if self.active.contains_key(&id) {
             anyhow::bail!(t("err.already_running", &[]));
@@ -476,7 +495,7 @@ impl DownloadManager {
                 t("log.file_missing_restart", &[&item.file_name]),
                 Some(id),
             );
-            self.spawn(id).await?;
+            self.spawn(id, true).await?;
             self.emit(DownloadEvent::ListChanged);
             return Ok(());
         }
@@ -492,7 +511,7 @@ impl DownloadManager {
             Some(id),
         );
 
-        self.spawn(id).await?;
+        self.spawn(id, true).await?;
         self.emit(DownloadEvent::ListChanged);
         Ok(())
     }
@@ -501,13 +520,25 @@ impl DownloadManager {
     // Duraklatma / iptal
     // -----------------------------------------------------------------
 
+    /// Görevi duraklatır.
+    ///
+    /// Kuyruktaki (`Queued`) kayıtların çalışan takibi yoktur; bunlar
+    /// [`Self::detach_queued`] ile doğrudan `Paused` yapılır. Böylece "Tümünü
+    /// Durdur" bekleyen görevleri de durdurur — aksi halde `err.running_not_found`
+    /// hatası `bulk_each` içinde yutulur ve kullanıcı hiçbir şey olmadığını
+    /// sanar.
     pub async fn pause(&self, id: i64) -> Result<()> {
         // `map(|a| a.clone())` kilidi ifade bitince bırakır. Doğrudan
         // `self.active.get(&id)` bağlansaydı `DashMap` okuma kilidi
         // `wait_idle(...).await` boyunca açık kalırdı; indirme görevi aynı
         // dilime yazma (`active.remove`) isteyince kilitlenir ve
         // tek iş parçacıklı çalışma zamanında tüm çalışma zamanı donar.
-        let Some(ad) = self.active.get(&id).map(|a| a.clone()) else {
+        let ad = self.active.get(&id).map(|a| a.clone());
+
+        let Some(ad) = ad else {
+            if self.detach_queued(id, DownloadStatus::Paused).await? {
+                return Ok(());
+            }
             anyhow::bail!(t("err.running_not_found", &[&id.to_string()]));
         };
 
@@ -522,9 +553,15 @@ impl DownloadManager {
         Ok(())
     }
 
+    /// Görevi iptal eder; kuyruktaki kayıtlar için [`Self::detach_queued`].
     pub async fn cancel(&self, id: i64) -> Result<()> {
         // Kilit `pause` ile aynı gerekçeyle ifade bitinde bırakılır.
-        let Some(ad) = self.active.get(&id).map(|a| a.clone()) else {
+        let ad = self.active.get(&id).map(|a| a.clone());
+
+        let Some(ad) = ad else {
+            if self.detach_queued(id, DownloadStatus::Cancelled).await? {
+                return Ok(());
+            }
             anyhow::bail!(t("err.running_not_found", &[&id.to_string()]));
         };
 
@@ -536,6 +573,33 @@ impl DownloadManager {
         self.log("warn", t("log.cancelled", &[]), Some(id));
         self.emit(DownloadEvent::ListChanged);
         Ok(())
+    }
+
+    /// Kuyruktaki bir kaydı beklemeden ayrılan duruma geçirir.
+    ///
+    /// `Queued` kaydın çalışan görevi yoktur; duraklatmak/iptal etmek yalnızca
+    /// veritabanındaki durumu değiştirmektir. Kayıt gerçekten `Queued` değilse
+    /// `false` döner ve çağıran normal hata yoluna düşer.
+    async fn detach_queued(&self, id: i64, status: DownloadStatus) -> Result<bool> {
+        let is_queued = self
+            .db
+            .get(id)
+            .await?
+            .map(|item| item.status == DownloadStatus::Queued)
+            .unwrap_or(false);
+        if !is_queued {
+            return Ok(false);
+        }
+
+        self.db.update_status(id, status, None, None).await?;
+        let (level, key) = if status == DownloadStatus::Paused {
+            ("info", "log.paused")
+        } else {
+            ("warn", "log.cancelled")
+        };
+        self.log(level, t(key, &[]), Some(id));
+        self.emit(DownloadEvent::ListChanged);
+        Ok(true)
     }
 
     /// Görev bitene kadar bekle (en fazla 10 sn).
@@ -604,12 +668,20 @@ impl DownloadManager {
     }
 
     /// Tamamlanmış / iptal edilmiş / başarısız kayıtları temizler.
-    pub async fn clear_finished(&self) -> Result<()> {
+    ///
+    /// Silinen kayıt sayısını döner: araç çubuğu bunu "N kayıt temizlendi"
+    /// olarak kullanıcıya gösterir (dönmeseydi düğmeye basıldığında hiçbir
+    /// geri bildirim olmazdı). İndirilen **dosyalar** korunur; yalnızca
+    /// `delete` gibi artık sahipsiz kalan çerez dosyaları silinir.
+    pub async fn clear_finished(&self) -> Result<usize> {
         let all = self.db.list_all().await?;
         let mut removed = 0usize;
         for item in all {
             if item.status.is_listed_active() {
                 continue;
+            }
+            if let Some(cookie) = item.cookie_file.as_deref() {
+                let _ = tokio::fs::remove_file(cookie).await;
             }
             self.db.delete(item.id).await?;
             removed += 1;
@@ -622,7 +694,7 @@ impl DownloadManager {
             );
         }
         self.emit(DownloadEvent::ListChanged);
-        Ok(())
+        Ok(removed)
     }
 
     // -----------------------------------------------------------------
@@ -682,7 +754,11 @@ impl DownloadManager {
     }
 
     /// Çalışan tüm indirmeleri duraklatır; etkilenen sayıyı döner.
+    ///
+    /// Kuyruğu da kapatır: `auto_start` kapalı olsa bile kuyrukta bekleyen
+    /// görevler `pump_queue` tarafından yeniden başlatılmasın.
     pub async fn pause_all(&self) -> Result<usize> {
+        self.queue_released.store(false, Ordering::SeqCst);
         let ids = self
             .ids_where(|s| matches!(s, DownloadStatus::Queued | DownloadStatus::Downloading))
             .await?;
@@ -693,12 +769,18 @@ impl DownloadManager {
         Ok(count)
     }
 
-    /// Duraklatılmış / başarısız tüm indirmeleri sürdürür.
+    /// Duraklatılmış, başarısız **ve kuyruktaki** tüm indirmeleri sürdürür.
     ///
-    /// `resume` görevi yeniden başlattığı için geçmiş kayıtlarda
-    /// tamamlanmış olanlar atlanır (durumları `is_resumable` değil).
+    /// `Queued` kayıtlar da listelenir: `auto_start` kapalıyken kuyrukta
+    /// bekleyen indirmeleri yalnızca bu yol başlatabilir. Dönen sayı, araç
+    /// çubuğunun "N indirme başlatıldı" bildiriminde kullanılır.
     pub async fn resume_all(&self) -> Result<usize> {
-        let ids = self.ids_where(|s| s.is_resumable()).await?;
+        // Kuyruk artık "serbest bırakılmış": eşzamanlılık sınırı boşaldıkça
+        // bekleyen görevler de devreye girecek.
+        self.queue_released.store(true, Ordering::SeqCst);
+        let ids = self
+            .ids_where(|s| s.is_resumable() || *s == DownloadStatus::Queued)
+            .await?;
         let count = ids.len();
         self.bulk_each(&ids, |id| async move { self.resume(id).await })
             .await;
@@ -750,7 +832,7 @@ impl DownloadManager {
                 t("log.channels_updated", &[&count.to_string()]),
                 Some(id),
             );
-            self.spawn(id).await?;
+            self.spawn(id, true).await?;
         } else {
             self.db.update_channel_count(id, count).await?;
             self.log(
@@ -917,15 +999,37 @@ impl DownloadManager {
     ///
     /// Eşzamanlı indirme sınırı dolduysa görev **başlatılmaz**; kayıt
     /// `Queued` kalır ve `pump_queue` ile ileride yeniden denenir.
-    async fn spawn(&self, id: i64) -> Result<()> {
+    ///
+    /// `force` **kullanıcının açıkça istediği** bir başlatmayı belirtir
+    /// (devam ettir, "Kuyruğu Başlat", kanal sayısı değişikliği). Böyle bir
+    /// istek `auto_start` kapalı olsa da karşılanır: ayarın anlamı "yeni
+    /// indirmeler hemen başlasın"dır, "hiçbir şey başlamasın" değil.
+    ///
+    /// Eşzamanlılık sınırı (`max_concurrent`) ise her iki yolda da geçerlidir:
+    /// sınır doluysa görev `Queued` olur ve `pump_queue` boşaldığında onu
+    /// kendiliğinden başlatır.
+    async fn spawn(&self, id: i64, force: bool) -> Result<()> {
         let Some(item) = self.db.get(id).await? else {
             anyhow::bail!(t("err.download_not_found", &[&id.to_string()]));
         };
 
-        // Eşzamanlılık sınırı (MC `pumpQueue`).
         let settings = self.db.load_settings().await?;
-        if !settings.auto_start || self.active.len() >= settings.max_concurrent as usize {
-            if !item.status.is_resumable() && item.status != DownloadStatus::Queued {
+        let auto_allowed = force || settings.auto_start;
+        let slot_free = self.active.len() < settings.max_concurrent as usize;
+
+        if !auto_allowed || !slot_free {
+            // Başlatılamadı. Kayıt kuyruğa alınmalı mı?
+            //
+            // * `force` (kullanıcı açıkça istedi) → evet: `pump_queue` sınır
+            //   boşaldığında devreye sokar. Aksi halde "Kuyruğu Başlat"a basıp
+            //   eşzamanlılık sınırına takılan kayıtlar `Paused`/`Failed`
+            //   durumunda kalır ve kuyruk bir daha hiç işlemez.
+            // * örtük başlatma → yalnızca daha önce hiç başlatılmamış kayıtlar
+            //   (`Queued` dışındakiler) kuyruğa alınır; `Failed` bir kayıt her
+            //   indirme bitişinde yeniden kuyruğa girmez.
+            let queue_it = force
+                || (!item.status.is_resumable() && item.status != DownloadStatus::Queued);
+            if queue_it && item.status != DownloadStatus::Queued {
                 self.db
                     .update_status(id, DownloadStatus::Queued, None, None)
                     .await?;
@@ -983,6 +1087,11 @@ impl DownloadManager {
 
     /// Kuyruktaki bekleyen indirmeleri sınırın izin verdiği kadar başlatır.
     ///
+    /// `spawn`'a `queue_released` bayrağı `force` olarak geçer: kullanıcı
+    /// "Kuyruğu Başlat" dediyse bekleyen görevler sınır boşaldıkça devreye
+    /// girer, `auto_start` kapalı olsa bile. Bayrak kapalıysa davranış
+    /// `auto_start` ayarına uyar.
+    ///
     /// Dönüş tipi elle yazılmıştır: `spawn` → `run_download` → `pump_queue`
     /// → `spawn` çağrı döngüsü olduğu için rustc `Send` çıkarımını
     /// tamamlayamaz. `dyn Future + Send` sınırı döngüyü kırar ve görevin
@@ -1000,6 +1109,9 @@ impl DownloadManager {
                 .take(64)
                 .collect();
 
+            // Kuyruk "serbest bırakılmamış" ise `spawn` `auto_start`'a bakar.
+            let released = self.queue_released.load(Ordering::SeqCst);
+
             for id in queued {
                 let limit = self
                     .db
@@ -1010,7 +1122,7 @@ impl DownloadManager {
                 if self.active.len() as u32 >= limit {
                     break;
                 }
-                let _ = self.spawn(id).await;
+                let _ = self.spawn(id, released).await;
             }
         })
     }
@@ -1401,11 +1513,11 @@ impl DownloadManager {
                 latest = Some(snap.clone());
 
                 let downloaded = snap.downloaded_bytes;
-                let total = if snap.total_bytes > 0 {
-                    snap.total_bytes
-                } else {
-                    downloaded
-                };
+                // Boyut bilinmiyorsa `total_bytes` **0** olarak yayınlanır;
+                // arayüz "Boyut bilinmiyor" durumunu çizer. `downloaded`
+                // fallback'i kullanılsaydı yüzde her zaman %100 görünür ve
+                // çubuk tamamen dolu çizilirdi.
+                let total = snap.total_bytes;
 
                 // Her turda arayüze olay yayınla (anında güncelleme).
                 let _ = events.send(DownloadEvent::Progress {
@@ -1485,7 +1597,24 @@ impl DownloadManager {
         supports_ranges: bool,
     ) {
         let downloaded = downloaded_from_channels(&states);
-        let total = total_from_channels(&states);
+
+        // Toplam boyut çözümü:
+        //
+        // * `item.total_bytes > 0` → yoklamadan gelen gerçek boyut, yetkili.
+        // * `planned_total > 1` → kanal planı gerçek bir aralık taşıyor
+        //   (bilinmeyen boyut tamamlandığında motor `end_byte`'ı hizaladığı için
+        //   buraya düşer).
+        // * aksi halde boyut **gerçekten bilinmiyor**: `0` saklanır, arayüz
+        //   "Boyut bilinmiyor" yazar. `downloaded` fallback'i kullanılsaydı
+        //   yüzde her zaman %100 görünürdü.
+        let planned_total = total_from_channels(&states);
+        let total = if item.total_bytes > 0 {
+            item.total_bytes
+        } else if planned_total > 1 {
+            planned_total
+        } else {
+            0
+        };
 
         let (status, error_message, log_level, log_msg) = match &result {
             Ok(_) => (
@@ -1532,17 +1661,14 @@ impl DownloadManager {
             ),
         };
 
-        // Tamamlandıysa baytları toplamla eşitle.
-        let (downloaded, total) = if status == DownloadStatus::Completed {
-            let t = if total > 0 { total } else { item.total_bytes };
-            (t, t)
+        // Tamamlandıysa baytları toplamla eşitle. `total` yukarıda zaten
+        // güvenilir kaynağa göre çözüldü; bilinmeyen boyutlu indirmelerde motor
+        // `end_byte`'ı gerçek boyuta hizaladığı için `total` dosyanın gerçek
+        // boyutudur. Yine de `max` ile alt taşma koruması bırakılır.
+        let downloaded = if status == DownloadStatus::Completed {
+            total.max(downloaded)
         } else {
-            let t = if item.total_bytes > 0 {
-                item.total_bytes
-            } else {
-                total
-            };
-            (downloaded, t)
+            downloaded
         };
 
         let completed_at = if status == DownloadStatus::Completed {

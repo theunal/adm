@@ -117,9 +117,9 @@ export function deleteDownload(
   return invoke<void>("delete_download", { id, deleteFile });
 }
 
-/** Tamamlanmış / iptal edilmiş kayıtları temizler. */
-export function clearFinished(): Promise<void> {
-  return invoke<void>("clear_finished");
+/** Tamamlanmış / iptal edilmiş kayıtları temizler; silinen sayıyı döner. */
+export function clearFinished(): Promise<number> {
+  return invoke<number>("clear_finished");
 }
 
 /** Çalışan tüm indirmeleri duraklatır; etkilenen sayıyı döner. */
@@ -135,6 +135,21 @@ export function resumeAllDownloads(): Promise<number> {
 /** Çalışan tüm indirmeleri iptal eder; etkilenen sayıyı döner. */
 export function cancelAllDownloads(): Promise<number> {
   return invoke<number>("cancel_all_downloads");
+}
+
+/**
+ * IDM tarzı ayrıntı penceresini açar (yoksa) ya da öne getirir.
+ *
+ * Pencerenin konusu `detail-<id>` etiketinden okunur; aynı indirme için ikinci
+ * bir pencere açılmaz.
+ */
+export function openDetailWindow(id: number, fileName: string): Promise<void> {
+  return invoke<void>("open_detail_window", { id, fileName });
+}
+
+/** Bir indirmenin ayrıntı penceresini kapatır (yoksa hata değildir). */
+export function closeDetailWindow(id: number): Promise<void> {
+  return invoke<void>("close_detail_window", { id });
 }
 
 /** Bir yolun bulunduğu birimde kalan bayt sayısı (durum çubuğu). */
