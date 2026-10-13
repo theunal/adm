@@ -46,6 +46,11 @@
   }
   async function refresh(): Promise<void> {
     if (!alive()) { stopStatus(); return; }
+    // Arka plandaki (görünmeyen) pencereler için yoklama anlamsızdır:
+    // durum yalnızca görünür paserlar da kullanıcı fark eder ve onlar ilk
+    // yükte gönderimde zaten gelir. Pencere yeniden görünür olunca aşağıda
+    // `visibilitychange` dinleyicisi ilk geçerli yoklamayı tetikler.
+    if (document.visibilityState !== 'visible') return;
     const r = await send<StatusResponse>({ type: 'status' });
     if (!r || typeof r !== 'object' || !('settings' in r)) return;
     state = r;
