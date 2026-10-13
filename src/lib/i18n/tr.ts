@@ -505,6 +505,7 @@ export const tr = {
   "settings.tool_reinstall": "Güncelle",
   "settings.tool_installed": "Kurulu",
   "settings.tool_missing": "Kurulu değil",
+  "settings.tools_checking": "Kontrol ediliyor…",
   "settings.tool_version": "sürüm {version}",
   "settings.ytdlp_path": "Özel yt-dlp yolu",
   "settings.ytdlp_path_hint":

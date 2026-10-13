@@ -955,19 +955,31 @@ function VideoTab(props: TabProps & {
         <p class="settings-hint">{t("settings.site_login_hint")}</p>
 
         <div class="settings-status">
+          {/* Çerez durumu da gecikmeli geliyor: yüklenirken "giriş yapılmamış"
+              demek yanıltıcı, bu yüzden yüklenme göstergesi gösterilir. */}
           <Show
-            when={(login()?.cookieCount ?? 0) > 0}
-            fallback={<span class="settings-hint">{t("settings.site_login_none")}</span>}
-          >
-            <span class="settings-ok">
-              {t("settings.site_login_count", { count: login()?.cookieCount ?? 0 })}
-            </span>
-            <Show when={(login()?.domains.length ?? 0) > 0}>
-              <span class="settings-hint">
-                {t("settings.site_login_domains", {
-                  domains: (login()?.domains ?? []).join(", "),
-                })}
+            when={login() !== undefined}
+            fallback={
+              <span class="tool-loading">
+                <span class="spinner spinner-xs" aria-hidden="true" />
+                {t("settings.tools_checking")}
               </span>
+            }
+          >
+            <Show
+              when={(login()?.cookieCount ?? 0) > 0}
+              fallback={<span class="settings-hint">{t("settings.site_login_none")}</span>}
+            >
+              <span class="settings-ok">
+                {t("settings.site_login_count", { count: login()?.cookieCount ?? 0 })}
+              </span>
+              <Show when={(login()?.domains.length ?? 0) > 0}>
+                <span class="settings-hint">
+                  {t("settings.site_login_domains", {
+                    domains: (login()?.domains ?? []).join(", "),
+                  })}
+                </span>
+              </Show>
             </Show>
           </Show>
         </div>
@@ -1009,22 +1021,39 @@ function VideoTab(props: TabProps & {
             const status = () => statusOf(tool);
             const busy = () => props.installing()[tool] === true;
             const fraction = () => toolProgress[tool];
+            // Araç bilgisi gecikmeli geliyor (Rust tarafı dosya sistemine
+            // bakıyor): kaynak yüklenirken "Kurulu değil" demek yanıltıcı
+            // olurdu — kullanıcı önce hata görür, sonra durum değişirdi.
+            // Bu yüzden bilgi gelene kadar "Kontrol ediliyor…" gösterilir.
+            // (`toolStatusSafe` hatayı yuttuğu için kaynak "errored" olmaz;
+            // değer `undefined` kaldığı sürece bilgi henüz gelmemiştir.)
+            const loading = () => tools() === undefined;
 
             return (
               <div class="tool-row">
                 <span class="tool-name">{tool}</span>
                 <span class="tool-state">
                   <Show
-                    when={status()?.installed}
-                    fallback={<span class="settings-bad">{t("settings.tool_missing")}</span>}
+                    when={!loading()}
+                    fallback={
+                      <span class="tool-loading">
+                        <span class="spinner spinner-xs" aria-hidden="true" />
+                        {t("settings.tools_checking")}
+                      </span>
+                    }
                   >
-                    <span class="settings-ok">
-                      {t("settings.tool_installed")}
-                      <Show when={status()?.version}>
-                        {" · "}
-                        {t("settings.tool_version", { version: status()?.version ?? "" })}
-                      </Show>
-                    </span>
+                    <Show
+                      when={status()?.installed}
+                      fallback={<span class="settings-bad">{t("settings.tool_missing")}</span>}
+                    >
+                      <span class="settings-ok">
+                        {t("settings.tool_installed")}
+                        <Show when={status()?.version}>
+                          {" · "}
+                          {t("settings.tool_version", { version: status()?.version ?? "" })}
+                        </Show>
+                      </span>
+                    </Show>
                   </Show>
                 </span>
                 <Tip
@@ -1040,7 +1069,7 @@ function VideoTab(props: TabProps & {
                 <button
                   type="button"
                   class="btn btn-ghost"
-                  disabled={busy() || saving()}
+                  disabled={busy() || saving() || loading()}
                   onClick={() => void install(tool)}
                 >
                   {busy()

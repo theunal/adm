@@ -499,6 +499,7 @@ export const en: Dict = {
   "settings.tool_reinstall": "Update",
   "settings.tool_installed": "Installed",
   "settings.tool_missing": "Not installed",
+  "settings.tools_checking": "Checking…",
   "settings.tool_version": "version {version}",
   "settings.ytdlp_path": "Custom yt-dlp path",
   "settings.ytdlp_path_hint":

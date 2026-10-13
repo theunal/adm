@@ -2833,6 +2833,23 @@ body {
   font-size: 11.5px;
 }
 
+/* Araç bilgisi gecikmeli geliyor (Rust tarafı dosya sistemine bakıyor):
+   yüklenme göstergesi — küçük dönen halka + "Kontrol ediliyor…" metni.
+   `.spinner` genel (18 px) boyuttadır; tablo satırına sığması için
+   11 px varyant. */
+.tool-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.spinner-xs {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+}
+
 .tool-note {
   margin: 0;
   overflow: hidden;
