@@ -210,9 +210,11 @@ export default function App() {
         <TitleBar />
 
         <div class="app-body">
-          {/* Menü açma düğmesi: yalnızca panel kapalıyken, sol üst köşede.
-              (Açıkken karşılığı panelin kendi başlık satırındaki ✕.) */}
-          <Show when={!sideOpen()}>
+          {/* Menü açma düğmesi: yalnızca panel kapalıyken VE ayarlar
+              kapalıyken. Ayarlar açıkken içerik alanı listeyi değil ayarlar
+              kartını gösterir; düğme başlığı ve sekme rayını örterek
+              görünmez yapardı. (Açıkken karşılığı panelin ✕ düğmesi.) */}
+          <Show when={!sideOpen() && !settingsOpen()}>
             <MenuToggle />
           </Show>
 

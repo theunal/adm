@@ -85,8 +85,9 @@ version never had.
 - **Detail window** — info grid, progress, connection table
   (N. / Downloaded / Start / Info), yt-dlp log for video downloads, and a
   finished view (Open / Show in Folder)
-- **Tabbed settings** — General · File Types · Browsers · Video ·
-  Interface
+- **Settings** — a centered card over the list with a left tab rail
+  (General · File Types · Browsers · Video · Interface); clicking the
+  dimmed background closes it
 - **Bulk actions** — pause / resume / cancel / clear finished
 - **Multi-selection** — Ctrl/Shift row selection, right-click context
   menu, double-click to open the file
@@ -389,7 +390,7 @@ src/                     SolidJS UI
 │   ├── NewDownloadDialog.tsx    kind picker (file/video) + destination preview
 │   ├── ClipboardPromptDialog.tsx prompt for clipboard-captured links
 │   ├── BrowserSetupDialog.tsx   browser setup wizard
-│   ├── SettingsPanel.tsx        tabbed settings (General/Types/Browsers/Video/UI)
+│   ├── SettingsPanel.tsx        settings card (tab rail + scrolling content)
 │   ├── RowContextMenu.tsx       right-click menu + channel editor
 │   ├── FileIcon.tsx             file icon by extension
 │   ├── Toast.tsx                bottom-right feedback toast

@@ -76,6 +76,22 @@ const TABS: { id: TabId; key: string }[] = [
   { id: "interface", key: "settings.tab.interface" },
 ];
 
+/** Sekme simgeleri (24×24, `currentColor` ile çizilir). */
+const TAB_ICON: Record<TabId, string> = {
+  // Üç kaydırma çubuğu
+  general:
+    "M4 7 h16 M4 12 h16 M4 17 h16 M9 7 v0 M14 12 v0 M7 17 v0",
+  // Katlanmış dosya
+  types: "M6 3 h8 l4 4 v14 h-12 z M14 3 v4 h4 M9 12 h6 M9 15.5 h6",
+  // Küre (tarayıcılar)
+  browsers: "M12 3.5 a8.5 8.5 0 1 0 0 17 a8.5 8.5 0 0 0 0-17 M3.5 12 h17 M12 3.5 c2.5 2.4 2.5 14.6 0 17 M12 3.5 c-2.5 2.4 -2.5 14.6 0 17",
+  // Oynat
+  video: "M8 5.5 L19 12 L8 18.5 Z",
+  // Palet
+  interface:
+    "M12 3.5 a8.5 8.5 0 0 0 0 17 h1.8 a2.2 2.2 0 0 0 0-4.4 h-1.8 a4.3 4.3 0 0 1 0-8.6 h6 a4.3 4.3 0 0 1 0 8.6 M7.5 8 a1.1 1.1 0 1 0 0.01 0 M10 16.6 a1.1 1.1 0 1 0 0.01 0 M17 8 a1.1 1.1 0 1 0 0.01 0",
+};
+
 /** Dil seçenekleri. */
 const LANGS: Locale[] = ["tr", "en"];
 
@@ -133,57 +149,81 @@ export default function SettingsPanel() {
   }
 
   return (
-    <div class="settings-panel">
-      <div class="settings-head">
-        <h2 class="settings-head-title">{t("menu.item.settings")}</h2>
-        <Tip
-          class="settings-close"
-          label={t("props.close")}
-          aria-label={t("props.close")}
-          onClick={() => setSettingsOpen(false)}
-        >
-          {t("props.close")}
-        </Tip>
-      </div>
+    <div
+      class="settings-panel"
+      onMouseDown={(e) => {
+        // Karartmaya tıklamak ayarları kapatır; kart içi tıklamalar geçer.
+        if ((e.target as HTMLElement | null)?.classList.contains("settings-panel")) {
+          setSettingsOpen(false);
+        }
+      }}
+    >
+      <div class="settings-card">
+        <div class="settings-card-head">
+          <h2 class="settings-card-title">{t("menu.item.settings")}</h2>
+          <Tip
+            class="settings-close"
+            label={t("props.close")}
+            keys="Ctrl+S"
+            aria-label={t("props.close")}
+            onClick={() => setSettingsOpen(false)}
+          >
+            <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+              <path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </Tip>
+        </div>
 
-      <div class="settings-tabs" role="tablist" aria-label={t("menu.item.settings")}>
-        <For each={TABS}>
-          {(item) => (
-            <button
-              type="button"
-              role="tab"
-              class={`settings-tab${tab() === item.id ? " settings-tab-active" : ""}`}
-              aria-selected={tab() === item.id}
-              onClick={() => setTab(item.id)}
-            >
-              {t(item.key)}
-            </button>
-          )}
-        </For>
-      </div>
+        <div class="settings-body">
+          {/* Sol sekme rayı — dikey. Etkin sekme kenar çubuğuyla aynı görsel
+              dili kullanır (soft zemin + sol 2 px accent çubuğu). */}
+          <div class="settings-rail" role="tablist" aria-orientation="vertical"
+            aria-label={t("menu.item.settings")}>
+            <For each={TABS}>
+              {(item) => (
+                <button
+                  type="button"
+                  role="tab"
+                  class={`settings-rail-item${tab() === item.id ? " settings-tab-active" : ""}`}
+                  aria-selected={tab() === item.id}
+                  onClick={() => setTab(item.id)}
+                >
+                  <span class="settings-rail-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="15" height="15">
+                      <path d={TAB_ICON[item.id]} fill="none" stroke="currentColor"
+                        stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                  <span class="settings-rail-label">{t(item.key)}</span>
+                </button>
+              )}
+            </For>
+          </div>
 
-      <div class="settings-body">
-        <Show when={tab() === "general"}>
-          <GeneralTab saving={saving} save={save} guard={guard} checking={checking} setChecking={setChecking} />
-        </Show>
-        <Show when={tab() === "types"}>
-          <TypesTab saving={saving} save={save} />
-        </Show>
-        <Show when={tab() === "browsers"}>
-          <BrowsersTab saving={saving} save={save} guard={guard} />
-        </Show>
-        <Show when={tab() === "video"}>
-          <VideoTab
-            saving={saving}
-            save={save}
-            guard={guard}
-            installing={installing}
-            setInstalling={setInstalling}
-          />
-        </Show>
-        <Show when={tab() === "interface"}>
-          <InterfaceTab saving={saving} guard={guard} />
-        </Show>
+          <div class="settings-scroll">
+            <Show when={tab() === "general"}>
+              <GeneralTab saving={saving} save={save} guard={guard} checking={checking} setChecking={setChecking} />
+            </Show>
+            <Show when={tab() === "types"}>
+              <TypesTab saving={saving} save={save} />
+            </Show>
+            <Show when={tab() === "browsers"}>
+              <BrowsersTab saving={saving} save={save} guard={guard} />
+            </Show>
+            <Show when={tab() === "video"}>
+              <VideoTab
+                saving={saving}
+                save={save}
+                guard={guard}
+                installing={installing}
+                setInstalling={setInstalling}
+              />
+            </Show>
+            <Show when={tab() === "interface"}>
+              <InterfaceTab saving={saving} guard={guard} />
+            </Show>
+          </div>
+        </div>
       </div>
     </div>
   );

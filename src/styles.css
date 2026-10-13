@@ -1062,68 +1062,192 @@ body {
 }
 
 /* ==========================================================================
-   Ayarlar paneli
+   Ayarlar — ortalanmış kart (SettingsPanel.tsx)
+
+   Eski tam sayfa yerleşim büyük ve dağınık görünüyordu; ayarlar artık
+   listenin üzerine gelen yuvarlatılmış bir kart: solda dikey sekme rayı,
+   sağda kaydırmalı içerik. Arka plan karartmaya tıklamak kapatır.
    ========================================================================== */
 
 .settings-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  flex: 1;
-  min-height: 0;
-  padding: 16px 18px 22px;
-  overflow-y: auto;
-  background: var(--bg-panel);
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(0, 0, 0, 0.45);
+  animation: settings-in 140ms ease-out;
 }
-.settings-head {
+
+@keyframes settings-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.settings-card {
+  display: grid;
+  grid-template-columns: 208px 1fr;
+  grid-template-rows: auto 1fr;
+  width: min(760px, 100%);
+  max-height: 100%;
+  min-height: 300px;
+  overflow: hidden;
+  background: var(--bg-raise);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-lg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  animation: settings-card-in 150ms ease-out;
+}
+
+@keyframes settings-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+/* Kart başlığı: her iki kolonu kapsar, altında hairline. */
+.settings-card-head {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  gap: 10px;
+  height: 40px;
+  padding: 0 6px 0 16px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
 }
-.settings-head-title {
+
+.settings-card-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--text);
 }
 
-/* Ayarlar panelinden indirme listesine dönüş düğmesi.
-   Panel listeden açıldığı için "Kapat" her zaman görünen tek çıkış yoludur;
-   stil yoksa düz HTML butonu olarak çizilir. */
+/* Kapat düğmesi: sadece ikon (eski geniş metin düğmesi yerine). */
 .settings-close {
-  display: inline-flex;
-  align-items: center;
+  display: grid;
+  place-items: center;
+  width: 26px;
   height: 26px;
-  padding: 0 12px;
-  border: 1px solid var(--border-mid);
-  border-radius: var(--r-md);
-  background: var(--bg-raise);
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
   color: var(--text-dim);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
   cursor: pointer;
-  transition: background var(--t), border-color var(--t), color var(--t);
+  transition: background var(--t), color var(--t);
 }
 .settings-close:hover {
   background: var(--bg-raise-hover);
-  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+/* Gövde: sol sekme rayı + sağ kaydırmalı içerik. */
+.settings-body {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+/* Dikey sekme rayı — kenar çubuğuyla aynı görsel dil. */
+.settings-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 6px;
+  background: var(--bg-bar);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.settings-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t), color var(--t);
+}
+.settings-rail-item:hover {
+  background: var(--bg-raise-hover);
   color: var(--text);
 }
-.settings-close:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+
+.settings-rail-item.settings-tab-active,
+.settings-rail-item.settings-tab-active:hover {
+  background: var(--accent-soft);
+  color: var(--text-strong);
 }
-.settings-close:active {
-  background: var(--bg-raise-active);
+
+.settings-rail-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
 }
+.settings-rail-item.settings-tab-active .settings-rail-icon {
+  color: var(--accent);
+}
+
+.settings-rail-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sağ içerik: karttan dışarı taşarsa kendi içinde kayar. */
+.settings-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 14px 16px 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Dar pencerede ray üstte yatay şeride dönüşür (1000×400 standart pencere
+   için gerekmez; kullanıcı pencereyi daraltırsa kartın içi ezilmez). */
+@media (max-width: 640px) {
+  .settings-card {
+    grid-template-columns: 1fr;
+  }
+  .settings-rail {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-rail-item {
+    width: auto;
+    flex: 0 0 auto;
+  }
+}
+
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 8px;
+  padding: 12px 14px;
   background: var(--bg-raise);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -1141,7 +1265,7 @@ body {
 .settings-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .settings-field > label {
   display: flex;
@@ -1153,7 +1277,7 @@ body {
 }
 .settings-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 10.5px;
   line-height: 1.55;
   color: var(--text-faint);
 }
@@ -2531,49 +2655,10 @@ body {
   text-align: center;
 }
 
-/* ==========================================================================
-   MC portu — ayarlar sekmeleri (SettingsPanel.tsx)
-   ========================================================================== */
-
-.settings-tabs {
-  display: flex;
-  gap: 2px;
-  flex: 0 0 auto;
-  padding: 0 2px;
-  border-bottom: 1px solid var(--border);
-}
-
-.settings-tab {
-  padding: 7px 13px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-  transition: color var(--t), border-color var(--t);
-}
-
-.settings-tab:hover {
-  color: var(--text);
-}
-
-.settings-tab-active,
-.settings-tab-active:hover {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.settings-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
 
 .settings-subtitle {
   margin: 4px 0 0;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-dim);
 }
