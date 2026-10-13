@@ -450,6 +450,25 @@ export function selectedItems(): DownloadItem[] {
   return allItems().filter((i) => state.selected[i.id]);
 }
 
+/**
+ * Bir seçim kaydını **tamamen** kaldırır.
+ *
+ * SolidJS'te `undefined` yazmak anahtarı siler (`setProperty` → `delete`);
+ * `false` yazmak ise anahtarı bırakır. Bu ayrım kritiktir: `false` ile
+ * yazılan bir kayıt, `hasSelection()`'ı kalıcı olarak `true` yapar — yani
+ * "hiç seçim yapıldı mı" sorusuna döner, "şu an bir şey seçili mi"
+ * sorusuna değil. Sonuçta hiçbir şey seçilmediği hâlde menüdeki "Kayıt sil"
+ * gibi seçim bağımlı öğeler etkin kalır ve hedefi, seçimsiz
+ * `bulkTargets()`'in düştüğü görünür listedeki rastgele satır olur.
+ *
+ * TS, `Record<number, boolean>` yoluna `undefined` atamayı reddeder; bu
+ * yüzden kod içi standart olan `undefined as unknown as T` kalıbı kullanılır
+ * (aynı kalıp `speed` / `speedHistory` temizliğinde de var).
+ */
+function dropSelection(id: number) {
+  setState("selected", id, undefined as unknown as boolean);
+}
+
 /** Seçim boş mu? */
 export function hasSelection(): boolean {
   return Object.keys(state.selected).length > 0;
@@ -458,7 +477,7 @@ export function hasSelection(): boolean {
 /** Seçimi temizler. */
 export function clearSelection() {
   for (const id of Object.keys(state.selected)) {
-    setState("selected", Number(id), false);
+    dropSelection(Number(id));
   }
   anchorId = null;
 }
@@ -490,10 +509,18 @@ export function selectRow(
 
   if (mode === "toggle") {
     const next = !state.selected[id];
-    setState("selected", id, next);
-    anchorId = id;
-    // Son satırı bırakıldıysa seçim bayraçlarını da temizle.
-    if (!next && !hasSelection()) anchorId = id;
+    if (next) {
+      setState("selected", id, true);
+    } else {
+      // Bırakılan satırın kaydı `false` olarak yazılmamalı: anahtar kalırdı
+      // ve `hasSelection()` hiçbir şey seçilmediğinde bile `true` olurdu.
+      dropSelection(id);
+    }
+    // Son satır bırakıldıysa seçim çapası da sıfırlanır; boş bir seçimde
+    // çapa, kullanıcının az önce bilinçli olarak bıraktiği satıra işaret
+    // etmemelidir — Shift+tıklama o satırı yeniden seçerdi.
+    if (!next && !hasSelection()) anchorId = null;
+    else anchorId = id;
     return;
   }
 
@@ -916,8 +943,13 @@ async function reloadList(): Promise<void> {
       if (!seen.has(Number(id))) {
         setState("speed", Number(id), undefined as unknown as number);
         setState("speedHistory", Number(id), undefined as unknown as SpeedSample[]);
-        setState("selected", Number(id), false);
       }
+    }
+    // `selected` ayrıca taranmalı: bir kayıt hiç hız kaydı tutulmamış
+    // olabilir; `speed` döngüsü onu görmezdi ve kalan anahtar
+    // `hasSelection()`'ı sonsuza dek `true` bırakırdı.
+    for (const id of Object.keys(state.selected)) {
+      if (!seen.has(Number(id))) dropSelection(Number(id));
     }
   } catch (e) {
     pushFeedback("error", t("log.list_refresh_failed", { error: errorText(e) }));
