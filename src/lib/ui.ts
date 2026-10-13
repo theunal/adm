@@ -65,11 +65,20 @@ export const [statusMessage, setStatusMessage] = createSignal<StatusMessage | nu
   null,
 );
 
-/**
- * "Yeni İndirme" penceresi.
+/** "Yeni İndirme" penceresi.
  *
  * Adres alanı kenar çubuğunda değil, burada: araç çubuğundaki yeşil
  * **URL Ekle** düğmesi, menüdeki `Dosya ▸ URL Ekle` ve `Ctrl+N` bu pencereyi
  * açar. Pencere `Escape` ile de kapanır (`App.tsx` genel işleyicisi).
  */
 export const [addDialogOpen, setAddDialogOpen] = createSignal(false);
+
+/**
+ * Sol menü paneli açık mı?
+ *
+ * Üst çubuk ve ≡ menüsü kaldırıldıktan sonra tüm eylemlerin ve filtrelerin
+ * yeri bu panele taşındı. Panel kapalıyken hiç çizilmez; açma düğmesi (☰)
+ * `TitleBar`'da. Açılınca içerik alanının üzerinde katman olarak görünür;
+ * dış tıklama ve `Escape` kapatır. Kapatma işleyicisi `App.tsx`'te.
+ */
+export const [sideOpen, setSideOpen] = createSignal(false);

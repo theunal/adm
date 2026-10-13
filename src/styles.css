@@ -59,7 +59,6 @@
 
   /* --- Yükseklik --- */
   --titlebar-h: 34px;
-  --toolbar-h: 52px;
   --head-h: 34px;
   --row-h: 40px;
   --statusbar-h: 34px;
@@ -126,9 +125,11 @@ body {
   background: var(--bg-app);
 }
 
-/* Kenar çubuğu kaldırıldı: filtreler araç çubuğundaki açılır listeye taşındı,
-   bu yüzden gövde tek sütun ve kenarlıksızdır. */
+/* Gövde tek sütun: sol menü artık sabit bir sütun değil, üzerine gelen
+   katman panel (bkz. `.sidebar`). Panelin konumlanabilmesi için gövde
+   `position: relative` taşır. */
 .app-body {
+  position: relative;
   display: flex;
   flex-direction: row;
   flex: 1;
@@ -193,6 +194,30 @@ body {
   margin-left: auto;
 }
 
+/* Başlık çubuğundaki simge düğmeleri (☰ menü · ayarlar).
+   `win-btn` pencere düğmesidir ve sabit 44 px genişliktedir; bunlar içerik
+   düğmesidir, çubuk yüksekliğine yayılır ama daha dardır. */
+.tb-toggle {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--t), color var(--t);
+}
+.tb-toggle:hover {
+  background: var(--bg-raise-hover);
+  color: var(--text-strong);
+}
+.tb-toggle.tb-btn-active {
+  background: var(--bg-raise-active);
+  color: var(--accent);
+}
+
 .win-btn {
   display: grid;
   place-items: center;
@@ -249,85 +274,12 @@ body {
    Araç çubuğu
    ========================================================================== */
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--toolbar-h);
-  padding: 0 12px;
-  background: var(--bg-bar);
-  flex-shrink: 0;
-}
-
-.tb-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 /* Açılır liste düğmesi (filtre / sıralama) */
 .dd-anchor {
   position: relative;
   display: flex;
 }
 
-.tb-dd {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 10px;
-  background: var(--bg-raise);
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--t);
-}
-.tb-dd:hover {
-  background: var(--bg-raise-hover);
-}
-.tb-dd-open {
-  background: var(--bg-raise-active);
-  border-color: var(--border-strong);
-}
-.tb-dd-icon {
-  display: block;
-  color: var(--text-dim);
-}
-.tb-dd-open .tb-dd-icon {
-  color: var(--accent);
-}
-.tb-dd-caret {
-  display: block;
-  color: var(--text-faint);
-  margin-left: 1px;
-}
-
-/* Birincil düğme — "İndirme ekle" */
-.tb-add {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 14px;
-  background: var(--accent);
-  border: none;
-  border-radius: var(--r-md);
-  color: var(--accent-ink);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--t);
-}
-.tb-add:hover {
-  background: var(--accent-hover);
-}
 
 /* Arama */
 .tb-search {
@@ -364,34 +316,6 @@ body {
   color: var(--text-faint);
 }
 
-.tb-spacer {
-  flex: 1;
-}
-
-/* Menü düğmesi (≡) — menü çubuğu gizlendiği için tüm menüler burada */
-.menu-anchor {
-  position: relative;
-  display: flex;
-}
-
-.tb-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background var(--t), color var(--t);
-}
-.tb-icon:hover,
-.tb-icon-open {
-  background: var(--bg-raise-hover);
-  color: var(--text-strong);
-}
-
 /* Açılır liste paneli */
 .dd-pop {
   position: absolute;
@@ -406,11 +330,6 @@ body {
   border-radius: var(--r-md);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
-.dd-pop-right {
-  left: auto;
-  right: 0;
-}
-
 .dd-item {
   display: flex;
   align-items: center;
@@ -441,26 +360,6 @@ body {
   flex-shrink: 0;
   color: var(--accent);
 }
-.dd-count {
-  margin-left: auto;
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-.dd-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border);
-}
-.dd-head {
-  padding: 6px 8px 3px;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
 /* ==========================================================================
    Tablo
    ========================================================================== */
@@ -776,10 +675,6 @@ body {
   border-radius: var(--r-lg);
   transition: border-color var(--t), background var(--t);
 }
-.dropzone-active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
 .dropzone-icon {
   color: var(--text-faint);
 }
@@ -940,10 +835,6 @@ body {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
-.btn-danger:hover:not(:disabled) {
-  border-color: var(--danger);
-  color: var(--danger);
-}
 /* Hayalet düğme — dolgu ve kenarlık yok, yalnızca metin rengi değişir.
    `SettingsPanel`'de "Gözat" / "↺" gibi ikincil eylemlerde kullanılır; dolu
    `.btn` ile yarışmamalıdır. */
@@ -956,9 +847,6 @@ body {
   background: var(--bg-raise);
   border-color: var(--border-mid);
   color: var(--text);
-}
-.btn-block {
-  width: 100%;
 }
 .btn-icon {
   min-width: 30px;
@@ -1027,90 +915,6 @@ body {
 }
 
 /* ==========================================================================
-   Menü çubuğu yerine: ≡ paneli
-   ========================================================================== */
-
-.menu-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 120;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  /* Beş sütun dar ekranda sarmalınsın ve pencere taşmasın. */
-  max-width: calc(100vw - 24px);
-  padding: 6px;
-  background: var(--bg-raise);
-  border: 1px solid var(--border-mid);
-  border-radius: var(--r-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-.menu-col {
-  display: flex;
-  flex-direction: column;
-  min-width: 186px;
-  /* Uzun listeler (Görevler) pencere altına taşmasın diye kendi içinde kayar. */
-  max-height: calc(100vh - 96px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.menu-col + .menu-col {
-  border-left: 1px solid var(--border);
-  padding-left: 6px;
-  margin-left: 4px;
-}
-.menu-col-title {
-  padding: 4px 8px 5px;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 5px 8px;
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--t);
-}
-.menu-item:hover:not(:disabled) {
-  background: var(--bg-raise-hover);
-}
-.menu-item:disabled {
-  color: var(--text-faint);
-  cursor: not-allowed;
-}
-.menu-check {
-  width: 12px;
-  flex-shrink: 0;
-  color: var(--accent);
-}
-.menu-accel {
-  margin-left: auto;
-  padding-left: 14px;
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-}
-.menu-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border);
-}
-
-/* ==========================================================================
    Pencereler
    ========================================================================== */
 
@@ -1145,22 +949,6 @@ body {
 }
 .modal-title-text {
   flex: 1;
-}
-.modal-close {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 12px;
-  cursor: pointer;
-}
-.modal-close:hover {
-  background: var(--danger);
-  color: #fff;
 }
 .modal-body {
   padding: 16px 18px;
@@ -1287,6 +1075,39 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
+/* Menü satırı — satır bağlam menüsü (RowContextMenu.tsx) bu sınıfları
+   kullanmaya devam eder; bu yüzden araç çubuğu menüsünden bağımsız olarak
+   burada tanımlıdır. */
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t);
+}
+.menu-item:hover:not(:disabled) {
+  background: var(--bg-raise-hover);
+}
+.menu-item:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
 /* Kanal sayısı düzenleyicisi (satır içi düğmeler kalktığından buraya taşındı) */
 .ctx-channels {
   display: flex;
@@ -1410,19 +1231,6 @@ body {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-strong);
-}
-.count-pill {
-  display: inline-grid;
-  place-items: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 700;
 }
 .settings-row,
 .settings-field {
@@ -1739,20 +1547,30 @@ body {
 }
 
 /* ==========================================================================
-   MC portu — kenar çubuğu (Sidebar.tsx)
+   MC portu — sol menü paneli (Sidebar.tsx)
    ========================================================================== */
 
+/* Panel sabit bir sütun değil, gövdenin üzerine gelen katmandır: açılışı
+   `TitleBar`'daki ☰ düğmesiyle, kapanışı dış tıklama / `Escape` ile olur.
+   Tablo alanını çevrelemediği için tablo kaymaz, yalnızca panel gölgesi
+   üzerine düşer. */
 .sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 196px;
-  flex: 0 0 196px;
+  width: 250px;
   min-height: 0;
   padding: 10px 8px 12px;
   overflow-y: auto;
+  scrollbar-width: thin;
   background: var(--bg-bar);
   border-right: 1px solid var(--border);
+  box-shadow: 6px 0 20px rgba(0, 0, 0, 0.35);
 }
 
 .side-head {
@@ -1841,6 +1659,79 @@ body {
 .side-item-active .side-count {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* --- Eylemler bölümü --- */
+
+/* Birincil eylem: "İndirme ekle". Panelin en üstünde, vurgulu renkte. */
+.side-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t);
+}
+.side-add:hover {
+  background: var(--accent-hover);
+}
+
+/* Eylem satırlarında rozet yok; simge + etiket sola yapışık kalsın. */
+.side-item-plain .side-label {
+  flex: 1;
+}
+
+/* --- Araçlar bölümü (sıralama açılır listesi + arama) --- */
+
+.side-tools {
+  gap: 6px;
+  padding-top: 2px;
+}
+
+/* Açılır liste satırı: kenar çubuğu öğesi gibi görünür, sağda ok ucu. */
+.side-dd {
+  position: relative;
+}
+
+.side-dd-open {
+  background: var(--bg-row-selected);
+  color: var(--text-strong);
+}
+
+.side-caret {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.side-dd-open .side-caret {
+  color: var(--accent);
+}
+
+/* Panel içindeki arama kutusu sabit 240 px yerine satırı doldurur. */
+.side-tools .tb-search {
+  width: 100%;
+}
+
+/* --- Alt bölüm (ayarlar / tarayıcı / hakkında) --- */
+
+.side-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 
 /* ==========================================================================
@@ -2278,56 +2169,6 @@ body {
    MC portu — araç çubuğu düğmeleri (Toolbar.tsx)
    ========================================================================== */
 
-.tb-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--border-mid);
-  border-radius: var(--r-md);
-  background: var(--bg-raise);
-  color: var(--text);
-  font: inherit;
-  font-size: 11.5px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--t), border-color var(--t), color var(--t);
-}
-
-.tb-btn:hover:not(:disabled) {
-  background: var(--bg-raise-hover);
-  border-color: var(--border-strong);
-}
-
-.tb-btn:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-/* Etkin (basılı) durum — Ayarlar düğmesi panel açıkken. Kullanıcı hangi
-   "sayfada" olduğunu görebilmeli; düğme toggle olduğu için bu geri bildirim
-   zorunlu. */
-.tb-btn-active,
-.tb-btn-active:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--text-strong);
-}
-.tb-btn-active svg {
-  color: var(--accent);
-}
-
-.tb-btn svg {
-  color: var(--text-dim);
-}
-
-.tb-sep {
-  width: 1px;
-  height: 20px;
-  margin: 0 3px;
-  background: var(--border-mid);
-}
 
 /* ==========================================================================
    MC portu — indirme ayrıntı penceresi (DownloadDetailDialog.tsx)

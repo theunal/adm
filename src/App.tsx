@@ -4,18 +4,19 @@
  * Sütunlar (yukarıdan aşağı):
  *
  * ```text
- * TitleBar   logo · uygulama adı · pencere düğmeleri · TR/EN
+ * TitleBar   ☰ · logo · ADM · TR/EN · ayarlar · pencere düğmeleri
  * ── app-body ────────────────────────────────────────────────
- * Sidebar    Tümü · 7 kategori (rozetli) · Biten / Bitmeyen
- * content    Toolbar + Tablo  |  Ayarlar paneli
+ * Sidebar    açılır-kapanır katman menü (☰ ile açılır)
+ * content    Tablo  |  Ayarlar paneli
  * ────────────────────────────────────────────────────────────
  * StatusBar  ana anahtar · hız · geçici mesaj
  * ```
  *
- * Kenar çubuğu MC düzeninin sol sütunudur; görev filtrelerinin tamamı ve
- * menüler araç çubuğundaki açılır listeye / ≡ paneline taşındı. Tüm durum
- * `src/lib/store.ts` üzerinden yönetilir; klavye kısayolları da burada
- * toplanır.
+ * Üst çubuk (araç çubuğu) ve ≡ menüsü kaldırıldı; taşıdıkları işlevlerin
+ * tamamı **sol panele** taşındı (eylemler · filtreler · araçlar · alt
+ * bölüm). Panel kapalıyken hiç çizilmez; açılınca içeriğin üzerinde katman
+ * olarak görünür ve dış tıklama ile kapanır. Tüm durum `src/lib/store.ts`
+ * üzerinden yönetilir; klavye kısayolları da burada toplanır.
  *
  * **Ayarlar tuzağı:** `settingsOpen` yalnızca `content` alanını değiştirir,
  * kenar çubuğu görünür kalır. Bu yüzden `selectTask` / `selectCategory`
@@ -41,13 +42,14 @@ import {
   setContextMenu,
   setPropertiesItem,
   setSettingsOpen,
+  setSideOpen,
+  sideOpen,
   settingsOpen,
 } from "./lib/ui";
 import { bulkCancel, bulkPause, bulkResume, deleteSelected } from "./lib/bulk";
 import { answerClipboardPrompt, confirm, pasteDownload } from "./lib/api";
 import { clipboardPrompt, setClipboardPrompt } from "./lib/store";
 import TitleBar from "./components/TitleBar";
-import Toolbar from "./components/Toolbar";
 import DownloadTable from "./components/DownloadTable";
 import Sidebar from "./components/Sidebar";
 import StatusBar from "./components/StatusBar";
@@ -125,6 +127,7 @@ export default function App() {
           setClipboardPrompt(null);
           void answerClipboardPrompt().catch(() => undefined);
         } else if (contextMenu()) setContextMenu(null);
+        else if (sideOpen()) setSideOpen(false);
         else if (addDialogOpen()) setAddDialogOpen(false);
         else if (aboutOpen()) setAboutOpen(false);
         else if (propertiesItem()) setPropertiesItem(null);
@@ -194,13 +197,26 @@ export default function App() {
         }
       >
         <TitleBar />
-        <Toolbar />
 
         <div class="app-body">
-          {/* Kenar çubuğu: Tümü · 7 kategori · Biten / Bitmeyen (MC düzeni) */}
-          <Sidebar />
+          {/* Sol menü: açılır-kapanır katman. Kapalıyken hiç çizilmez; açılınca
+              tablonun üzerinde durur (yanında yer kaplamaz). Dış tıklama
+              aşağıdaki `onMouseDown` ile kapatılır; panelin kendi tıklamaları
+              `.closest(".sidebar")` korumasıyla geçer. */}
+          <Show when={sideOpen()}>
+            <Sidebar />
+          </Show>
 
-          <main class="content">
+          <main
+            class="content"
+            onMouseDown={(e) => {
+              // Yalnızca panel açıkken ve panel dışına basıldığında kapat.
+              if (!sideOpen()) return;
+              const el = e.target as HTMLElement | null;
+              if (el?.closest(".sidebar")) return;
+              setSideOpen(false);
+            }}
+          >
             {/* Ayarlar menüsü tablonun yerini alır. */}
             <Show when={!settingsOpen()} fallback={<SettingsPanel />}>
               <DownloadTable />

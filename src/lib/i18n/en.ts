@@ -26,20 +26,12 @@ export const en: Dict = {
   "title.window": "ADM — Advanced Download Manager",
 
   // -----------------------------------------------------------------
-  // Menü çubuğu (MenuBar.tsx)
+  // Menu bar entries — also used by the row context menu (RowContextMenu.tsx)
   // -----------------------------------------------------------------
-  "menu.file": "File",
-  "menu.downloads": "Downloads",
-  "menu.tasks": "Tasks",
-  "menu.options": "Options",
-  "menu.help": "Help",
-  "menu.item.add_url": "Add URL",
   "menu.item.paste_url": "Paste from Clipboard",
   "menu.item.open_file": "Open File",
   "menu.item.open_folder": "Open Containing Folder",
   "menu.item.copy_url": "Copy Address to Clipboard",
-  "menu.item.pause_all": "Pause All",
-  "menu.item.resume_all": "Resume All",
   "menu.item.cancel_all": "Stop All",
   "menu.item.select_all": "Select All",
   "menu.item.clear_history": "Clear List",
@@ -50,18 +42,16 @@ export const en: Dict = {
   "menu.item.settings": "Settings…",
   "menu.item.browser_setup": "Browser Extension…",
   "menu.item.about": "About ADM",
-  "menu.item.exit": "Exit",
 
   // -----------------------------------------------------------------
-  // Araç çubuğu (Toolbar.tsx)
+  // Sidebar overlay menu (Sidebar.tsx) + title bar buttons (TitleBar.tsx)
   // -----------------------------------------------------------------
+  "side.open": "Open the menu",
+  "side.close": "Close the menu",
+  "side.actions": "Actions",
+  "side.tools": "Tools",
   "tb.add": "Add download",
-  "tb.add_title": "Start a new download (Ctrl+N)",
   "tb.search": "Search downloads...",
-  "tb.graph": "Graph",
-  "tb.graph_title": "Toggle the speed graph",
-  "tb.log": "Log",
-  "tb.log_title": "Toggle the events log",
 
   // -----------------------------------------------------------------
   // Kenar çubuğu (Sidebar.tsx)
@@ -339,16 +329,12 @@ export const en: Dict = {
   "wizard.close": "Close",
 
   // -----------------------------------------------------------------
-  // MC port — toolbar actions (Toolbar.tsx)
+  // MC port — sidebar actions (Sidebar.tsx) + title bar settings button
   // -----------------------------------------------------------------
   "tb.start_queue": "Start Queue",
-  "tb.start_queue_title": "Start every queued and paused download",
   "tb.stop_all": "Stop All",
-  "tb.stop_all_title": "Pause every running download",
   "tb.clear_done": "Clear Finished",
-  "tb.clear_done_title": "Delete completed, failed and cancelled records",
   "tb.settings": "Settings",
-  "tb.settings_title": "Toggle the settings panel (Ctrl+S)",
   "bulk.err.action": "The action failed: {error}",
 
   // -----------------------------------------------------------------

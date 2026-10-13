@@ -31,20 +31,12 @@ export const tr = {
   "title.window": "ADM — Gelişmiş İndirme Yöneticisi",
 
   // -----------------------------------------------------------------
-  // Menü çubuğu (MenuBar.tsx)
+  // Menü çubuğu girdileri — satır bağlam menüsünde de kullanılır (RowContextMenu.tsx)
   // -----------------------------------------------------------------
-  "menu.file": "Dosya",
-  "menu.downloads": "İndirmeler",
-  "menu.tasks": "Görevler",
-  "menu.options": "Seçenekler",
-  "menu.help": "Yardım",
-  "menu.item.add_url": "URL Ekle",
   "menu.item.paste_url": "Panodan Yapıştır",
   "menu.item.open_file": "Dosyayı Aç",
   "menu.item.open_folder": "Klasörü Aç",
   "menu.item.copy_url": "Adresi Panoya Kopyala",
-  "menu.item.pause_all": "Tümünü Duraklat",
-  "menu.item.resume_all": "Tümünü Sürdür",
   "menu.item.cancel_all": "Tümünü İptal Et",
   "menu.item.select_all": "Tümünü Seç",
   "menu.item.clear_history": "Listeyi Temizle",
@@ -55,18 +47,16 @@ export const tr = {
   "menu.item.settings": "Ayarlar…",
   "menu.item.browser_setup": "Tarayıcı Eklentisi…",
   "menu.item.about": "ADM Hakkında",
-  "menu.item.exit": "Çıkış",
 
   // -----------------------------------------------------------------
-  // Araç çubuğu (Toolbar.tsx)
+  // Sol menü paneli (Sidebar.tsx) + başlık çubuğu düğmeleri (TitleBar.tsx)
   // -----------------------------------------------------------------
+  "side.open": "Menüyü aç",
+  "side.close": "Menüyü kapat",
+  "side.actions": "İşlemler",
+  "side.tools": "Araçlar",
   "tb.add": "İndirme ekle",
-  "tb.add_title": "Yeni indirme başlat (Ctrl+N)",
   "tb.search": "İndirmelerde ara...",
-  "tb.graph": "Grafik",
-  "tb.graph_title": "Hız grafiğini aç/kapat",
-  "tb.log": "Günlük",
-  "tb.log_title": "Olay günlüğünü aç/kapat",
 
   // -----------------------------------------------------------------
   // Kenar çubuğu (Sidebar.tsx)
@@ -345,16 +335,12 @@ export const tr = {
   "wizard.close": "Kapat",
 
   // -----------------------------------------------------------------
-  // MC portu — araç çubuğu eylemleri (Toolbar.tsx)
+  // MC portu — sol menü eylemleri (Sidebar.tsx) + başlık çubuğu ayarlar düğmesi
   // -----------------------------------------------------------------
   "tb.start_queue": "Kuyruğu Başlat",
-  "tb.start_queue_title": "Bekleyen ve duraklatılan tüm indirmeleri başlat",
   "tb.stop_all": "Tümünü Durdur",
-  "tb.stop_all_title": "Çalışan tüm indirmeleri duraklat",
-  "tb.clear_done": "Bitenleri Temizle",
-  "tb.clear_done_title": "Tamamlanan, başarısız ve iptal edilen kayıtları sil",
+  "tb.clear_done": "Bittenleri Temizle",
   "tb.settings": "Ayarlar",
-  "tb.settings_title": "Ayarları aç / kapat (Ctrl+S)",
   "bulk.err.action": "İşlem başarısız: {error}",
 
   // -----------------------------------------------------------------

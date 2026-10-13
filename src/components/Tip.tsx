@@ -7,7 +7,7 @@
  * sistemine bağlar ve **mevcut öğeyi sarmalamaz, onun yerine geçer**.
  *
  * ```tsx
- * <Tip label={t("tb.add_title")} keys="Ctrl+N" class="tb-add" onClick={open}>
+ * <Tip label={t("tb.add")} keys="Ctrl+N" class="side-add" onClick={open}>
  *   {t("tb.add")}
  * </Tip>
  * ```

@@ -68,8 +68,12 @@ version never had.
 
 ### Interface
 
-- **MC layout** — sidebar (All · 7 categories · Finished · Unfinished),
-  grid table, status bar, per-file detail window
+- **MC layout** — title bar (☰ menu button · language · settings · window
+  buttons), table, status bar, per-file detail window
+- **Left menu** — overlay panel toggled from the title bar: Actions
+  (add download, paste from clipboard, select all, start queue, stop all,
+  cancel all, clear finished), task filters, 7 categories, Finished /
+  Unfinished, tools (sort + search) and settings / browser / about
 - **Table columns** — Name (category icon + sub-label) · Size · Status
   (% + stage text + segment bar) · Speed · Remaining · Added
 - **Detail window** — info grid, progress, connection table
@@ -356,8 +360,9 @@ npm run tauri:icon
 
 ## Architecture
 
-The interface follows MC's layout: sidebar → toolbar → table → status
-bar; details open in a separate window.
+The interface follows MC's layout: title bar → table → status bar; the
+left menu is an overlay panel (opened with the ☰ button in the title bar)
+and details open in a separate window.
 
 ```text
 src/                     SolidJS UI
@@ -365,10 +370,9 @@ src/                     SolidJS UI
 ├── index.tsx            entry point
 ├── assets/              adm-logo.png, adm-logo-128.png
 ├── components/
-│   ├── TitleBar.tsx             window title + language switch + window buttons
-│   ├── Sidebar.tsx              All · 7 categories (badged) · Finished · Unfinished
-│   ├── Toolbar.tsx              add URL · start queue · stop all · clear finished ·
-│   │                            settings + search / filter / sort
+│   ├── TitleBar.tsx             ☰ menu · logo · language switch · settings · window buttons
+│   ├── Sidebar.tsx              overlay menu: actions · task filters · categories ·
+│   │                            status · tools (sort/search) · settings/browser/about
 │   ├── DownloadTable.tsx        grid headers + rows + drag-and-drop area
 │   ├── DownloadRow.tsx          one row (checkbox, category, stage, ⋮ menu)
 │   ├── SegmentBar.tsx           canvas segment bar (row + detail)
@@ -377,7 +381,6 @@ src/                     SolidJS UI
 │   ├── ClipboardPromptDialog.tsx prompt for clipboard-captured links
 │   ├── BrowserSetupDialog.tsx   browser setup wizard
 │   ├── SettingsPanel.tsx        tabbed settings (General/Types/Browsers/Video/UI)
-│   ├── MenuBar.tsx              ≡ panel: File / Downloads / Tasks / Options
 │   ├── RowContextMenu.tsx       right-click menu + channel editor
 │   ├── FileIcon.tsx             file icon by extension
 │   ├── StatusBar.tsx            bridge status · unfinished · speed · disk free
