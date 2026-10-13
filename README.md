@@ -68,12 +68,18 @@ version never had.
 
 ### Interface
 
-- **MC layout** — title bar (☰ menu button · language · settings · window
-  buttons), table, status bar, per-file detail window
-- **Left menu** — overlay panel toggled from the title bar: Actions
-  (add download, paste from clipboard, select all, start queue, stop all,
-  cancel all, clear finished), task filters, 7 categories, Finished /
-  Unfinished, tools (sort + search) and settings / browser / about
+- **MC layout** — title bar (language · settings gear · window buttons),
+  table, per-file detail window; no bottom bar
+- **Left menu** — overlay panel toggled from the floating ☰ button (top
+  left corner of the content area; the ✕ in the panel header closes it):
+  Actions (add download, paste from clipboard, select all, start queue,
+  stop all, cancel all, clear finished, master on/off switch), task
+  filters, 7 categories, Finished / Unfinished, tools (sort + search)
+  and settings / browser / about
+- **Menu header** — total speed badge + close button (stays on top while
+  the menu scrolls)
+- **Feedback** — action results and errors appear as a bottom-right toast
+  (4 s, pauses while the pointer is over it)
 - **Table columns** — Name (category icon + sub-label) · Size · Status
   (% + stage text + segment bar) · Speed · Remaining · Added
 - **Detail window** — info grid, progress, connection table
@@ -187,7 +193,7 @@ ADM prepares the extension files from Settings → **Browsers**:
 3. Turn on **Developer mode** (top right).
 4. Choose **Load unpacked** and select the prepared folder.
 5. Click the extension icon and press **"Connect to ADM"** — the bridge
-   indicator in the status bar turns green.
+   indicator in the menu header / settings panel turns green.
 
 For Firefox, use **Load Temporary Add-on** on
 `about:debugging#/runtime/this-firefox` and pick `manifest.json` (an
@@ -360,9 +366,10 @@ npm run tauri:icon
 
 ## Architecture
 
-The interface follows MC's layout: title bar → table → status bar; the
-left menu is an overlay panel (opened with the ☰ button in the title bar)
-and details open in a separate window.
+The interface follows MC's layout: title bar → table; there is no bottom
+bar. The left menu is an overlay panel (opened with the floating ☰ button,
+closed with the ✕ in its header, an outside click or `Escape`), and
+details open in a separate window.
 
 ```text
 src/                     SolidJS UI
@@ -370,8 +377,10 @@ src/                     SolidJS UI
 ├── index.tsx            entry point
 ├── assets/              adm-logo.png, adm-logo-128.png
 ├── components/
-│   ├── TitleBar.tsx             ☰ menu · logo · language switch · settings · window buttons
-│   ├── Sidebar.tsx              overlay menu: actions · task filters · categories ·
+│   ├── TitleBar.tsx             logo · language switch · settings gear · window buttons
+│   ├── MenuToggle.tsx           floating ☰ button (opens the left menu)
+│   ├── Sidebar.tsx              overlay menu: sticky header (speed badge + ✕) ·
+│   │                            actions + master switch · task filters · categories ·
 │   │                            status · tools (sort/search) · settings/browser/about
 │   ├── DownloadTable.tsx        grid headers + rows + drag-and-drop area
 │   ├── DownloadRow.tsx          one row (checkbox, category, stage, ⋮ menu)
@@ -383,7 +392,7 @@ src/                     SolidJS UI
 │   ├── SettingsPanel.tsx        tabbed settings (General/Types/Browsers/Video/UI)
 │   ├── RowContextMenu.tsx       right-click menu + channel editor
 │   ├── FileIcon.tsx             file icon by extension
-│   ├── StatusBar.tsx            bridge status · unfinished · speed · disk free
+│   ├── Toast.tsx                bottom-right feedback toast
 │   └── AboutDialog.tsx          "About ADM" window
 ├── lib/
 │   ├── api.ts            Tauri commands + event subscription

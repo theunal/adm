@@ -4,15 +4,20 @@
  * Sütunlar (yukarıdan aşağı):
  *
  * ```text
- * TitleBar   ☰ · logo · ADM · TR/EN · ayarlar · pencere düğmeleri
+ * TitleBar   logo · ADM · TR/EN · dişli ayarlar · pencere düğmeleri
  * ── app-body ────────────────────────────────────────────────
+ * Menü düğmesi  kapalıyken sol üst köşede yüzen ☰
  * Sidebar    açılır-kapanır katman menü (☰ ile açılır)
  * content    Tablo  |  Ayarlar paneli
+ * Toast      sağ altta köşe bildirimi (eylem sonucu / hata)
  * ────────────────────────────────────────────────────────────
- * StatusBar  ana anahtar · hız · geçici mesaj
  * ```
  *
- * Üst çubuk (araç çubuğu) ve ≡ menüsü kaldırıldı; taşıdıkları işlevlerin
+ * Alt çubuk kaldırıldı: pencerenin dibinde hiçbir şey yok. Toplam hız ve
+ * ana açık/kapalı anahtarı sol menüye, geçici mesajlar sağ alttaki köşe
+ * bildirimine (`Toast.tsx`) taşındı.
+ *
+ * Üst çubuk (araç çubuğu) ve ≡ menüsü de kaldırıldı; taşıdıkları işlevlerin
  * tamamı **sol panele** taşındı (eylemler · filtreler · araçlar · alt
  * bölüm). Panel kapalıyken hiç çizilmez; açılınca içeriğin üzerinde katman
  * olarak görünür ve dış tıklama ile kapanır. Tüm durum `src/lib/store.ts`
@@ -52,7 +57,8 @@ import { clipboardPrompt, setClipboardPrompt } from "./lib/store";
 import TitleBar from "./components/TitleBar";
 import DownloadTable from "./components/DownloadTable";
 import Sidebar from "./components/Sidebar";
-import StatusBar from "./components/StatusBar";
+import MenuToggle from "./components/MenuToggle";
+import Toast from "./components/Toast";
 import SettingsPanel from "./components/SettingsPanel";
 import RowContextMenu from "./components/RowContextMenu";
 import AboutDialog from "./components/AboutDialog";
@@ -168,6 +174,11 @@ export default function App() {
             event.preventDefault();
             setSettingsOpen(!settingsOpen());
             break;
+          case "m":
+            // Sol menüyü açar/kapatır (☰ düğmesinin klavye karşılığı).
+            event.preventDefault();
+            setSideOpen(!sideOpen());
+            break;
           default:
             break;
         }
@@ -199,6 +210,12 @@ export default function App() {
         <TitleBar />
 
         <div class="app-body">
+          {/* Menü açma düğmesi: yalnızca panel kapalıyken, sol üst köşede.
+              (Açıkken karşılığı panelin kendi başlık satırındaki ✕.) */}
+          <Show when={!sideOpen()}>
+            <MenuToggle />
+          </Show>
+
           {/* Sol menü: açılır-kapanır katman. Kapalıyken hiç çizilmez; açılınca
               tablonun üzerinde durur (yanında yer kaplamaz). Dış tıklama
               aşağıdaki `onMouseDown` ile kapatılır; panelin kendi tıklamaları
@@ -224,7 +241,9 @@ export default function App() {
           </main>
         </div>
 
-        <StatusBar />
+        {/* Köşe bildirimi: eylem sonuçları ve hatalar. Alt çubuk kaldırıldığı
+            için uygulamanın tek görünür geri bildirim kanalı burası. */}
+        <Toast />
 
         {/* Katmanlar: bağlam menüsü ve pencereler kabuğun üstünde */}
         <RowContextMenu />

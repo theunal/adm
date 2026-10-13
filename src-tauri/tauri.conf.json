@@ -14,9 +14,9 @@
       {
         "label": "main",
         "title": "ADM — Gelişmiş İndirme Yöneticisi",
-        "width": 1200,
+        "width": 1000,
         "height": 400,
-        "minWidth": 1200,
+        "minWidth": 1000,
         "minHeight": 400,
         "resizable": true,
         "fullscreen": false,

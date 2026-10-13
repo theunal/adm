@@ -209,13 +209,11 @@ export const tr = {
   "log.channels_changed": "{name} kanal sayısı {count} olarak ayarlandı",
 
   // -----------------------------------------------------------------
-  // Durum çubuğu (StatusBar.tsx)
+  // Sol menü başlık satırı ve ana anahtarı (Sidebar.tsx)
   // -----------------------------------------------------------------
+  "side.menu": "Menü",
   "sb.speed": "Anlık hız",
-  "sb.on": "AÇIK",
-  "sb.off": "KAPALI",
   "sb.master_title": "Tüm indirmeleri duraklat / sürdür",
-  "sb.selected_many": "{count} kayıt seçili",
 
   // -----------------------------------------------------------------
   // Ayarlar (SettingsPanel.tsx)

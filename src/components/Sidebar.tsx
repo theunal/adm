@@ -39,6 +39,7 @@ import {
   sortKey,
   taskCounts,
   toggleSelectAll,
+  totals,
   type SortKey,
 } from "../lib/store";
 import {
@@ -49,7 +50,7 @@ import {
   setSideOpen,
   settingsOpen,
 } from "../lib/ui";
-import { categoryLabel } from "../lib/format";
+import { categoryLabel, formatSpeed } from "../lib/format";
 import { t } from "../lib/i18n";
 import Tip from "./Tip";
 import {
@@ -183,10 +184,48 @@ export default function Sidebar() {
     setSideOpen(false);
   }
 
+  /** Toplam hız (başlık rozeti) ve çalışan indirme sayısı (ana anahtar). */
+  const stats = createMemo(() => totals());
+
+  /** Anahtar: çalışan indirme varsa "ON" (duraklatılabilir), yoksa "OFF". */
+  const masterOn = createMemo(() => stats().activeCount > 0);
+
+  /**
+   * Ana açık/kapalı anahtarı (eski alt durum çubuğundan taşındı).
+   *
+   * Tüm çalışan indirmeleri duraklatır ya da tüm duraklatılmış/kuyruktaki
+   * indirmeleri sürdürür. Ctrl+P / Ctrl+R kısayolları aynı yollara gider.
+   */
+  async function onToggleMaster() {
+    try {
+      if (masterOn()) await pauseAllDownloads();
+      else await resumeAllDownloads();
+    } catch (e) {
+      pushFeedback("error", t("act.failed", {
+        action: masterOn() ? t("act.pause") : t("act.resume"),
+        error: errorText(e),
+      }));
+    }
+  }
+
   return (
     <nav class="sidebar" aria-label={t("side.nav_aria")}>
-      {/* 1) Eylemler */}
-      <div class="side-head">{t("side.actions")}</div>
+      {/* Bağlı başlık: "Menü" · toplam hız · kapat (✕) — kaydırmada üstte kalır */}
+      <div class="side-top">
+        <span class="side-title">{t("side.menu")}</span>
+        <Tip label={t("sb.speed")} class="side-speed" target="span">
+          <span class="side-speed-value">▼ {formatSpeed(stats().totalSpeed)}</span>
+        </Tip>
+        <Tip label={t("side.close")} class="side-close"
+          aria-label={t("side.close")}
+          onClick={() => setSideOpen(false)}>
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+            <path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </Tip>
+      </div>
+
+      {/* Birincil eylem */}
       <div class="side-group">
         <Tip
           label={t("tb.add")}
@@ -199,7 +238,11 @@ export default function Sidebar() {
           </svg>
           {t("tb.add")}
         </Tip>
+      </div>
 
+      {/* 1) Eylemler */}
+      <div class="side-head">{t("side.actions")}</div>
+      <div class="side-group">
         <Tip label={t("menu.item.paste_url")} keys="Ctrl+V" class="side-item side-item-plain"
           onClick={pasteFromClipboard}>
           <span class="side-icon" aria-hidden="true">
@@ -289,6 +332,23 @@ export default function Sidebar() {
             </svg>
           </span>
           <span class="side-label">{t("tb.clear_done")}</span>
+        </Tip>
+
+        {/* Ana açık/kapalı anahtarı — eski alt durum çubuğundan taşındı.
+            Etiketi duruma göre değişir: anahtar ON'dayken "Tümünü Durdur",
+            OFF iken "Kuyruğu Başlat" (yani ne yapacağını söyler). */}
+        <Tip
+          label={t("sb.master_title")}
+          class={`side-item side-item-plain side-master ${masterOn() ? "side-master-on" : ""}`}
+          aria-pressed={masterOn()}
+          onClick={() => void onToggleMaster()}
+        >
+          <span class="side-icon" aria-hidden="true">
+            <span class="sb-led" />
+          </span>
+          <span class="side-label">
+            {masterOn() ? t("tb.stop_all") : t("tb.start_queue")}
+          </span>
         </Tip>
       </div>
 

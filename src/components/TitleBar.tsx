@@ -5,9 +5,11 @@
  * düğmeleri Tauri pencer API'si üzerinden burada sunulur. Çubuğun kendisi
  * sürüklenebilir alandır (`data-tauri-drag-region`).
  *
- * Üst çubuk ve ≡ menüsü kaldırıldı; işlerinin tamamı sol panele taşındı.
- * Başlık çubuğunda iki yeni düğme var: **☰ sol menü** (paneli açar/kapatır)
- * ve **dişli ayarlar** (`Ctrl+S` ile aynı).
+ * Menü açma düğmesi (☰) buradan **çıkarıldı**: artık menü kapalıyken
+ * gövdenin sol üst köşesinde yüzen bir düğme olarak duruyor
+ * (`MenuToggle.tsx`), menü açıkken ise panelin kendi başlık satırındaki
+ * ✕ düğmesi kapatıyor. Başlık çubuğunda yalnızca **dişli çark ayarlar**
+ * düğmesi kaldı (`Ctrl+S` ile aynı).
  *
  * Sağdaki `TR | EN` dil anahtarı, `lib/i18n`'deki `setLocale()` çağrısını
  * tetikler: arayüz metinleri, belge/pencere başlığı ve Rust tarafındaki mesaj
@@ -21,7 +23,7 @@ import {
 } from "../lib/api";
 import { changeLang, settings } from "../lib/settings";
 import { t, type Locale } from "../lib/i18n";
-import { setSettingsOpen, setSideOpen, settingsOpen, sideOpen } from "../lib/ui";
+import { setSettingsOpen, settingsOpen } from "../lib/ui";
 import Tip from "./Tip";
 import logoUrl from "../assets/adm-logo-128.png";
 
@@ -31,33 +33,15 @@ const LANGS: Locale[] = ["tr", "en"];
 export default function TitleBar() {
   return (
     <header class="titlebar" data-tauri-drag-region>
-      {/* Sol: menü düğmesi + uygulama kimliği */}
+      {/* Sol: uygulama kimliği (simge + ad) */}
       <div class="titlebar-brand" data-tauri-drag-region>
-        {/* Sol menü (açılır-kapanır panel). İşaret `aria-expanded` taşır;
-            açıkken `aria-pressed` da görünür ki dişli ile karışmasın. */}
-        <Tip
-          label={sideOpen() ? t("side.close") : t("side.open")}
-          class="tb-toggle"
-          aria-pressed={sideOpen()}
-          onClick={() => setSideOpen(!sideOpen())}
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M2.5 4 h11 M2.5 8 h11 M2.5 12 h11"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
-          </svg>
-        </Tip>
         <span class="brand-mark" aria-hidden="true">
           <img src={logoUrl} alt="" />
         </span>
         <span class="brand-title">ADM</span>
       </div>
 
-      {/* Sağ: ayarlar + dil anahtarı + pencere düğmeleri */}
+      {/* Sağ: ayarlar (dişli çark) + dil anahtarı + pencere düğmeleri */}
       <div class="titlebar-actions">
         <Tip
           label={t("tb.settings")}
@@ -66,14 +50,13 @@ export default function TitleBar() {
           aria-pressed={settingsOpen()}
           onClick={() => setSettingsOpen(!settingsOpen())}
         >
-          <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-            <circle cx="7" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3" />
-            <path
-              d="M7 1.4 v1.6 M7 11 v1.6 M1.4 7 h1.6 M11 7 h1.6 M3 3 l1.2 1.2 M9.8 9.8 L11 11 M11 3 L9.8 4.2 M4.2 9.8 L3 11"
-              stroke="currentColor"
-              stroke-width="1.2"
-              stroke-linecap="round"
-            />
+          {/* Dişli çark (Feather `settings`). Eski "güneş" görünümlü
+              çember+çizgi ikonu ayarlar için yanıltıcıydı. */}
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+            stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </Tip>
 

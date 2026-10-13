@@ -203,13 +203,11 @@ export const en: Dict = {
   "log.channels_changed": "{name} channel count set to {count}",
 
   // -----------------------------------------------------------------
-  // Durum çubuğu (StatusBar.tsx)
+  // Sidebar header row and master switch (Sidebar.tsx)
   // -----------------------------------------------------------------
+  "side.menu": "Menu",
   "sb.speed": "Current speed",
-  "sb.on": "ON",
-  "sb.off": "OFF",
   "sb.master_title": "Pause / resume all downloads",
-  "sb.selected_many": "{count} records selected",
 
   // -----------------------------------------------------------------
   // Ayarlar (SettingsPanel.tsx)
