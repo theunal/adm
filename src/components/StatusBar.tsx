@@ -30,26 +30,12 @@ import { t } from "../lib/i18n";
 /** Boş alanın yenilenme aralığı (ms). */
 const REFRESH_MS = 30_000;
 
-/** Hız kademesi eşikleri (MB/s). */
-const QUALITY_HIGH = 2.0;
-const QUALITY_MEDIUM = 0.5;
-
 export default function StatusBar() {
   const stats = createMemo(() => totals());
   const [freeSpace, setFreeSpace] = createSignal(0);
 
   /** Alt panel (grafik / günlük) açık mı? */
   const dockOpen = () => graphOpen() || logOpen();
-
-  /** Bağlantı kalitesi kademesi: `idle` | `warn` | `ok`. */
-  const quality = createMemo<"idle" | "warn" | "ok">(() => {
-    const mbps = stats().totalSpeed;
-    if (mbps >= QUALITY_HIGH) return "ok";
-    if (mbps >= QUALITY_MEDIUM) return "warn";
-    return "idle";
-  });
-
-  const qualityLabel = createMemo(() => t(`sb.quality.${quality()}`));
 
   /** Seçili kaydın adı (yoksa liste durumu). */
   const current = createMemo(() => {
@@ -139,11 +125,6 @@ export default function StatusBar() {
       {/* Hız */}
       <span class="sb-speeds" title={t("sb.speed")}>
         <span class="sb-speed-down">▼ {formatSpeed(stats().totalSpeed)}</span>
-      </span>
-
-      {/* Kalite rozeti */}
-      <span class={`sb-badge sb-badge-${quality()}`} title={t("sb.quality_title")}>
-        {qualityLabel()}
       </span>
 
       {/* Boş alan */}

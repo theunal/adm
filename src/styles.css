@@ -1551,6 +1551,18 @@ body {
   overflow-y: auto;
   background: var(--bg-panel);
 }
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.settings-head-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
 .settings-section {
   display: flex;
   flex-direction: column;

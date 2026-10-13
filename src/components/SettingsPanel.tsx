@@ -59,7 +59,7 @@ import {
 } from "../lib/settings";
 import { formatDateTime, formatNumber } from "../lib/format";
 import { t, type Locale } from "../lib/i18n";
-import { openBrowserSetup } from "../lib/ui";
+import { openBrowserSetup, setSettingsOpen } from "../lib/ui";
 import { bridge, toolMessage, toolProgress, toolRevision, updateInfo } from "../lib/store";
 import { errorText, pushFeedback } from "../lib/useFeedback";
 
@@ -133,6 +133,19 @@ export default function SettingsPanel() {
 
   return (
     <div class="settings-panel">
+      <div class="settings-head">
+        <h2 class="settings-head-title">{t("menu.item.settings")}</h2>
+        <button
+          type="button"
+          class="settings-close"
+          onClick={() => setSettingsOpen(false)}
+          title={t("props.close")}
+          aria-label={t("props.close")}
+        >
+          {t("props.close")}
+        </button>
+      </div>
+
       <div class="settings-tabs" role="tablist" aria-label={t("menu.item.settings")}>
         <For each={TABS}>
           {(item) => (
