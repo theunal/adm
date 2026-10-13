@@ -188,26 +188,31 @@ progress through the badge and the popup.
 **One button.** Settings → **Browsers** → **"Install the extension"**
 (or the same button in the setup wizard) does everything:
 
-1. copies the extension files to
-   `%LocalAppData%\ADM\Browser Plugins\<Browser>` (with a `README.txt`
-   next to them),
-2. launches the browser binary on its extensions page
-   (`brave://extensions`, `chrome://extensions`, `edge://extensions`) —
-   these schemes are not registered OS protocols, so the browser itself
-   has to be started with the address,
-3. shows that folder **selected** in Explorer / Finder.
+1. downloads the extension package (`.crx`) over **https** — the address
+   can be changed in Settings → Browsers,
+2. turns on **Developer mode** in the browser beforehand (by patching the
+   browser's `Preferences` file; if the browser is still running, ADM says
+   so and you retry after closing it),
+3. opens the browser's extensions page (`brave://extensions`,
+   `chrome://extensions`, `edge://extensions`),
+4. shows the `.crx` **selected** in Explorer / Finder.
 
-All that is left is turning on **Developer mode** on the page that opens
-and picking the revealed folder with **"Load unpacked"**. Clicking the
-extension icon and pressing **"Connect to ADM"** finishes it — the bridge
-indicator in the menu header / settings panel turns green.
+All that is left is dragging that file onto the page and confirming
+**"Add extension"** in the browser. Clicking the extension icon and
+pressing **"Connect to ADM"** finishes it — the bridge indicator in the
+menu header / settings panel turns green.
+
+If drag-and-drop does not work on your Brave/Chrome build (Chromium
+removed it at some point), each browser row also has
+**"Install from folder"** — the classic "Load unpacked" path. ADM reveals
+the folder for you.
+
+**Browsers that are not installed on this machine** are shown greyed out
+and disabled — there is no point clicking into a "browser not found"
+error.
 
 Firefox is the same flow with `about:debugging#/runtime/this-firefox`
 (**"Load Temporary Add-on…"** → `manifest.json`).
-
-If the browser binary cannot be found (portable install), ADM reports it
-and you can finish by hand: open the extensions page from the browser and
-load the folder the wizard shows.
 
 **Bridge port.** The default is `48213`, changeable in Settings →
 Browsers. Changing the port restarts the bridge and the extension has to

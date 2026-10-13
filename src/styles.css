@@ -1569,6 +1569,16 @@ body {
   cursor: default;
 }
 
+/* Kurulu olmayan tarayıcı: devre dışı ve çizgili (araç ipucu nedenini söyler). */
+.wizard-browser-off,
+.wizard-browser-off:hover:not(:disabled) {
+  opacity: 0.45;
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: default;
+}
+
 /* Bağlanmış tarayıcı işareti */
 .wizard-dot {
   position: absolute;
@@ -1578,6 +1588,11 @@ body {
   height: 6px;
   border-radius: 50%;
   background: var(--ok);
+}
+
+/* Yedek akış düğmesi — ana akışın altında, daha sakin görünür. */
+.wizard-fallback {
+  margin: 0;
 }
 
 .wizard-warn,
@@ -2990,6 +3005,18 @@ body {
   align-items: center;
   padding: 7px 0;
   border-top: 1px solid var(--border);
+}
+
+/* Kurulu olmayan tarayıcı: satırın tamamı soluk; düğmeler devre dışıdır. */
+.browser-row-off,
+.browser-row-off:hover {
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0.55;
+}
+.browser-row-off .browser-name,
+.browser-row-off .browser-path {
+  color: var(--text-faint);
 }
 
 .browser-name {

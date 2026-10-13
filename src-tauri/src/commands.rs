@@ -1129,6 +1129,50 @@ pub fn install_extension(app: AppHandle, browser: String) -> Res<String> {
     Ok(text)
 }
 
+/// `.crx` akışıyla eklenti kurar.
+///
+/// 1. `.crx` dosyasını **https** adresinden indirir (boyut + `Cr24` imza
+///    doğrulamalı),
+/// 2. tarayıcının `Preferences` dosyasına `developer_mode = true` yazar
+///    (tarayıcı çalışıyorsa bunu atlar ve `developerMode: browserClosed`
+///    döner),
+/// 3. tarayıcıyı uzantı sayfasıyla açar,
+/// 4. `.crx` dosyasını dosya yöneticisinde **seçili** gösterir — kullanıcı
+///    dosyayı sayfaya sürükler ve tarayıcının kendi "Uzantı ekle" onayına
+///    basar.
+///
+/// Adres verilmezse ayarlardaki `extension_crx_url` kullanılır.
+#[tauri::command]
+pub async fn install_extension_crx(
+    app: AppHandle,
+    manager: State<'_, DownloadManager>,
+    browser: String,
+    crx_url: Option<String>,
+) -> Res<crate::extension::CrxOutcome> {
+    let url = match crx_url {
+        Some(url) if !url.trim().is_empty() => url,
+        _ => manager.settings().await.map_err(tr)?.extension_crx_url,
+    };
+    let outcome = crate::extension::install_extension_crx(&app, &browser, &url)
+        .await
+        .map_err(tr)?;
+    emit_log(
+        &app,
+        "info",
+        i18n::t("log.crx_downloaded", &[&outcome.crx_path.to_string_lossy()]),
+    );
+    Ok(outcome)
+}
+
+/// Kurulu tarayıcıların listesi (sihirbaz ve ayarlar için).
+///
+/// Kurulu olmayan tarayıcılar listede yer alır ama `installed: false` ile;
+/// arayüz bu girdileri **devre dışı** gösterir.
+#[tauri::command]
+pub fn browser_presence() -> Res<Vec<crate::extension::BrowserPresence>> {
+    Ok(crate::extension::browser_presence())
+}
+
 /// Eklenti dosyalarını tarayıcı klasörüne kopyalar ve `README.txt` yazar.
 ///
 /// Arayüzdeki kurulum sihirbazı bu klasörü "paketlenmemiş öğe" olarak
@@ -1163,6 +1207,15 @@ pub fn open_plugin_folder(browser: String) -> Res<()> {
     };
     std::fs::create_dir_all(&path).map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
     crate::extension::reveal_path(&path).map_err(tr)
+}
+
+/// Bir dosyayı/klasörü dosya yöneticisinde **seçili** gösterir.
+///
+/// `.crx` akışında dosya yöneticisini yeniden açmak için kullanılır
+/// (Explorer `/select,`, macOS `open -R`, Linux `xdg-open`).
+#[tauri::command]
+pub fn reveal_path(path: String) -> Res<()> {
+    crate::extension::reveal_path(std::path::Path::new(&path)).map_err(tr)
 }
 
 /// Tarayıcının uzantı yönetimi sayfasını açar.

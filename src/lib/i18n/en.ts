@@ -282,7 +282,15 @@ export const en: Dict = {
   "wizard.title": "Browser extension setup",
   "wizard.install": "Install the extension",
   "wizard.install_hint":
-    "One click does everything: the extension files are copied, the {browser} extensions page opens, and the folder is shown selected in your file manager. On that page, turn on “Developer mode” in the top right and pick this folder with “Load unpacked”.",
+    "One click does everything: the extension package (.crx) is downloaded, the {browser} extensions page opens with developer mode on, and the package is shown selected in your file manager. All that is left is dragging it onto the page and confirming “Add extension”.",
+  "wizard.crx_ready": "The extension package is ready — drag it onto the page",
+  "wizard.not_installed": "{browser} is not installed on this computer",
+  "wizard.dev_mode_browser_open":
+    "Close the browser and try again so developer mode can be turned on. You can still continue with the setup afterwards.",
+  "wizard.fallback_load_unpacked":
+    "If drag and drop does not work: install from folder (load unpacked)",
+  "wizard.fallback_short": "Install from folder",
+  "wizard.action.show_file": "Show file",
   "wizard.bridge_off":
     "The browser bridge is not running. Check the port under Settings ▸ Browsers; the extension cannot deliver downloads without it.",
   "wizard.bridge_on": "The bridge is listening on 127.0.0.1:{port}.",
@@ -466,6 +474,9 @@ export const en: Dict = {
   "settings.wizard_open": "Open the setup wizard",
   "settings.browser_ready": "Extension files are ready",
   "settings.browser_missing": "Extension files have not been copied yet",
+  "settings.crx_url": "Extension package address (.crx)",
+  "settings.crx_url_hint":
+    "Only https is accepted. The default is the package published with the GitHub release.",
   "settings.video_intro":
     "Video downloads use yt-dlp. Missing tools can be installed before a download starts.",
   "settings.site_login": "Site login",

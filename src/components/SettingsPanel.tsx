@@ -26,9 +26,11 @@ import {
   createSignal,
 } from "solid-js";
 import {
+  browserPresence,
   checkForUpdate,
   clearSiteCookies,
-  installExtension,
+  installExtensionCrx,
+  installExtensionFolder,
   installTool,
   openPluginFolder,
   openSiteLogin,
@@ -38,6 +40,7 @@ import {
   toolStatus,
   browserList,
   type BrowserId,
+  type BrowserPresence,
   type SiteLoginStatus,
   type ToolId,
   type ToolStatus,
@@ -790,13 +793,30 @@ function BrowsersTab(props: TabProps) {
   /** Eklenti dosyalarının hazırlandığı klasörler (tarayıcı → yol). */
   const [folders, setFolders] = createSignal<Record<string, string>>({});
 
+  /** Kurulu tarayıcılar (kurulu olmayan satırlar devre dışı). */
+  const [presence] = createResource<BrowserPresence[]>(() => browserPresence());
+
+  /** Tarayıcı kurulu mu? Bilgi yoksa (`undefined`) etkin sayılır. */
+  function isInstalled(browser: BrowserId): boolean {
+    const entry = presence()?.find((b) => b.id === browser);
+    return entry ? entry.installed : true;
+  }
+
   /**
-   * Tek düğmeli kurulum — dosyaları hazırla, tarayıcının uzantı sayfasını
-   * aç ve klasörü dosya yöneticisinde seçili göster (Rust tarafında).
+   * `.crx` akışlı kurulum — indir, geliştirici modunu aç, uzantı sayfasını
+   * aç, `.crx`'yi seçili göster (Rust tarafında).
    */
   async function install(browser: BrowserId) {
     await guard(async () => {
-      const dir = await installExtension(browser);
+      const outcome = await installExtensionCrx(browser);
+      pushFeedback("success", t("wizard.crx_ready", { path: outcome.crxPath }));
+    }, "settings.err.save");
+  }
+
+  /** Yedek akış: klasörü hazırla ve uzantı sayfasını aç (paketlenmemiş). */
+  async function installFolder(browser: BrowserId) {
+    await guard(async () => {
+      const dir = await installExtensionFolder(browser);
       setFolders((prev) => ({ ...prev, [browser]: dir }));
       pushFeedback("success", t("log.browser_files_ready", { path: dir }));
     }, "settings.err.save");
@@ -847,25 +867,41 @@ function BrowsersTab(props: TabProps) {
 
         <For each={browsers() ?? FALLBACK_BROWSERS}>
           {(browser) => (
-            <div class="browser-row">
+            /* Kurulu olmayan tarayıcılar gri: düğmeler devre dışı. */
+            <div class={`browser-row${isInstalled(browser) ? "" : " browser-row-off"}`}>
               <span class="browser-name">{BROWSER_LABEL[browser]}</span>
               <Tip
                 target="span"
                 class="settings-hint browser-path"
-                label={folders()[browser] ?? ""}
+                label={
+                  isInstalled(browser)
+                    ? folders()[browser] ?? ""
+                    : t("wizard.not_installed", { browser: BROWSER_LABEL[browser] })
+                }
               >
-                {folders()[browser]
-                  ? t("settings.browser_ready")
-                  : t("settings.browser_missing")}
+                {!isInstalled(browser)
+                  ? t("wizard.not_installed", { browser: BROWSER_LABEL[browser] })
+                  : folders()[browser]
+                    ? t("settings.browser_ready")
+                    : t("settings.browser_missing")}
               </Tip>
               <span class="browser-actions">
                 <button
                   type="button"
                   class="btn"
-                  disabled={saving()}
+                  disabled={saving() || !isInstalled(browser)}
                   onClick={() => void install(browser)}
                 >
                   {t("wizard.install")}
+                </button>
+                {/* Yedek akış — `.crx` sürükle-bırak çalışmazsa. */}
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  disabled={!isInstalled(browser)}
+                  onClick={() => void installFolder(browser)}
+                >
+                  {t("wizard.fallback_short")}
                 </button>
                 <Show when={folders()[browser]}>
                   <button
@@ -887,6 +923,16 @@ function BrowsersTab(props: TabProps) {
             </div>
           )}
         </For>
+
+        <TextField
+          id="set-crx-url"
+          label={t("settings.crx_url")}
+          hint={t("settings.crx_url_hint")}
+          placeholder="https://…/extension.crx"
+          value={settings.extensionCrxUrl}
+          disabled={saving()}
+          onCommit={(v) => save({ extensionCrxUrl: v })}
+        />
       </section>
     </>
   );

@@ -148,6 +148,10 @@ pub struct Settings {
     pub last_update_check: Option<String>,
     /// Kullanıcının atladığı sürüm.
     pub skipped_update_version: Option<String>,
+    /// Eklenti paketinin (`.crx`) indirileceği **https** adresi.
+    ///
+    /// Varsayılan, GitHub sürümündeki CI imzalı `extension.crx` dosyasıdır.
+    pub extension_crx_url: String,
 }
 
 /// Azami kanal sayısı — motorla aynı sınır.
@@ -198,8 +202,14 @@ impl Default for Settings {
             deno_prompt_suppressed: false,
             last_update_check: None,
             skipped_update_version: None,
+            extension_crx_url: default_crx_url(),
         }
     }
+}
+
+/// `.crx` indirme adresinin varsayılanı (CI imzalı sürüm paketi).
+pub fn default_crx_url() -> String {
+    "https://github.com/theunal/adm/releases/latest/download/extension.crx".to_string()
 }
 
 impl Settings {
@@ -226,6 +236,15 @@ impl Settings {
         // Yalnızca bilinen gruplar tutulur.
         self.capture_group_ids
             .retain(|g| crate::capture::GROUPS.iter().any(|(name, _)| name == g));
+
+        // `.crx` adresi: boşluklar trim'lenir, boşsa varsayılana dönülür ve
+        // yalnızca `https://` kabul edilir (düz HTTP paket ağda değiştirilebilir).
+        let url = self.extension_crx_url.trim();
+        self.extension_crx_url = if url.starts_with("https://") && url.len() > "https://".len() {
+            url.to_string()
+        } else {
+            default_crx_url()
+        };
 
         for dir in [
             &mut self.video_dir,

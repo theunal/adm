@@ -288,7 +288,15 @@ export const tr = {
   "wizard.title": "Tarayıcı eklentisi kurulumu",
   "wizard.install": "Eklentiyi Yükle",
   "wizard.install_hint":
-    "Tek düğmeyle kurulur: eklenti dosyaları kopyalanır, {browser} uzantı sayfası açılır ve klasör dosya yöneticisinde seçili gösterilir. Açılan sayfada sağ üstteki “Geliştirici modu”nu açıp “Paketlenmemiş öğe yükle” ile bu klasörü seçmeniz yeterli.",
+    "Tek düğmeyle kurulur: eklenti paketi (.crx) indirilir, {browser} uzantı sayfası geliştirici moduyla açılır ve paket dosya yöneticisinde seçili gösterilir. Sonra tek yapmanız gereken dosyayı sayfaya sürükleyip tarayıcının “Uzantı ekle” onayına basmak.",
+  "wizard.crx_ready": "Eklenti paketi hazır — dosyayı sayfaya sürükleyin",
+  "wizard.not_installed": "{browser} bu bilgisayarda kurulu değil",
+  "wizard.dev_mode_browser_open":
+    "Geliştirici modunu açabilmek için tarayıcıyı kapatıp tekrar deneyin. İsterseniz kuruluma bunden sonra devam edebilirsiniz.",
+  "wizard.fallback_load_unpacked":
+    "Sürükle-bırak çalışmıyorsa: klasörle kur (paketlenmemiş öğe)",
+  "wizard.fallback_short": "Klasörle kur",
+  "wizard.action.show_file": "Dosyayı göster",
   "wizard.bridge_off":
     "Tarayıcı köprüsü çalışmıyor. Ayarlar ▸ Tarayıcılar bölümünden portu denetleyin; köprü açık olmadan eklenti indirmeleri iletemez.",
   "wizard.bridge_on": "Köprü 127.0.0.1:{port} adresinde dinliyor.",
@@ -472,6 +480,9 @@ export const tr = {
   "settings.wizard_open": "Kurulum sihirbazını aç",
   "settings.browser_ready": "Eklenti dosyaları hazır",
   "settings.browser_missing": "Eklenti dosyaları henüz kopyalanmadı",
+  "settings.crx_url": "Eklenti paketi adresi (.crx)",
+  "settings.crx_url_hint":
+    "Sadece https kabul edilir. Varsayılan, GitHub sürümünde yayınlanan pakettir.",
   "settings.video_intro":
     "Video indirmeleri yt-dlp ile yapılır. Araçlar eksikse indirme başlamadan kurulabilir.",
   "settings.site_login": "Site girişi",
