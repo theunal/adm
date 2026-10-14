@@ -50,6 +50,35 @@ import Tip from "./Tip";
 /** Tarayıcı listesi alınamazsa gösterilen varsayılan sıra (macOS dışı). */
 const FALLBACK_BROWSERS: WizardBrowser[] = ["chrome", "edge", "brave", "firefox"];
 
+/**
+ * Yönerge adımları — kullanıcının yapacağı hamleler.
+ *
+ * 1-2. adımı ADM kendisi yapar (uzantı sayfasını açar, geliştirici modunu
+ * açmaya çalışır); 3-5. adım kullanıcıya kalır.
+ */
+const GUIDE_STEPS: { title: string; desc: string }[] = [
+  {
+    title: "wizard.guide.page",
+    desc: "wizard.guide.page_desc",
+  },
+  {
+    title: "wizard.guide.developer",
+    desc: "wizard.guide.developer_desc",
+  },
+  {
+    title: "wizard.guide.drag",
+    desc: "wizard.guide.drag_desc",
+  },
+  {
+    title: "wizard.guide.confirm",
+    desc: "wizard.guide.confirm_desc",
+  },
+  {
+    title: "wizard.guide.connect",
+    desc: "wizard.guide.connect_desc",
+  },
+];
+
 /** Tarayıcının görünen adı (marka yazımıyla). */
 function browserLabel(browser: WizardBrowser): string {
   switch (browser) {
@@ -109,6 +138,26 @@ export default function BrowserSetupDialog() {
       setBrowser(list[0]);
     }
   });
+
+  /** Yönerge adımı tamamlandı mı?
+   *
+   * 1. adım: "Eklentiyi Yükle"ye basıldı (sayfa açıldı) — `.crx` yolu biliniyor.
+   * 2. adım: geliştirici modu açıldı (ADM yaptı).
+   * 5. adım: uzantı köprüye bağlandı.
+   * 3-4. adım tarayıcı içinde geçtiği için buradan görülemez; vurgulu bekler.
+   */
+  function guideDone(index: number): boolean {
+    if (index === 0) return crxPath() !== null;
+    if (index === 1) return devMode() === "enabled";
+    if (index === 4) return isConnected();
+    return false;
+  }
+
+  /** Kullanıcının sıradaki yapacağı adım (tamamlananların hemen sonrası). */
+  function guideActive(index: number): boolean {
+    const first = GUIDE_STEPS.findIndex((_, i) => !guideDone(i));
+    return first !== -1 && index === first;
+  }
 
   /**
    * Safari mi seçili?
@@ -331,6 +380,41 @@ export default function BrowserSetupDialog() {
                     `.crx`'yi seçili göster (Rust tarafında). Kullanıcı tek
                     yapar: dosyayı sayfaya sürükler ve "Uzantı ekle" onayını
                     verir. */}
+                {/* ---------------------------------------------------------
+                    Yönerge: tarayıcı ve dosya zaten açılıyor; kullanıcının
+                    yapacağı dört hamle burada adım adım anlatılır. Adımlar
+                    gerçekleştikçe ✓ işareti alır (1-2 ADM yapar, 3-5 kullanıcı).
+                --------------------------------------------------------- */}
+                <div class="wizard-guide">
+                  <div class="wizard-guide-title">{t("wizard.guide.title")}</div>
+                  <ol class="wizard-guide-list">
+                    <For each={GUIDE_STEPS}>
+                      {(step, index) => {
+                        const done = () => guideDone(index());
+                        const active = () => !done() && guideActive(index());
+                        return (
+                          <li
+                            class={`wizard-guide-item${done() ? " wizard-guide-done" : ""}${
+                              active() ? " wizard-guide-current" : ""
+                            }`}
+                          >
+                            <span class="wizard-guide-no" aria-hidden="true">
+                              {done() ? "✓" : index() + 1}
+                            </span>
+                            <span class="wizard-guide-text">
+                              <b>{t(step.title)}</b>
+                              <small>{t(step.desc, { browser: browserLabel(browser()) })}</small>
+                            </span>
+                          </li>
+                        );
+                      }}
+                    </For>
+                  </ol>
+                  <Show when={devMode() === "browserClosed"}>
+                    <p class="wizard-guide-note">{t("wizard.guide.dev_mode_hint")}</p>
+                  </Show>
+                </div>
+
                 <p>{t("wizard.install_hint", { browser: browserLabel(browser()) })}</p>
                 <button
                   type="button"

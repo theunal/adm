@@ -283,6 +283,24 @@ export const en: Dict = {
   "wizard.install": "Install the extension",
   "wizard.install_hint":
     "One click does everything: the extension package (.crx) is downloaded, the {browser} extensions page opens with developer mode on, and the package is shown selected in your file manager. All that is left is dragging it onto the page and confirming “Add extension”.",
+  "wizard.guide.title": "How to install",
+  "wizard.guide.page": "The extensions page is open",
+  "wizard.guide.page_desc":
+    "The browser opens the {browser} extensions page — keep going without closing this window.",
+  "wizard.guide.developer": "Turn on Developer mode",
+  "wizard.guide.developer_desc":
+    "Flip the “Developer mode” switch in the top right. ADM tries to turn it on for you; if the browser was running you will be asked.",
+  "wizard.guide.drag": "Drag the .crx file",
+  "wizard.guide.drag_desc":
+    "Drag the .crx file that is shown selected in your file manager onto the browser page and drop it there.",
+  "wizard.guide.confirm": "Press “Add extension”",
+  "wizard.guide.confirm_desc":
+    "The browser shows a confirmation dialog; press “Add extension” to finish the install.",
+  "wizard.guide.connect": "Connect to ADM",
+  "wizard.guide.connect_desc":
+    "Click the extension icon and press “Connect to ADM”; the indicator below turns green.",
+  "wizard.guide.dev_mode_hint":
+    "Developer mode could not be turned on: the browser appears to be running. Close it and press “Install the extension” again.",
   "wizard.crx_ready": "The extension package is ready — drag it onto the page",
   "wizard.not_installed": "{browser} is not installed on this computer",
   "wizard.dev_mode_browser_open":

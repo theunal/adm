@@ -1595,6 +1595,115 @@ body {
   margin: 0;
 }
 
+/* ==========================================================================
+   Kurulum yönergesi (BrowserSetupDialog.tsx)
+
+   Tarayıcı ve dosya yöneticisi zaten otomatik açılıyor; burada kullanıcının
+   yapacağı hamleler adım adım anlatılır. Tamamlanan adımlar ✓ işaretini
+   alır, sıradaki adım vurgulanır.
+   ========================================================================== */
+
+.wizard-guide {
+  padding: 12px 14px 13px;
+  margin-bottom: 4px;
+  background: var(--bg-bar);
+  border: 1px solid var(--border-mid);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+}
+
+.wizard-guide-title {
+  margin-bottom: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.wizard-guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: guide;
+}
+
+.wizard-guide-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+/* Numara rozeti: tamamlanan adımda yeşil, sıradaki adımda accent. */
+.wizard-guide-no {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  margin-top: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-raise);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wizard-guide-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wizard-guide-text b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wizard-guide-text small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* Tamamlandı: rozet yeşil, başlık soluk ama okunur kalır. */
+.wizard-guide-done .wizard-guide-no {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.wizard-guide-done .wizard-guide-text b {
+  color: var(--text-dim);
+}
+
+/* Sıradaki adım: accent rozeti + başlık vurgusu. */
+.wizard-guide-current .wizard-guide-no {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.wizard-guide-current .wizard-guide-text b {
+  color: var(--text-strong);
+}
+
+/* Geliştirici modu açılamadı notu. */
+.wizard-guide-note {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warn);
+}
+
 .wizard-warn,
 .wizard-bridge {
   padding: 8px 10px;

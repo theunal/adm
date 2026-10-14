@@ -289,6 +289,24 @@ export const tr = {
   "wizard.install": "Eklentiyi Yükle",
   "wizard.install_hint":
     "Tek düğmeyle kurulur: eklenti paketi (.crx) indirilir, {browser} uzantı sayfası geliştirici moduyla açılır ve paket dosya yöneticisinde seçili gösterilir. Sonra tek yapmanız gereken dosyayı sayfaya sürükleyip tarayıcının “Uzantı ekle” onayına basmak.",
+  "wizard.guide.title": "Nasıl kurulur?",
+  "wizard.guide.page": "Uzantı sayfası açıldı",
+  "wizard.guide.page_desc":
+    "Tarayıcıda {browser} uzantılar sayfası açılır — bu pencereyi kapatmadan devam edin.",
+  "wizard.guide.developer": "Geliştirici modunu açın",
+  "wizard.guide.developer_desc":
+    "Sayfanın sağ üstündeki “Geliştirici modu” anahtarını açın. ADM bunu kendisi açmaya çalışır; tarayıcı açıksa sizden istenir.",
+  "wizard.guide.drag": ".crx dosyasını sürükleyin",
+  "wizard.guide.drag_desc":
+    "Dosya yöneticisinde seçili duran .crx dosyasını tarayıcı sayfasının üzerine sürükleyip bırakın.",
+  "wizard.guide.confirm": "“Uzantı ekle” düğmesine basın",
+  "wizard.guide.confirm_desc":
+    "Tarayıcı bir onay kutusu gösterir; kurulumu tamamlamak için “Uzantı ekle”ye basın.",
+  "wizard.guide.connect": "ADM'e bağlanın",
+  "wizard.guide.connect_desc":
+    "Eklenti simgesine tıklayıp “ADM'e bağlan” düğmesine basın; durum burada yeşile döner.",
+  "wizard.guide.dev_mode_hint":
+    "Geliştirici modu açılamadı: tarayıcı açık görünüyor. Tarayıcıyı kapatıp “Eklentiyi Yükle”ye tekrar basın.",
   "wizard.crx_ready": "Eklenti paketi hazır — dosyayı sayfaya sürükleyin",
   "wizard.not_installed": "{browser} bu bilgisayarda kurulu değil",
   "wizard.dev_mode_browser_open":
