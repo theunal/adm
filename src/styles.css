@@ -902,8 +902,16 @@ body {
   background: rgba(0, 0, 0, 0.6);
 }
 
+/* Ortalanmış diyalog kutusu.
+   `max-height` + `max-width` şart: pencere küçükse kutu pencereyi aşar ve
+   düğmeler ekran dışında kalır (erişilemez hâle gelirdi). İçerik ise
+   `.modal-body` içinde kaydırılır. */
 .modal {
+  display: flex;
+  flex-direction: column;
   width: 380px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
   background: var(--bg-raise);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-lg);
@@ -917,6 +925,7 @@ body {
 .modal-title {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   height: 34px;
   padding: 0 6px 0 12px;
   background: var(--bg-bar);
@@ -930,7 +939,13 @@ body {
   flex: 1;
 }
 
+/* Diyalog gövdesi: içerik kutudan uzunsa burada kaydırılır (başlık ve eylem
+   düğmeleri sabit kalır). */
 .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 16px 18px;
   font-size: 13px;
   line-height: 1.55;
@@ -938,6 +953,7 @@ body {
 
 .modal-actions {
   display: flex;
+  flex: 0 0 auto;
   justify-content: flex-end;
   gap: 8px;
   padding: 0 18px 16px;
@@ -1534,15 +1550,19 @@ body {
    Tarayıcı eklentisi kurulum sihirbazı (BrowserSetupDialog.tsx)
    ----------------------------------------------------------------- */
 
+/* Dar pencerede tarayıcı düğmeleri iki satıra sarar (4 düğme yan yana
+   sığmazsa metinler kırpılır). */
 .wizard-browsers {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 14px;
 }
 
 .wizard-browser {
   position: relative;
-  flex: 1;
+  flex: 1 1 88px;
+  min-width: 0;
   height: 32px;
   background: var(--bg-raise);
   border: 1px solid var(--border-mid);
