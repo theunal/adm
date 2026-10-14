@@ -366,11 +366,30 @@ pub fn reveal_command(path: &Path) -> (&'static str, Vec<String>) {
 // Tek düğmeli kurulum
 // ---------------------------------------------------------------------
 
-/// Eklentiyi kurar: dosyaları hazırlar, tarayıcının uzantı sayfasını açar ve
-/// klasörü dosya yöneticisinde seçili gösterir.
+/// Klasör akışının sonucu.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallOutcome {
+    /// Hazırlanan klasörün yolu (kullanıcı "Paketlenmemiş öğe yükle" ile
+    /// bu klasörü seçecek).
+    pub folder: PathBuf,
+    /// Geliştirici modu açma denemesinin sonucu.
+    pub developer_mode: DeveloperModeState,
+}
+
+/// Eklentiyi kurar (klasör akışı).
 ///
-/// Hazırlanan klasörün yolunu döner (arayüz kullanıcıya gösterir).
-pub fn install_extension(app: &AppHandle, browser: &str) -> anyhow::Result<PathBuf> {
+/// 1. Eklenti dosyalarını `Browser Plugins\<Tarayıcı>` altına kopyalar,
+/// 2. tarayıcının `Preferences` dosyasına `developer_mode = true` yazar
+///    (tarayıcı çalışıyorsa atlanır, sonuca yazılır),
+/// 3. tarayıcının uzantı sayfasını açar,
+/// 4. klasörü dosya yöneticisinde **seçili** gösterir.
+///
+/// Kullanıcının tek yapması gereken: açılan sayfada **"Paketlenmemiş öğe
+/// yükle"** düğmesine basıp bu klasörü seçmek. `.crx` indirme akışı
+/// kaldırıldı: Chromium tabanlı tarayıcılar `.crx` sürükle-bırak kurulumunu
+/// desteklemiyor ve URL'den paket indirmek gereksiz saldırı yüzeyi açıyordu.
+pub fn install_extension(app: &AppHandle, browser: &str) -> anyhow::Result<InstallOutcome> {
     // Desteklenmeyen tarayıcı (ör. Safari) bu akışın dışındadır.
     let label = browser_label(browser)
         .ok_or_else(|| anyhow::anyhow!(i18n::t("err.unknown", &[])))?;
@@ -386,7 +405,10 @@ pub fn install_extension(app: &AppHandle, browser: &str) -> anyhow::Result<PathB
     std::fs::write(target.join("README.txt"), readme)
         .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
 
-    // 2) Tarayıcının uzantı sayfasını aç.
+    // 2) Geliştirici modunu aç — başarısızlık akışı düşürmez, sonuca yazılır.
+    let developer_mode = enable_developer_mode(browser);
+
+    // 3) Tarayıcının uzantı sayfasını aç.
     if let Err(e) = open_extensions_page(browser) {
         // Sayfa açılamazsa kurulum başarısızdır (kullanıcı hiçbir şey görmezdi);
         // klasör yine de açılır ki elle devam edebilsin.
@@ -394,15 +416,13 @@ pub fn install_extension(app: &AppHandle, browser: &str) -> anyhow::Result<PathB
         return Err(e);
     }
 
-    // 3) Klasörü seçili göster.
-    if let Err(e) = reveal_path(&target) {
-        // Klasör açılamazsa kurulumu düşürmeyelim: tarayıcı sayfası zaten açık,
-        // kullanıcı yolu elle yazabilir. Arayüz klasör yolunu gösterecek.
-        let _ = i18n::t("log.browser_files_ready", &[&target.to_string_lossy()]);
-        return Err(e);
-    }
+    // 4) Klasörü seçili göster.
+    reveal_path(&target)?;
 
-    Ok(target)
+    Ok(InstallOutcome {
+        folder: target,
+        developer_mode,
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -514,111 +534,6 @@ fn browser_process_name(browser: &str) -> Option<&'static str> {
     }
 }
 
-// ---------------------------------------------------------------------
-// `.crx` indirme (güvenli)
-// ---------------------------------------------------------------------
-
-/// CRX imzası — ilk dört bayt her geçerli CRX3 paketinde `Cr24`'tür.
-const CRX_MAGIC: [u8; 4] = *b"Cr24";
-
-/// Azami `.crx` boyutu (64 MB) — bozuk/saldırgan bir sunucu disk doldurmasın.
-const MAX_CRX_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Dosya gerçekten CRX mi? (imza kontrolü)
-pub fn looks_like_crx(bytes: &[u8]) -> bool {
-    bytes.starts_with(&CRX_MAGIC)
-}
-
-/// `.crx` adresini doğrular: **yalnızca `https://`**.
-///
-/// Düz HTTP ile indirme, ağ üzerinde paketin değiştirilmesine (ve böylece
-/// tarayıcıya kod enjekte edilmesine) kapı açar; bu yüzden reddedilir.
-pub fn validate_crx_url(url: &str) -> anyhow::Result<()> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err(anyhow::anyhow!(i18n::t("err.crx_url_empty", &[])));
-    }
-    match url.split_once("://") {
-        Some(("https", rest)) if !rest.is_empty() => Ok(()),
-        Some(("http", _)) => Err(anyhow::anyhow!(i18n::t("err.crx_url_not_https", &[]))),
-        _ => Err(anyhow::anyhow!(i18n::t("err.crx_url_not_https", &[]))),
-    }
-}
-
-/// `.crx` dosyasını indirir ve yolunu döner.
-///
-/// - Yalnızca `https://` (bkz. `validate_crx_url`)
-/// - TLS doğrulaması açık (reqwest + rustls varsayılanı)
-/// - 64 MB üst sınır, aşımda indirme iptal ve dosya silinir
-/// - Geçici `.part` dosyasına yazıp `rename` ile taşıma: yarım kalmış bir
-///   önceki indirme asla "kurulu" sayılmaz
-/// - İndirme sonunda `Cr24` imza kontrolü (HTML hata sayfası değil, gerçekten
-///   CRX olduğu garanti edilir)
-pub async fn download_crx(url: &str) -> anyhow::Result<PathBuf> {
-    validate_crx_url(url)?;
-
-    let response = reqwest::get(url.trim())
-        .await
-        .map_err(|e| anyhow::anyhow!(i18n::t("err.crx_download_failed", &[&e.to_string()])))?;
-    if !response.status().is_success() {
-        return Err(anyhow::anyhow!(i18n::t(
-            "err.crx_http",
-            &[&response.status().as_u16().to_string()]
-        )));
-    }
-
-    // Boyut sınırı: bildirilen boyut zaten aşıyorsa hiç indirmeye başlama.
-    if let Some(len) = response.content_length()
-        && len > MAX_CRX_BYTES
-    {
-        return Err(anyhow::anyhow!(i18n::t("err.crx_too_large", &[])));
-    }
-
-    let target = browser_plugins_dir().join("extension.crx");
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
-    }
-    let part = browser_plugins_dir().join("extension.crx.part");
-
-    {
-        use futures_util::StreamExt;
-        let mut file = tokio::fs::File::create(&part)
-            .await
-            .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
-        let mut stream = response.bytes_stream();
-        let mut received: u64 = 0;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                anyhow::anyhow!(i18n::t("err.crx_download_failed", &[&e.to_string()]))
-            })?;
-            received += chunk.len() as u64;
-            if received > MAX_CRX_BYTES {
-                drop(file);
-                let _ = tokio::fs::remove_file(&part).await;
-                return Err(anyhow::anyhow!(i18n::t("err.crx_too_large", &[])));
-            }
-            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
-                .await
-                .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
-        }
-        tokio::io::AsyncWriteExt::flush(&mut file)
-            .await
-            .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
-    }
-
-    // İmza kontrolü: boş/yarım kalmış ya da yanlış içerik reddedilir.
-    let data = std::fs::read(&part)
-        .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
-    if !looks_like_crx(&data) {
-        let _ = std::fs::remove_file(&part);
-        return Err(anyhow::anyhow!(i18n::t("err.crx_invalid", &[])));
-    }
-
-    std::fs::rename(&part, &target)
-        .map_err(|e| anyhow::anyhow!(i18n::t("err.open_file", &[&e.to_string()])))?;
-    Ok(target)
-}
 
 // ---------------------------------------------------------------------
 // Geliştirici modu
@@ -745,59 +660,6 @@ pub fn enable_developer_mode(browser: &str) -> DeveloperModeState {
     DeveloperModeState::Enabled
 }
 
-// ---------------------------------------------------------------------
-// `.crx` akışlı kurulum
-// ---------------------------------------------------------------------
-
-/// `.crx` kurulumunun sonucu.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CrxOutcome {
-    /// İndirilen `.crx` dosyasının yolu (kullanıcı sürükleyeceği dosya).
-    pub crx_path: PathBuf,
-    /// Geliştirici modu açma denemesinin sonucu.
-    pub developer_mode: DeveloperModeState,
-}
-
-/// `.crx` akışı: indir → geliştirici modunu aç → uzantı sayfasını aç →
-/// `.crx`'yi seçili göster.
-///
-/// Klasör açma adımı **yoktur** (kullanıcı bunu istenmeyen buldu); yalnızca
-/// sürüklenecek `.crx` dosyası seçili gösterilir.
-pub async fn install_extension_crx(
-    app: &AppHandle,
-    browser: &str,
-    crx_url: &str,
-) -> anyhow::Result<CrxOutcome> {
-    // 1) `.crx`'yi indir (adres + TLS + boyut + imza doğrulamalı).
-    let crx_path = download_crx(crx_url).await?;
-
-    // 2) Geliştirici modunu aç — başarısızlık akışı düşürmez, sonuca yazılır.
-    let developer_mode = enable_developer_mode(browser);
-
-    // 3) Uzantı sayfasını aç.
-    if let Err(e) = open_extensions_page(browser) {
-        // Sayfa açılamazsa en azından dosya görünür olsun ki elle denensin.
-        let _ = reveal_path(&crx_path);
-        return Err(e);
-    }
-
-    // 4) Sürüklenecek `.crx` dosyasını seçili göster.
-    reveal_path(&crx_path)?;
-
-    // Log: kullanıcı "ne oldu?" sorusuna yanıt verebilsin.
-    let _ = i18n::t(
-        "log.crx_downloaded",
-        &[&crx_path.to_string_lossy()],
-    );
-    let _ = app;
-
-    Ok(CrxOutcome {
-        crx_path,
-        developer_mode,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,32 +763,6 @@ mod tests {
             assert!(browser_process_name(id).is_some(), "{id} için süreç adı yok");
         }
         assert!(browser_process_name("safari").is_none());
-    }
-
-    // -----------------------------------------------------------------
-    // `.crx` doğrulama
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn crx_imza_kontrolu() {
-        assert!(looks_like_crx(b"Cr24\x02\x00\x00\x00rest"));
-        assert!(!looks_like_crx(b"<!DOCTYPE html>"));
-        assert!(!looks_like_crx(b"CRX3"));
-        assert!(!looks_like_crx(b"Cr"));
-        assert!(!looks_like_crx(b""));
-    }
-
-    #[test]
-    fn crx_adresi_yalnizca_https() {
-        assert!(validate_crx_url("https://github.com/theunal/adm/releases/latest/download/extension.crx").is_ok());
-        // Düz HTTP: ağda değiştirilebilir paket — reddedilir.
-        assert!(validate_crx_url("http://ornek.tld/extension.crx").is_err());
-        assert!(validate_crx_url("ftp://ornek.tld/extension.crx").is_err());
-        assert!(validate_crx_url("file:///C:/extension.crx").is_err());
-        assert!(validate_crx_url("").is_err());
-        assert!(validate_crx_url("   ").is_err());
-        // Şema yoksa da reddedilir (eski `https:` yazım hatası).
-        assert!(validate_crx_url("github.com/x.crx").is_err());
     }
 
     // -----------------------------------------------------------------

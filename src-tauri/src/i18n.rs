@@ -653,48 +653,6 @@ static MESSAGES: &[(&str, &str, &str)] = &[
         "{0} could not be found. It may not be installed, or a portable build may be in use; open the folder manually and the extensions page from the browser",
     ),
     // -----------------------------------------------------------------
-    // MC portu: `.crx` indirme ve geliştirici modu
-    // -----------------------------------------------------------------
-    (
-        "err.crx_url_empty",
-        "Eklenti adresi boş",
-        "The extension address is empty",
-    ),
-    (
-        "err.crx_url_not_https",
-        "Eklenti adresi yalnızca https olabilir",
-        "The extension address must use https",
-    ),
-    (
-        "err.crx_download_failed",
-        "Eklenti indirilemedi: {0}",
-        "Could not download the extension: {0}",
-    ),
-    (
-        "err.crx_http",
-        "Eklenti indirilemedi (HTTP {0})",
-        "Could not download the extension (HTTP {0})",
-    ),
-    (
-        "err.crx_too_large",
-        "Eklenti dosyası çok büyük (64 MB sınır)",
-        "The extension file is too large (64 MB limit)",
-    ),
-    (
-        "err.crx_invalid",
-        "İndirilen dosya geçerli bir eklenti paketi (.crx) değil",
-        "The downloaded file is not a valid extension package (.crx)",
-    ),
-    (
-        "err.browser_running",
-        "Geliştirici modunu açmak için tarayıcıyı kapatın",
-        "Close the browser to let developer mode be turned on",
-    ),
-    (
-        "log.crx_downloaded",
-        "Eklenti paketi indirildi: {0}",
-        "The extension package was downloaded: {0}",
-    ),
     (
         "log.dev_mode_enabled",
         "{0} için geliştirici modu açıldı",

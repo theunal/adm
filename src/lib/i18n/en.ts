@@ -282,7 +282,7 @@ export const en: Dict = {
   "wizard.title": "Browser extension setup",
   "wizard.install": "Install the extension",
   "wizard.install_hint":
-    "One click does everything: the extension package (.crx) is downloaded, the {browser} extensions page opens with developer mode on, and the package is shown selected in your file manager. All that is left is dragging it onto the page and confirming “Add extension”.",
+    "One click does everything: the extension folder is prepared, the {browser} extensions page opens with developer mode on, and the folder is shown selected in your file manager. All that is left is picking it with “Load unpacked”.",
   "wizard.guide.title": "How to install",
   "wizard.guide.page": "The extensions page is open",
   "wizard.guide.page_desc":
@@ -290,25 +290,17 @@ export const en: Dict = {
   "wizard.guide.developer": "Turn on Developer mode",
   "wizard.guide.developer_desc":
     "Flip the “Developer mode” switch in the top right. ADM tries to turn it on for you; if the browser was running you will be asked.",
-  "wizard.guide.drag": "Drag the .crx file",
-  "wizard.guide.drag_desc":
-    "Drag the .crx file that is shown selected in your file manager onto the browser page and drop it there.",
-  "wizard.guide.confirm": "Press “Add extension”",
-  "wizard.guide.confirm_desc":
-    "The browser shows a confirmation dialog; press “Add extension” to finish the install.",
+  "wizard.guide.load": "Pick the folder with “Load unpacked”",
+  "wizard.guide.load_desc":
+    "Press “Load unpacked” on the page and choose the extension folder that is shown selected in your file manager. You can reveal it again below.",
   "wizard.guide.connect": "Connect to ADM",
   "wizard.guide.connect_desc":
     "Click the extension icon and press “Connect to ADM”; the indicator below turns green.",
   "wizard.guide.dev_mode_hint":
     "Developer mode could not be turned on: the browser appears to be running. Close it and press “Install the extension” again.",
-  "wizard.crx_ready": "The extension package is ready — drag it onto the page",
   "wizard.not_installed": "{browser} is not installed on this computer",
   "wizard.dev_mode_browser_open":
     "Close the browser and try again so developer mode can be turned on. You can still continue with the setup afterwards.",
-  "wizard.fallback_load_unpacked":
-    "If drag and drop does not work: install from folder (load unpacked)",
-  "wizard.fallback_short": "Install from folder",
-  "wizard.action.show_file": "Show file",
   "wizard.bridge_off":
     "The browser bridge is not running. Check the port under Settings ▸ Browsers; the extension cannot deliver downloads without it.",
   "wizard.bridge_on": "The bridge is listening on 127.0.0.1:{port}.",
@@ -492,9 +484,6 @@ export const en: Dict = {
   "settings.wizard_open": "Open the setup wizard",
   "settings.browser_ready": "Extension files are ready",
   "settings.browser_missing": "Extension files have not been copied yet",
-  "settings.crx_url": "Extension package address (.crx)",
-  "settings.crx_url_hint":
-    "Only https is accepted. The default is the package published with the GitHub release.",
   "settings.video_intro":
     "Video downloads use yt-dlp. Missing tools can be installed before a download starts.",
   "settings.site_login": "Site login",

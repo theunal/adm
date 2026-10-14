@@ -32,14 +32,12 @@ import {
   bridgeStatus,
   browserList,
   browserPresence,
-  installExtensionCrx,
-  installExtensionFolder,
+  installExtension,
   openPluginFolder,
   openReleasePage,
-  revealFile,
   type BridgeStatus,
   type BrowserPresence,
-  type CrxOutcome,
+  type InstallOutcome,
   type WizardBrowser,
 } from "../lib/api";
 import { closeBrowserSetup, browserSetupBrowser } from "../lib/ui";
@@ -54,7 +52,7 @@ const FALLBACK_BROWSERS: WizardBrowser[] = ["chrome", "edge", "brave", "firefox"
  * Yönerge adımları — kullanıcının yapacağı hamleler.
  *
  * 1-2. adımı ADM kendisi yapar (uzantı sayfasını açar, geliştirici modunu
- * açmaya çalışır); 3-5. adım kullanıcıya kalır.
+ * açar); 3-4. adım kullanıcıya kalır (klasörü yükler, ADM'e bağlanır).
  */
 const GUIDE_STEPS: { title: string; desc: string }[] = [
   {
@@ -66,12 +64,8 @@ const GUIDE_STEPS: { title: string; desc: string }[] = [
     desc: "wizard.guide.developer_desc",
   },
   {
-    title: "wizard.guide.drag",
-    desc: "wizard.guide.drag_desc",
-  },
-  {
-    title: "wizard.guide.confirm",
-    desc: "wizard.guide.confirm_desc",
+    title: "wizard.guide.load",
+    desc: "wizard.guide.load_desc",
   },
   {
     title: "wizard.guide.connect",
@@ -98,9 +92,8 @@ function browserLabel(browser: WizardBrowser): string {
 export default function BrowserSetupDialog() {
   const [browser, setBrowser] = createSignal<WizardBrowser>("chrome");
   const [folder, setFolder] = createSignal<string | null>(null);
-  const [crxPath, setCrxPath] = createSignal<string | null>(null);
-  /** Geliştirici modu açma denemesinin sonucu (`.crx` akışı). */
-  const [devMode, setDevMode] = createSignal<CrxOutcome["developerMode"] | null>(null);
+  /** Geliştirici modu açma denemesinin sonucu. */
+  const [devMode, setDevMode] = createSignal<InstallOutcome["developerMode"] | null>(null);
   const [busy, setBusy] = createSignal(false);
   /** Köprüye bağlanmış tarayıcı adları (canlı). */
   const [connected, setConnected] = createSignal<string[]>([]);
@@ -141,15 +134,15 @@ export default function BrowserSetupDialog() {
 
   /** Yönerge adımı tamamlandı mı?
    *
-   * 1. adım: "Eklentiyi Yükle"ye basıldı (sayfa açıldı) — `.crx` yolu biliniyor.
+   * 1. adım: "Eklentiyi Yükle"ye basıldı (klasör hazır, sayfa açıldı).
    * 2. adım: geliştirici modu açıldı (ADM yaptı).
-   * 5. adım: uzantı köprüye bağlandı.
-   * 3-4. adım tarayıcı içinde geçtiği için buradan görülemez; vurgulu bekler.
+   * 4. adım: uzantı köprüye bağlandı.
+   * 3. adım tarayıcı içinde geçtiği için buradan görülemez; vurgulu bekler.
    */
   function guideDone(index: number): boolean {
-    if (index === 0) return crxPath() !== null;
+    if (index === 0) return folder() !== null;
     if (index === 1) return devMode() === "enabled";
-    if (index === 4) return isConnected();
+    if (index === 3) return isConnected();
     return false;
   }
 
@@ -192,47 +185,21 @@ export default function BrowserSetupDialog() {
   onCleanup(() => unlisten?.());
 
   /**
-   * `.crx` akışlı kurulum — indir, geliştirici modunu aç, uzantı sayfasını
-   * aç, `.crx`'yi seçili göster (hepsi Rust tarafında).
+   * Tek düğmeli kurulum — eklenti dosyalarını klasöre kopyala, geliştirici
+   * modunu aç, uzantı sayfasını aç, klasörü seçili göster (hepsi Rust
+   * tarafında, `install_extension`).
    *
-   * Hata durumunda kullanıcıya mesaj gösterilir; `.crx` zaten görünür
-   * durumdaysa (ör. dosya yöneticisi açılamadı) yol ekranda kalır.
+   * Kullanıcı açılan sayfada "Paketlenmemiş öğe yükle" ile bu klasörü seçer.
+   * Hata durumunda mesaj gösterilir; klasör yolu hâlâ ekranda kalır.
    */
   async function doInstall() {
     const target = browser();
     if (target === "safari") return;
     setBusy(true);
     try {
-      const outcome = await installExtensionCrx(target);
-      setCrxPath(outcome.crxPath);
+      const outcome = await installExtension(target);
+      setFolder(outcome.folder);
       setDevMode(outcome.developerMode);
-      pushFeedback("success", t("wizard.crx_ready"));
-    } catch (error) {
-      pushFeedback("error", errorText(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** `.crx` dosyasını yeniden seçili göster (sürüklerken kaybolursa). */
-  async function doRevealCrx() {
-    const path = crxPath();
-    if (!path) return;
-    try {
-      await revealFile(path);
-    } catch (error) {
-      pushFeedback("error", errorText(error));
-    }
-  }
-
-  /** Yedek akış: klasörü hazırla ve uzantı sayfasını aç (paketlenmemiş). */
-  async function doFallback() {
-    const target = browser();
-    if (target === "safari") return;
-    setBusy(true);
-    try {
-      const path = await installExtensionFolder(target);
-      setFolder(path);
       pushFeedback("success", t("wizard.prepared"));
     } catch (error) {
       pushFeedback("error", errorText(error));
@@ -241,7 +208,7 @@ export default function BrowserSetupDialog() {
     }
   }
 
-  /** Klasörü yeniden seçili göster (yedek akıştan sonra kaybolursa). */
+  /** Klasörü yeniden seçili göster (kurulum sonrası kaybolursa). */
   async function doOpenFolder() {
     const target = browser();
     if (target === "safari") return;
@@ -313,10 +280,10 @@ export default function BrowserSetupDialog() {
                       disabled={!installed()}
                       onClick={() => {
                         setBrowser(id);
-                        // Tarayıcı değişince akış baştan başlar: her akış
-                        // kendi `.crx` klasörüne/klasörüne bakar.
+                        // Tarayıcı değişince akış baştan başlar: klasör ve
+                        // geliştirici modu durumu yeni tarayıcı için yeniden
+                        // belirlenir.
                         setFolder(null);
-                        setCrxPath(null);
                         setDevMode(null);
                       }}
                     >
@@ -376,14 +343,10 @@ export default function BrowserSetupDialog() {
                   </>
                 }
               >
-                {/* `.crx` akışı: indir → geliştirici modunu aç → sayfayı aç →
-                    `.crx`'yi seçili göster (Rust tarafında). Kullanıcı tek
-                    yapar: dosyayı sayfaya sürükler ve "Uzantı ekle" onayını
-                    verir. */}
                 {/* ---------------------------------------------------------
-                    Yönerge: tarayıcı ve dosya zaten açılıyor; kullanıcının
-                    yapacağı dört hamle burada adım adım anlatılır. Adımlar
-                    gerçekleştikçe ✓ işareti alır (1-2 ADM yapar, 3-5 kullanıcı).
+                    Yönerge: tarayıcı ve klasör zaten açılıyor; kullanıcının
+                    yapacağı hamleler burada adım adım anlatılır. Adımlar
+                    gerçekleştikçe ✓ işareti alır (1-2 ADM yapar, 3-4 kullanıcı).
                 --------------------------------------------------------- */}
                 <div class="wizard-guide">
                   <div class="wizard-guide-title">{t("wizard.guide.title")}</div>
@@ -433,30 +396,8 @@ export default function BrowserSetupDialog() {
                   </div>
                 </Show>
 
-                {/* İndirilen `.crx` — sürüklenecek dosya. */}
-                <Show when={crxPath()}>
-                  {(path) => (
-                    <div class="wizard-path">
-                      <Tip target="span" label={path()}>
-                        <code>{path()}</code>
-                      </Tip>
-                      <button type="button" class="btn" onClick={doRevealCrx}>
-                        {t("wizard.action.show_file")}
-                      </button>
-                    </div>
-                  )}
-                </Show>
-
-                {/* Yedek akış: `.crx` sürükle-bırak çalışmazsa klasörle kur. */}
-                <Show when={crxPath()}>
-                  <p class="wizard-fallback">
-                    <button type="button" class="btn btn-ghost" onClick={doFallback}>
-                      {t("wizard.fallback_load_unpacked")}
-                    </button>
-                  </p>
-                </Show>
-
-                {/* Yedek akışın klasörü — kurulum sonrası gösterilir. */}
+                {/* Hazırlanan klasör — "Paketlenmemiş öğe yükle" ile
+                    seçilecek yer. Kurulum sonrası gösterilir. */}
                 <Show when={folder()}>
                   {(path) => (
                     <div class="wizard-path">

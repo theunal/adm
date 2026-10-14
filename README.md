@@ -188,24 +188,24 @@ progress through the badge and the popup.
 **One button.** Settings → **Browsers** → **"Install the extension"**
 (or the same button in the setup wizard) does everything:
 
-1. downloads the extension package (`.crx`) over **https** — the address
-   can be changed in Settings → Browsers,
+1. prepares the extension folder
+   (`%LocalAppData%\ADM\Browser Plugins\<Browser>`, with a `README.txt`
+   next to it),
 2. turns on **Developer mode** in the browser beforehand (by patching the
    browser's `Preferences` file; if the browser is still running, ADM says
    so and you retry after closing it),
 3. opens the browser's extensions page (`brave://extensions`,
    `chrome://extensions`, `edge://extensions`),
-4. shows the `.crx` **selected** in Explorer / Finder.
+4. shows that folder **selected** in Explorer / Finder.
 
-All that is left is dragging that file onto the page and confirming
-**"Add extension"** in the browser. Clicking the extension icon and
-pressing **"Connect to ADM"** finishes it — the bridge indicator in the
-menu header / settings panel turns green.
+All that is left is pressing **"Load unpacked"** on the page and picking the
+revealed folder. The wizard walks you through it step by step. Clicking the
+extension icon and pressing **"Connect to ADM"** finishes it — the bridge
+indicator in the menu header / settings panel turns green.
 
-If drag-and-drop does not work on your Brave/Chrome build (Chromium
-removed it at some point), each browser row also has
-**"Install from folder"** — the classic "Load unpacked" path. ADM reveals
-the folder for you.
+There is no `.crx` download in this flow: Chromium-based browsers dropped
+`.crx` drag-and-drop installation, and fetching a package over the network
+would only add an attack surface.
 
 **Browsers that are not installed on this machine** are shown greyed out
 and disabled — there is no point clicking into a "browser not found"

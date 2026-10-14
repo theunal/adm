@@ -1610,11 +1610,6 @@ body {
   background: var(--ok);
 }
 
-/* Yedek akış düğmesi — ana akışın altında, daha sakin görünür. */
-.wizard-fallback {
-  margin: 0;
-}
-
 /* ==========================================================================
    Kurulum yönergesi (BrowserSetupDialog.tsx)
 

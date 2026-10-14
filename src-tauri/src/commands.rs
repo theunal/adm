@@ -1115,51 +1115,24 @@ pub fn browser_list() -> Res<Vec<String>> {
 /// Eklentiyi **tek düğmeyle** kurar.
 ///
 /// Üç adımı sırayla çalıştırır (`extension::install_extension`):
+/// Eklentiyi **klasör akışıyla** kurar.
+///
 /// 1. eklenti dosyalarını tarayıcı klasörüne kopyalar,
-/// 2. tarayıcının uzantı sayfasını açar,
-/// 3. hazırlanan klasörü dosya yöneticisinde seçili gösterir.
-///
-/// Arayüzdeki "Eklentiyi Yükle" düğmesi bu komuta bağlıdır; başarılı olursa
-/// klasörün yolunu döner (kullanıcıya gösterilir).
-#[tauri::command]
-pub fn install_extension(app: AppHandle, browser: String) -> Res<String> {
-    let path = crate::extension::install_extension(&app, &browser).map_err(tr)?;
-    let text = path.to_string_lossy().to_string();
-    emit_log(&app, "info", i18n::t("log.browser_files_ready", &[&text]));
-    Ok(text)
-}
-
-/// `.crx` akışıyla eklenti kurar.
-///
-/// 1. `.crx` dosyasını **https** adresinden indirir (boyut + `Cr24` imza
-///    doğrulamalı),
 /// 2. tarayıcının `Preferences` dosyasına `developer_mode = true` yazar
-///    (tarayıcı çalışıyorsa bunu atlar ve `developerMode: browserClosed`
-///    döner),
-/// 3. tarayıcıyı uzantı sayfasıyla açar,
-/// 4. `.crx` dosyasını dosya yöneticisinde **seçili** gösterir — kullanıcı
-///    dosyayı sayfaya sürükler ve tarayıcının kendi "Uzantı ekle" onayına
-///    basar.
+///    (tarayıcı çalışıyorsa atlanır),
+/// 3. tarayıcının uzantı sayfasını açar,
+/// 4. hazırlanan klasörü dosya yöneticisinde **seçili** gösterir.
 ///
-/// Adres verilmezse ayarlardaki `extension_crx_url` kullanılır.
+/// Kullanıcının tek yapması gereken, açılan sayfada **"Paketlenmemiş öğe
+/// yükle"** düğmesine basıp bu klasörü seçmek. Ayrıntılı yönerge sihirbazda
+/// gösterilir.
 #[tauri::command]
-pub async fn install_extension_crx(
-    app: AppHandle,
-    manager: State<'_, DownloadManager>,
-    browser: String,
-    crx_url: Option<String>,
-) -> Res<crate::extension::CrxOutcome> {
-    let url = match crx_url {
-        Some(url) if !url.trim().is_empty() => url,
-        _ => manager.settings().await.map_err(tr)?.extension_crx_url,
-    };
-    let outcome = crate::extension::install_extension_crx(&app, &browser, &url)
-        .await
-        .map_err(tr)?;
+pub fn install_extension(app: AppHandle, browser: String) -> Res<crate::extension::InstallOutcome> {
+    let outcome = crate::extension::install_extension(&app, &browser).map_err(tr)?;
     emit_log(
         &app,
         "info",
-        i18n::t("log.crx_downloaded", &[&outcome.crx_path.to_string_lossy()]),
+        i18n::t("log.browser_files_ready", &[&outcome.folder.to_string_lossy()]),
     );
     Ok(outcome)
 }
@@ -1207,15 +1180,6 @@ pub fn open_plugin_folder(browser: String) -> Res<()> {
     };
     std::fs::create_dir_all(&path).map_err(|e| i18n::t("err.open_file", &[&e.to_string()]))?;
     crate::extension::reveal_path(&path).map_err(tr)
-}
-
-/// Bir dosyayı/klasörü dosya yöneticisinde **seçili** gösterir.
-///
-/// `.crx` akışında dosya yöneticisini yeniden açmak için kullanılır
-/// (Explorer `/select,`, macOS `open -R`, Linux `xdg-open`).
-#[tauri::command]
-pub fn reveal_path(path: String) -> Res<()> {
-    crate::extension::reveal_path(std::path::Path::new(&path)).map_err(tr)
 }
 
 /// Tarayıcının uzantı yönetimi sayfasını açar.

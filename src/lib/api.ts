@@ -78,8 +78,6 @@ export interface Settings {
   lastUpdateCheck: string | null;
   /** Kullanıcının atladığı sürüm. */
   skippedUpdateVersion: string | null;
-  /** `.crx` eklenti paketinin indirileceği **https** adresi. */
-  extensionCrxUrl: string;
 }
 
 /** Tauri olayının adı. */
@@ -356,28 +354,25 @@ export function browserPresence(): Promise<BrowserPresence[]> {
 }
 
 /**
- * `.crx` akışıyla eklenti kurar.
+ * Eklentiyi **klasör akışıyla** kurar (tek düğme).
  *
- * Rust tarafı: `.crx`'yi **https** adresinden indirir (boyut + imza
- * doğrulamalı), tarayıcının `Preferences` dosyasına `developer_mode = true`
- * yazar (tarayıcı çalışıyorsa atlanır), uzantı sayfasını açar ve `.crx`
- * dosyasını dosya yöneticisinde **seçili** gösterir.
+ * Rust tarafı: eklenti dosyalarını `%LOCALAPPDATA%\ADM\Browser Plugins\
+ * <Tarayıcı>` altına kopyalar, tarayıcının `Preferences` dosyasına
+ * `developer_mode = true` yazar (tarayıcı çalışıyorsa atlar), uzantı
+ * sayfasını açar ve klasörü dosya yöneticisinde **seçili** gösterir.
  *
- * Kullanıcı tek yapar: dosyayı açılan sayfaya sürükler ve tarayıcının kendi
- * "Uzantı ekle" onayına basar.
+ * Kullanıcının tek yapması gereken, açılan sayfada **"Paketlenmemiş öğe
+ * yükle"** düğmesine basıp bu klasörü seçmek.
  */
-export type CrxOutcome = {
-  /** İndirilen ve sürüklenecek `.crx` dosyasının yolu. */
-  crxPath: string;
+export type InstallOutcome = {
+  /** Hazırlanan klasörün yolu. */
+  folder: string;
   /** Geliştirici modu açma denemesinin sonucu. */
   developerMode: "enabled" | "browserClosed" | "notFound";
 };
 
-export function installExtensionCrx(
-  browser: BrowserId,
-  crxUrl?: string,
-): Promise<CrxOutcome> {
-  return invoke<CrxOutcome>("install_extension_crx", { browser, crxUrl });
+export function installExtension(browser: BrowserId): Promise<InstallOutcome> {
+  return invoke<InstallOutcome>("install_extension", { browser });
 }
 
 /** Eklenti dosyalarını tarayıcı klasörüne kopyalar.
@@ -388,26 +383,9 @@ export function prepareBrowserFiles(browser: BrowserId): Promise<string> {
   return invoke<string>("prepare_browser_files", { browser });
 }
 
-/**
- * Klasör akışıyla eklenti kurar (`.crx` akışının **yedek** yolu).
- *
- * Eklenti dosyalarını klasöre kopyalar, tarayıcının uzantı sayfasını açar ve
- * klasörü dosya yöneticisinde seçili gösterir; kullanıcı "Paketlenmemiş öğe
- * yükle" ile klasörü seçer. Bazı Brave sürümlerinde `.crx` sürükle-bırak
- * çalışmadığı için bu akış her zaman erişilebilir durumda tutulur.
- */
-export function installExtensionFolder(browser: BrowserId): Promise<string> {
-  return invoke<string>("install_extension", { browser });
-}
-
 /** Eklenti klasörünü dosya yöneticisinde açar. */
 export function openPluginFolder(browser: BrowserId): Promise<void> {
   return invoke<void>("open_plugin_folder", { browser });
-}
-
-/** Bir dosyayı (ör. indirilen `.crx`) dosya yöneticisinde seçili gösterir. */
-export function revealFile(path: string): Promise<void> {
-  return invoke<void>("reveal_path", { path });
 }
 
 /** Tarayıcının uzantı yönetimi sayfasını açar. */

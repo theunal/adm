@@ -69,8 +69,6 @@ function fallback(): Settings {
     denoPromptSuppressed: false,
     lastUpdateCheck: null,
     skippedUpdateVersion: null,
-    extensionCrxUrl:
-      "https://github.com/theunal/adm/releases/latest/download/extension.crx",
   };
 }
 

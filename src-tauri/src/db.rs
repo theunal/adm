@@ -122,7 +122,10 @@ const SCHEMA: &[&str] = &[
         deno_prompt_suppressed INTEGER NOT NULL DEFAULT 0,
         last_update_check     TEXT,
         skipped_update_version TEXT,
-        extension_crx_url TEXT NOT NULL DEFAULT 'https://github.com/theunal/adm/releases/latest/download/extension.crx'
+        /* Kullanılmıyor: `.crx` indirme akışı kaldırıldı, kurulum artik
+           paketlenmemis klasörle yapiliyor. Kolon bilincli olarak duruyor —
+           migrasyonlar geri alinamaz (AGENTS.md kural 7). */
+        extension_crx_url TEXT NOT NULL DEFAULT ''
     )
     "#,
 ];
@@ -170,10 +173,8 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ),
     ("settings", "last_update_check TEXT"),
     ("settings", "skipped_update_version TEXT"),
-    (
-        "settings",
-        "extension_crx_url TEXT NOT NULL DEFAULT 'https://github.com/theunal/adm/releases/latest/download/extension.crx'",
-    ),
+    /* Kullanılmıyor (ayni gerekçe: `.crx` akışi kaldirildi). */
+    ("settings", "extension_crx_url TEXT NOT NULL DEFAULT ''"),
 ];
 
 /// Uygulamanın veritabanı erişimi.
@@ -496,11 +497,6 @@ impl Database {
             skipped_update_version: r
                 .try_get::<Option<String>, _>("skipped_update_version")
                 .unwrap_or(None),
-            extension_crx_url: r
-                .try_get::<String, _>("extension_crx_url")
-                .ok()
-                .filter(|u| !u.trim().is_empty())
-                .unwrap_or_else(crate::settings::default_crx_url),
         };
         settings.normalize();
 
@@ -519,8 +515,8 @@ impl Database {
                   auto_close_detail, watch_clipboard, capture_group_ids, custom_extensions, \
                   organize_by_category, ytdlp_path, video_format, video_container, video_max_height, \
                   check_for_updates, start_in_tray, close_to_tray, autostart, deno_prompt_suppressed, \
-                  last_update_check, skipped_update_version, extension_crx_url) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                  last_update_check, skipped_update_version) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (id) DO UPDATE SET \
                  lang                  = excluded.lang, \
                  default_channel_count = excluded.default_channel_count, \
@@ -548,8 +544,7 @@ impl Database {
                  autostart             = excluded.autostart, \
                  deno_prompt_suppressed = excluded.deno_prompt_suppressed, \
                  last_update_check     = excluded.last_update_check, \
-                 skipped_update_version = excluded.skipped_update_version, \
-                 extension_crx_url     = excluded.extension_crx_url",
+                 skipped_update_version = excluded.skipped_update_version",
         )
         .bind(normalized.lang.as_str())
         .bind(normalized.default_channel_count as i64)
@@ -578,7 +573,6 @@ impl Database {
         .bind(normalized.deno_prompt_suppressed as i64)
         .bind(normalized.last_update_check.clone())
         .bind(normalized.skipped_update_version.clone())
-        .bind(normalized.extension_crx_url.clone())
         .execute(&self.pool)
         .await
         .context(err("err.db_settings_save"))?;

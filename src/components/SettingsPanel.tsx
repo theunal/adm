@@ -29,8 +29,7 @@ import {
   browserPresence,
   checkForUpdate,
   clearSiteCookies,
-  installExtensionCrx,
-  installExtensionFolder,
+  installExtension,
   installTool,
   openPluginFolder,
   openSiteLogin,
@@ -803,22 +802,22 @@ function BrowsersTab(props: TabProps) {
   }
 
   /**
-   * `.crx` akışlı kurulum — indir, geliştirici modunu aç, uzantı sayfasını
-   * aç, `.crx`'yi seçili göster (Rust tarafında).
+   * Tek düğmeli kurulum — eklenti dosyalarını klasöre kopyalar, geliştirici
+   * modunu açar, uzantı sayfasını açar ve klasörü seçili gösterir
+   * (Rust tarafında).
    */
   async function install(browser: BrowserId) {
     await guard(async () => {
-      const outcome = await installExtensionCrx(browser);
-      pushFeedback("success", t("wizard.crx_ready", { path: outcome.crxPath }));
-    }, "settings.err.save");
-  }
-
-  /** Yedek akış: klasörü hazırla ve uzantı sayfasını aç (paketlenmemiş). */
-  async function installFolder(browser: BrowserId) {
-    await guard(async () => {
-      const dir = await installExtensionFolder(browser);
-      setFolders((prev) => ({ ...prev, [browser]: dir }));
-      pushFeedback("success", t("log.browser_files_ready", { path: dir }));
+      const outcome = await installExtension(browser);
+      setFolders((prev) => ({ ...prev, [browser]: outcome.folder }));
+      pushFeedback(
+        "success",
+        t("log.browser_files_ready", { path: outcome.folder }),
+      );
+      // Geliştirici modu açılamadıysa (tarayıcı açık) kullanıcıyı uyar.
+      if (outcome.developerMode === "browserClosed") {
+        pushFeedback("warn", t("wizard.dev_mode_browser_open"));
+      }
     }, "settings.err.save");
   }
 
@@ -894,15 +893,6 @@ function BrowsersTab(props: TabProps) {
                 >
                   {t("wizard.install")}
                 </button>
-                {/* Yedek akış — `.crx` sürükle-bırak çalışmazsa. */}
-                <button
-                  type="button"
-                  class="btn btn-ghost"
-                  disabled={!isInstalled(browser)}
-                  onClick={() => void installFolder(browser)}
-                >
-                  {t("wizard.fallback_short")}
-                </button>
                 <Show when={folders()[browser]}>
                   <button
                     type="button"
@@ -923,16 +913,6 @@ function BrowsersTab(props: TabProps) {
             </div>
           )}
         </For>
-
-        <TextField
-          id="set-crx-url"
-          label={t("settings.crx_url")}
-          hint={t("settings.crx_url_hint")}
-          placeholder="https://…/extension.crx"
-          value={settings.extensionCrxUrl}
-          disabled={saving()}
-          onCommit={(v) => save({ extensionCrxUrl: v })}
-        />
       </section>
     </>
   );
